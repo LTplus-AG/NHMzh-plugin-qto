@@ -1,54 +1,102 @@
-# React + TypeScript + Vite
+# QTO Plugin with IFC Integration
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This project is a Quantity Take-Off (QTO) application with IFC model integration. It displays eBKP structure based on the Swiss cost classification system and extracts elements from IFC files.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- eBKP structure display with expandable/collapsible rows
+- IFC model upload and parsing
+- IFC elements display grouped by type
+- Property extraction from IFC elements
 
-## Expanding the ESLint configuration
+## Project Structure
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+```
+plugin-qto/
+  ├── src/              # Frontend React app
+  ├── backend/          # Python FastAPI backend for IFC parsing
+  ├── data/             # Static data files
+  └── public/           # Public assets
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Setup and Installation
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Frontend (React)
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
-```
+1. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+### Backend (Python)
+
+1. Navigate to the backend directory:
+
+   ```bash
+   cd backend
+   ```
+
+2. Create a virtual environment (recommended):
+
+   ```bash
+   python -m venv venv
+
+   # On Windows
+   venv\Scripts\activate
+
+   # On macOS/Linux
+   source venv/bin/activate
+   ```
+
+3. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Start the backend server:
+   ```bash
+   uvicorn main:app --reload
+   ```
+
+## Usage
+
+1. Open the application in your browser (default: http://localhost:3000)
+2. Drag and drop an IFC file in the upload area
+3. View the eBKP structure in the top table
+4. View the extracted IFC elements grouped by type in the bottom section
+
+## API Endpoints
+
+The backend provides the following API endpoints:
+
+- `GET /`: Welcome message
+- `POST /upload-ifc/`: Upload an IFC file and get a model ID
+- `GET /ifc-elements/{model_id}`: Get all elements from a specific model
+- `GET /models`: List all uploaded models
+- `DELETE /models/{model_id}`: Delete a model
+- `GET /simulation/ifc-elements`: Get simulated IFC elements (for testing)
+
+## Technologies
+
+- Frontend:
+
+  - React
+  - Material-UI
+  - TypeScript
+
+- Backend:
+  - Python
+  - FastAPI
+  - IfcOpenShell (for IFC parsing)
+
+## Notes
+
+- The application can run with or without the backend. If the backend is not available, it will use simulated IFC data.
+- For production deployment, update the API URL in `MainPage.tsx` and configure proper CORS settings in the backend.

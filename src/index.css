@@ -148,6 +148,7 @@ body {
   padding: 2rem;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 
 .main-content {
@@ -155,6 +156,28 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Upload area specific styles */
+.mb-4 {
+  margin-bottom: 1rem;
+}
+
+.mb-2 {
+  margin-bottom: 0.5rem;
+}
+
+.mt-6 {
+  margin-top: 1.5rem;
+}
+
+.pb-1 {
+  padding-bottom: 0.25rem;
+}
+
+/* Items alignment in sidebar */
+.items-center {
+  align-items: center;
 }
 
 /* Remove all default button and link styles */
