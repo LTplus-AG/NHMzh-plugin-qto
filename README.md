@@ -1,15 +1,22 @@
-# QTO Plugin with IFC Integration
+# 🏗️ QTO Plugin with IFC Integration
 
-This project is a Quantity Take-Off (QTO) application with IFC model integration. It displays eBKP structure based on the Swiss cost classification system and extracts elements from IFC files.
+[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Material-UI](https://img.shields.io/badge/Material--UI-0081CB?style=for-the-badge&logo=material-ui&logoColor=white)](https://mui.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-## Features
+> Next-gen Quantity Take-Off (QTO) application with seamless IFC model integration. Visualize eBKP structures based on the Swiss cost classification system and extract critical elements from IFC files with precision and speed.
 
-- eBKP structure display with expandable/collapsible rows
-- IFC model upload and parsing
-- IFC elements display grouped by type
-- Property extraction from IFC elements
+## ✨ Features
 
-## Project Structure
+- 📊 Interactive eBKP structure with expandable/collapsible rows
+- 📤 Drag-and-drop IFC model upload and smart parsing
+- 🔍 Intelligent IFC elements grouping by type
+- 📝 Comprehensive property extraction from IFC elements
+
+## 🗂️ Project Structure
 
 ```
 plugin-qto/
@@ -19,84 +26,77 @@ plugin-qto/
   └── public/           # Public assets
 ```
 
-## Setup and Installation
+## 🚀 Quick Start
 
 ### Frontend (React)
 
-1. Install dependencies:
+```bash
+# Install dependencies
+npm install
 
-   ```bash
-   npm install
-   ```
-
-2. Start the development server:
-   ```bash
-   npm run dev
-   ```
+# Start development server
+npm run dev
+```
 
 ### Backend (Python)
 
-1. Navigate to the backend directory:
+```bash
+# Navigate to backend directory
+cd backend
 
-   ```bash
-   cd backend
-   ```
+# Create virtual environment
+python -m venv venv
 
-2. Create a virtual environment (recommended):
+# Activate virtual environment
+# On Windows
+venv\Scripts\activate
+# On macOS/Linux
+source venv/bin/activate
 
-   ```bash
-   python -m venv venv
+# Install dependencies
+pip install -r requirements.txt
 
-   # On Windows
-   venv\Scripts\activate
+# Start the backend server
+uvicorn main:app --reload
+```
 
-   # On macOS/Linux
-   source venv/bin/activate
-   ```
-
-3. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Start the backend server:
-   ```bash
-   uvicorn main:app --reload
-   ```
-
-## Usage
+## 📖 Usage
 
 1. Open the application in your browser (default: http://localhost:3000)
 2. Drag and drop an IFC file in the upload area
-3. View the eBKP structure in the top table
-4. View the extracted IFC elements grouped by type in the bottom section
+3. Explore the eBKP structure in the top table
+4. Analyze the extracted IFC elements grouped by type in the bottom section
 
-## API Endpoints
+## 🔌 API Endpoints
 
-The backend provides the following API endpoints:
+| Endpoint                   | Method | Description                              |
+| -------------------------- | ------ | ---------------------------------------- |
+| `/`                        | GET    | Welcome message                          |
+| `/upload-ifc/`             | POST   | Upload an IFC file and get a model ID    |
+| `/ifc-elements/{model_id}` | GET    | Get all elements from a specific model   |
+| `/models`                  | GET    | List all uploaded models                 |
+| `/models/{model_id}`       | DELETE | Delete a model                           |
+| `/simulation/ifc-elements` | GET    | Get simulated IFC elements (for testing) |
 
-- `GET /`: Welcome message
-- `POST /upload-ifc/`: Upload an IFC file and get a model ID
-- `GET /ifc-elements/{model_id}`: Get all elements from a specific model
-- `GET /models`: List all uploaded models
-- `DELETE /models/{model_id}`: Delete a model
-- `GET /simulation/ifc-elements`: Get simulated IFC elements (for testing)
+## 🛠️ Tech Stack
 
-## Technologies
+### Frontend
 
-- Frontend:
+- **React** - UI library
+- **Material-UI** - Component library
+- **TypeScript** - Type-safe JavaScript
 
-  - React
-  - Material-UI
-  - TypeScript
+### Backend
 
-- Backend:
-  - Python
-  - FastAPI
-  - IfcOpenShell (for IFC parsing)
+- **Python** - Backend language
+- **FastAPI** - API framework
+- **IfcOpenShell** - IFC parsing library
 
-## Notes
+## 📝 Notes
 
-- The application can run with or without the backend. If the backend is not available, it will use simulated IFC data.
+- The application features a resilient architecture - it can run with or without the backend, using simulated IFC data when needed.
 - For production deployment, update the API URL in `MainPage.tsx` and configure proper CORS settings in the backend.
+
+## 📄 License
+
+AGPL
