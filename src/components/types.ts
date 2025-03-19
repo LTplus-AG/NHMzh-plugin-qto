@@ -25,6 +25,19 @@ export interface EBKPItem {
   children?: EBKPItem[];
 }
 
+export interface UploadedFile {
+  filename: string;
+  created_at: string;
+  modelId?: string;
+}
+
+export interface MetaFile {
+  file: File;
+  steps: React.ReactElement[];
+  valid: boolean | null;
+  modelId?: string;
+}
+
 export const REQUIRED_HEADERS = {
   EBKP: "eBKP",
   BEZEICHNUNG: "Bezeichnung",
