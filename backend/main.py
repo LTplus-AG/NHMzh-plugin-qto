@@ -112,45 +112,96 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
         
         logger.debug(f"Found {len(constituents)} constituents in IfcMaterialConstituentSet")
         
-        # Try to extract constituent widths/volumes from quantities
+        # Collect all quantities associated with the elements
+        quantities = []
+        for element in associated_elements:
+            for rel in getattr(element, 'IsDefinedBy', []):
+                if rel.is_a('IfcRelDefinesByProperties'):
+                    prop_def = rel.RelatingPropertyDefinition
+                    if prop_def.is_a('IfcElementQuantity'):
+                        quantities.extend(prop_def.Quantities)
+        
+        # Build a mapping of quantity names to quantities
+        quantity_name_map = {}
+        for q in quantities:
+            if q.is_a('IfcPhysicalComplexQuantity'):
+                q_name = (q.Name or '').strip().lower()
+                quantity_name_map.setdefault(q_name, []).append(q)
+        
+        # Handle constituents with duplicate names by order of appearance
+        constituent_indices = {}
         total_width_mm = 0.0
         
+        # First try to get explicit fractions
+        has_explicit_fractions = False
         for constituent in constituents:
-            constituent_name = constituent.Name if hasattr(constituent, 'Name') and constituent.Name else "Unnamed"
-            logger.debug(f"Processing constituent: {constituent_name}")
+            constituent_name = (constituent.Name or "Unnamed Constituent").strip().lower()
             
-            # Default to equal distribution if no width info is available
-            width_mm = 0.0
-            
-            # Try to get width from constituent definition
+            # Try to get fraction from constituent definition
             if hasattr(constituent, 'Fraction') and constituent.Fraction:
-                # Some IFC files directly specify the fraction
                 try:
                     fraction = float(constituent.Fraction)
                     fractions[constituent] = fraction
+                    has_explicit_fractions = True
                     logger.debug(f"Using explicit fraction {fraction} for {constituent_name}")
-                    continue
                 except (ValueError, TypeError):
                     logger.debug(f"Failed to convert fraction value for {constituent_name}")
-                    pass
+        
+        # If any explicit fractions were found, normalize and return them
+        if has_explicit_fractions:
+            total = sum(fractions.values())
+            if total > 0:
+                fractions = {constituent: fraction / total for constituent, fraction in fractions.items()}
+                logger.debug(f"Normalized explicit fractions, total: {total}")
             
-            # Otherwise try to get width/thickness information
-            for element in associated_elements:
-                for rel in getattr(element, 'IsDefinedBy', []):
-                    if rel.is_a('IfcRelDefinesByProperties'):
-                        prop_def = rel.RelatingPropertyDefinition
-                        
-                        # Check in element quantities
-                        if prop_def.is_a('IfcElementQuantity'):
-                            for quantity in prop_def.Quantities:
-                                if quantity.is_a('IfcQuantityLength') and constituent_name and (quantity.Name == constituent_name or constituent_name in quantity.Name):
-                                    try:
-                                        width_mm = float(quantity.LengthValue) * unit_scale_to_mm
-                                        logger.debug(f"Found width {width_mm}mm for {constituent_name}")
-                                        break
-                                    except (ValueError, TypeError):
-                                        logger.debug(f"Failed to convert length value for {constituent_name}")
-                                        pass
+            # For constituents without explicit fractions, distribute remaining equally
+            constituents_without_fractions = [c for c in constituents if c not in fractions]
+            if constituents_without_fractions:
+                remaining = 1.0 - sum(fractions.values())
+                equal_fraction = remaining / len(constituents_without_fractions)
+                for constituent in constituents_without_fractions:
+                    fractions[constituent] = equal_fraction
+                    logger.debug(f"Assigned remaining fraction {equal_fraction} to {constituent.Name}")
+            
+            # Set widths to 0 since we don't need them
+            constituent_widths = {constituent: 0.0 for constituent in constituents}
+            return fractions, constituent_widths
+        
+        # Otherwise, try to get widths from quantities
+        for constituent in constituents:
+            constituent_name = (constituent.Name or "Unnamed Constituent").strip().lower()
+            count = constituent_indices.get(constituent_name, 0)
+            constituent_indices[constituent_name] = count + 1
+            
+            width_mm = 0.0
+            quantities_with_name = quantity_name_map.get(constituent_name, [])
+            
+            # Try to find matching quantity by name and index
+            if count < len(quantities_with_name):
+                matched_quantity = quantities_with_name[count]
+                # Extract 'Width' sub-quantity
+                for sub_q in getattr(matched_quantity, 'HasQuantities', []):
+                    if sub_q.is_a('IfcQuantityLength') and (sub_q.Name or '').strip().lower() == 'width':
+                        try:
+                            raw_length_value = getattr(sub_q, 'LengthValue', 0.0)
+                            width_mm = raw_length_value * unit_scale_to_mm
+                            logger.debug(f"Found width {width_mm}mm for {constituent_name} from complex quantity")
+                            break
+                        except (ValueError, TypeError):
+                            logger.debug(f"Failed to convert width value for {constituent_name}")
+            
+            # If no width found in complex quantities, try standard quantities
+            if width_mm == 0.0:
+                for quantity in quantities:
+                    if quantity.is_a('IfcQuantityLength'):
+                        try:
+                            quantity_name = (quantity.Name or '').strip().lower()
+                            if quantity_name == constituent_name or constituent_name in quantity_name:
+                                width_mm = float(quantity.LengthValue) * unit_scale_to_mm
+                                logger.debug(f"Found width {width_mm}mm for {constituent_name} from standard quantity")
+                                break
+                        except (ValueError, TypeError):
+                            continue
             
             constituent_widths[constituent] = width_mm
             total_width_mm += width_mm
@@ -696,17 +747,100 @@ def get_ifc_elements(model_id: str):
                     if not has_material_volumes and "Material.Layers" in element_data["properties"]:
                         logger.debug(f"Using Material.Layers fallback for element {element.GlobalId}")
                         material_layers_string = element_data["properties"]["Material.Layers"]
-                        material_volumes = extract_material_layers_from_string(material_layers_string)
                         
-                        if material_volumes:
-                            # Calculate volumes if we have a total element volume
-                            if element_volume_value:
+                        # Try to get actual layer thicknesses from any material layer set in the project
+                        material_names = []
+                        material_layers_map = {}
+                        
+                        # Extract material names from the Material.Layers string
+                        layers = [layer.strip() for layer in material_layers_string.split('|')]
+                        for layer in layers:
+                            if '(' in layer and ')' in layer:
+                                name_part = layer[:layer.rfind('(')].strip()
+                                material_names.append(name_part)
+                            else:
+                                material_names.append(layer.strip())
+                        
+                        # Look for corresponding material layer sets in the project
+                        material_layer_sets = []
+                        all_rel_materials = list(ifc_file.by_type("IfcRelAssociatesMaterial"))
+                        
+                        for rel_material in all_rel_materials:
+                            relating_material = rel_material.RelatingMaterial
+                            if relating_material.is_a('IfcMaterialLayerSet') or relating_material.is_a('IfcMaterialLayerSetUsage'):
+                                layer_set = relating_material if relating_material.is_a('IfcMaterialLayerSet') else relating_material.ForLayerSet
+                                if layer_set and layer_set.MaterialLayers:
+                                    material_layer_sets.append(layer_set)
+                        
+                        logger.debug(f"Found {len(material_layer_sets)} material layer sets in the project")
+                        
+                        # Try to match material names to layer sets
+                        for material_name in material_names:
+                            for layer_set in material_layer_sets:
+                                for layer in layer_set.MaterialLayers:
+                                    if layer.Material and layer.Material.Name == material_name:
+                                        material_layers_map[material_name] = layer
+                                        logger.debug(f"Matched material {material_name} to layer with thickness {layer.LayerThickness}")
+                                        break
+                        
+                        # If we found any matches, use those for calculating fractions
+                        if material_layers_map:
+                            logger.debug(f"Using actual layer thicknesses for {len(material_layers_map)} materials")
+                            total_thickness = sum(layer.LayerThickness for layer in material_layers_map.values() if hasattr(layer, 'LayerThickness'))
+                            
+                            if total_thickness > 0:
+                                material_volumes = {}
+                                for name, layer in material_layers_map.items():
+                                    if hasattr(layer, 'LayerThickness'):
+                                        fraction = layer.LayerThickness / total_thickness
+                                        material_volumes[name] = {
+                                            "fraction": _round_value(fraction, 5),
+                                            "width": _round_value(layer.LayerThickness, 5)
+                                        }
+                                        logger.debug(f"Material {name}: thickness={layer.LayerThickness}, fraction={fraction}")
+                                
+                                # For materials without matches, distribute the remaining fraction equally
+                                unmatched_materials = [name for name in material_names if name not in material_layers_map]
+                                if unmatched_materials:
+                                    remaining_fraction = 1.0 - sum(info["fraction"] for info in material_volumes.values())
+                                    equal_fraction = remaining_fraction / len(unmatched_materials) if unmatched_materials else 0
+                                    
+                                    for name in unmatched_materials:
+                                        material_volumes[name] = {
+                                            "fraction": _round_value(equal_fraction, 5)
+                                        }
+                                        logger.debug(f"Unmatched material {name}: assigned equal fraction {equal_fraction}")
+                                
+                                # Add volumes if we have element volume
+                                if element_volume_value:
+                                    for material_name, info in material_volumes.items():
+                                        fraction = info["fraction"]
+                                        material_volumes[material_name]["volume"] = _round_value(element_volume_value * fraction, 5)
+                                
+                                element_data["material_volumes"] = material_volumes
+                                logger.debug(f"Created material volumes with actual thicknesses: {material_volumes}")
+                            else:
+                                # Fall back to string parsing
+                                material_volumes = extract_material_layers_from_string(material_layers_string)
+                                
+                                if material_volumes and element_volume_value:
+                                    for material_name, info in material_volumes.items():
+                                        fraction = info["fraction"]
+                                        material_volumes[material_name]["volume"] = _round_value(element_volume_value * fraction, 5)
+                                
+                                element_data["material_volumes"] = material_volumes
+                                logger.debug(f"Extracted {len(material_volumes)} materials from Material.Layers string (fallback)")
+                        else:
+                            # Fall back to string parsing
+                            material_volumes = extract_material_layers_from_string(material_layers_string)
+                            
+                            if material_volumes and element_volume_value:
                                 for material_name, info in material_volumes.items():
                                     fraction = info["fraction"]
                                     material_volumes[material_name]["volume"] = _round_value(element_volume_value * fraction, 5)
                             
                             element_data["material_volumes"] = material_volumes
-                            logger.debug(f"Extracted {len(material_volumes)} materials from Material.Layers string")
+                            logger.debug(f"Extracted {len(material_volumes)} materials from Material.Layers string (no matches found)")
                     
                     # Remove material_volumes if empty
                     if not element_data["material_volumes"]:
