@@ -17,6 +17,18 @@ export interface IFCElement {
   name: string | null;
   description: string | null;
   properties: Record<string, string>;
+  material_volumes?: Record<
+    string,
+    {
+      fraction: number;
+      volume?: number;
+      width?: number;
+    }
+  >;
+  volume?: {
+    net: number | null;
+    gross: number | null;
+  };
 }
 
 export interface EBKPItem {
