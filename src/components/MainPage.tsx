@@ -943,11 +943,21 @@ const MainPage = () => {
         )}
 
         {/* IFC Elements List */}
-        <IfcElementsList
-          elements={ifcElements}
-          loading={ifcLoading}
-          error={ifcError}
-        />
+        <div
+          className="border border-gray-200 rounded-md"
+          style={{
+            height: "400px",
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <IfcElementsList
+            elements={ifcElements}
+            loading={ifcLoading}
+            error={ifcError}
+          />
+        </div>
       </div>
     </div>
   );
