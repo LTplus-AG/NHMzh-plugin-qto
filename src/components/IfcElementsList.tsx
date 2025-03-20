@@ -19,11 +19,13 @@ import {
   FormControl,
   Select,
   MenuItem,
+  TextField,
 } from "@mui/material";
 import { IFCElement } from "../types/types";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import InfoIcon from "@mui/icons-material/Info";
+import EditIcon from "@mui/icons-material/Edit";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -36,13 +38,28 @@ interface IfcElementsListProps {
   error: string | null;
 }
 
+interface EbkpGroup {
+  code: string;
+  name: string | null;
+  elements: IFCElement[];
+}
+
+interface EditedArea {
+  originalArea: number | null | undefined;
+  newArea: number | null | undefined;
+}
+
 const IfcElementsList = ({
   elements,
   loading,
   error,
 }: IfcElementsListProps) => {
+  const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
   const [classificationFilter, setClassificationFilter] = useState<string>("");
+  const [editedElements, setEditedElements] = useState<
+    Record<string, EditedArea>
+  >({});
 
   // Get unique classification IDs
   const uniqueClassifications = React.useMemo(() => {
@@ -76,44 +93,73 @@ const IfcElementsList = ({
     );
   }, [elements]);
 
-  // Apply filter to elements
-  const filteredElements = React.useMemo(() => {
+  // Apply filter and group by EBKP
+  const ebkpGroups = React.useMemo(() => {
     // First filter by classification presence - only show elements with BOTH id and name
     const elementsWithValidClassification = elements.filter(
-      (el) => el.classification_id && el.classification_name
+      (el) =>
+        el.classification_id &&
+        el.classification_name &&
+        el.classification_system === "EBKP"
     );
 
     console.log(
-      `Filtered to ${elementsWithValidClassification.length} elements with complete classification data`
+      `Filtered to ${elementsWithValidClassification.length} elements with complete EBKP classification data`
     );
 
     // Then apply any user-selected filter
-    if (!classificationFilter) return elementsWithValidClassification;
+    const filteredElements = !classificationFilter
+      ? elementsWithValidClassification
+      : (() => {
+          const [system, identifier] = classificationFilter.split("-");
+          return elementsWithValidClassification.filter((el) => {
+            if (identifier.includes(" ")) {
+              // Filtering by name
+              return (
+                el.classification_system === system &&
+                el.classification_name &&
+                el.classification_name.includes(identifier)
+              );
+            } else {
+              // Filtering by ID
+              return (
+                el.classification_system === system &&
+                el.classification_id === identifier
+              );
+            }
+          });
+        })();
 
-    const [system, identifier] = classificationFilter.split("-");
+    // Group by EBKP code
+    const groupedElements = new Map<string, EbkpGroup>();
 
-    return elementsWithValidClassification.filter((el) => {
-      if (identifier.includes(" ")) {
-        // Filtering by name
-        return (
-          el.classification_system === system &&
-          el.classification_name &&
-          el.classification_name.includes(identifier)
-        );
-      } else {
-        // Filtering by ID
-        return (
-          el.classification_system === system &&
-          el.classification_id === identifier
-        );
+    filteredElements.forEach((element) => {
+      if (!element.classification_id) return;
+
+      const ebkpCode = element.classification_id;
+
+      if (!groupedElements.has(ebkpCode)) {
+        groupedElements.set(ebkpCode, {
+          code: ebkpCode,
+          name: element.classification_name || null,
+          elements: [],
+        });
       }
+
+      groupedElements.get(ebkpCode)?.elements.push(element);
     });
+
+    // Convert to array and sort by EBKP code
+    return Array.from(groupedElements.values()).sort((a, b) =>
+      a.code.localeCompare(b.code)
+    );
   }, [elements, classificationFilter]);
 
   // Debug logging
   useEffect(() => {
     console.log(`Loaded ${elements.length} IFC elements`);
     console.log("Target IFC classes:", TARGET_IFC_CLASSES);
+    console.log(`Grouped into ${ebkpGroups.length} EBKP classifications`);
 
     // Debug specific element data to check for level information
     if (elements.length > 0) {
@@ -153,7 +199,7 @@ const IfcElementsList = ({
         console.log("Sample elements:", elements.slice(0, 3));
       }
     }
-  }, [elements]);
+  }, [elements, ebkpGroups]);
 
   // Debug logging for classification data
   useEffect(() => {
@@ -335,7 +381,53 @@ const IfcElementsList = ({
     }
   }, [elements]);
 
-  const toggleExpand = (id: string) => {
+  // Handle area edit
+  const handleAreaChange = (
+    elementId: string,
+    originalArea: number | null | undefined,
+    newValue: string
+  ) => {
+    const newArea = newValue === "" ? null : parseFloat(newValue);
+
+    setEditedElements((prev) => {
+      // If the new value is the same as original, remove from edited elements
+      if (newArea === originalArea) {
+        const newEdited = { ...prev };
+        delete newEdited[elementId];
+        return newEdited;
+      }
+
+      // Otherwise update with new value
+      return {
+        ...prev,
+        [elementId]: {
+          originalArea,
+          newArea,
+        },
+      };
+    });
+  };
+
+  // Reset all edits
+  const resetEdits = () => {
+    setEditedElements({});
+  };
+
+  // Get count of edited elements
+  const editedElementsCount = Object.keys(editedElements).length;
+
+  const toggleExpandEbkp = (code: string) => {
+    setExpandedEbkp((prev) => {
+      // If code is already in the array, remove it (collapse)
+      if (prev.includes(code)) {
+        return prev.filter((ebkpCode) => ebkpCode !== code);
+      }
+      // Otherwise add it to the array (expand)
+      return [...prev, code];
+    });
+  };
+
+  const toggleExpandElement = (id: string) => {
     setExpandedElements((prev) => {
       // If id is already in the array, remove it (collapse)
       if (prev.includes(id)) {
@@ -386,10 +478,11 @@ const IfcElementsList = ({
     return element.materials || [];
   };
 
-  // Function to get a unique index for React keys
-  const getUniqueKey = (index: number, element: IFCElement) => {
-    return `el-${index}-${element.id.substring(0, 8)}`;
-  };
+  // Count total elements in all EBKP groups
+  const totalFilteredElements = ebkpGroups.reduce(
+    (sum, group) => sum + group.elements.length,
+    0
+  );
 
   return (
     <div
@@ -397,100 +490,130 @@ const IfcElementsList = ({
         height: "100%",
         display: "flex",
         flexDirection: "column",
+        overflow: "hidden",
       }}
     >
-      <div className="flex items-center mb-3">
-        <Typography variant="h5" className="mr-2">
-          QTO Elemente ({filteredElements.length})
-        </Typography>
-        {TARGET_IFC_CLASSES && TARGET_IFC_CLASSES.length > 0 && (
-          <Tooltip
-            title={
-              <div>
-                <p>Nur folgende IFC-Klassen werden berücksichtigt:</p>
-                <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
-                  {TARGET_IFC_CLASSES.map((cls: string) => (
-                    <li key={cls}>{cls}</li>
-                  ))}
-                </ul>
-              </div>
-            }
-            arrow
-          >
-            <Badge color="info" variant="dot" sx={{ cursor: "pointer" }}>
-              <InfoIcon fontSize="small" color="action" />
-            </Badge>
-          </Tooltip>
-        )}
+      <div
+        className="flex items-center mb-3"
+        style={{ justifyContent: "space-between" }}
+      >
+        <div className="flex items-center">
+          <Typography variant="h5" className="mr-2">
+            QTO Elemente ({totalFilteredElements})
+          </Typography>
+          {TARGET_IFC_CLASSES && TARGET_IFC_CLASSES.length > 0 && (
+            <Tooltip
+              title={
+                <div>
+                  <p>Nur folgende IFC-Klassen werden berücksichtigt:</p>
+                  <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
+                    {TARGET_IFC_CLASSES.map((cls: string) => (
+                      <li key={cls}>{cls}</li>
+                    ))}
+                  </ul>
+                </div>
+              }
+              arrow
+            >
+              <Badge color="info" variant="dot" sx={{ cursor: "pointer" }}>
+                <InfoIcon fontSize="small" color="action" />
+              </Badge>
+            </Tooltip>
+          )}
+        </div>
 
-        {uniqueClassifications.length > 0 && (
-          <div className="ml-auto flex items-center">
-            <Typography variant="body2" className="mr-2">
-              Filter nach Klassifikation:
-            </Typography>
-            <FormControl size="small" sx={{ minWidth: 240 }}>
-              <Select
-                value={classificationFilter}
-                onChange={(e) => setClassificationFilter(e.target.value)}
-                displayEmpty
-              >
-                <MenuItem value="">
-                  <em>Alle anzeigen</em>
-                </MenuItem>
-                {uniqueClassifications.map((cls, index) => {
-                  const displayValue = cls.id
-                    ? `${cls.system} ${cls.id} - ${
-                        cls.name?.substring(0, 30) || ""
-                      }`
-                    : `${cls.system} ${cls.name?.substring(0, 40) || ""}`;
-                  const filterValue = cls.id
-                    ? `${cls.system}-${cls.id}`
-                    : `${cls.system}-${cls.name}`;
-                  return (
-                    <MenuItem
-                      key={`cls-${index}-${filterValue}`}
-                      value={filterValue}
-                    >
-                      {displayValue}
-                    </MenuItem>
-                  );
-                })}
-              </Select>
-            </FormControl>
-          </div>
-        )}
+        <div className="flex items-center" style={{ gap: "16px" }}>
+          {editedElementsCount > 0 && (
+            <Tooltip title="Änderungen zurücksetzen">
+              <Chip
+                label={`${editedElementsCount} Element${
+                  editedElementsCount > 1 ? "e" : ""
+                } bearbeitet`}
+                color="warning"
+                onDelete={resetEdits}
+              />
+            </Tooltip>
+          )}
+
+          {uniqueClassifications.length > 0 && (
+            <div className="flex items-center">
+              <Typography variant="body2" className="mr-2">
+                Filter nach Klassifikation:
+              </Typography>
+              <FormControl size="small" sx={{ minWidth: 240 }}>
+                <Select
+                  value={classificationFilter}
+                  onChange={(e) => setClassificationFilter(e.target.value)}
+                  displayEmpty
+                >
+                  <MenuItem value="">
+                    <em>Alle anzeigen</em>
+                  </MenuItem>
+                  {uniqueClassifications.map((cls, index) => {
+                    const displayValue = cls.id
+                      ? `${cls.system} ${cls.id} - ${
+                          cls.name?.substring(0, 30) || ""
+                        }`
+                      : `${cls.system} ${cls.name?.substring(0, 40) || ""}`;
+                    const filterValue = cls.id
+                      ? `${cls.system}-${cls.id}`
+                      : `${cls.system}-${cls.name}`;
+                    return (
+                      <MenuItem
+                        key={`cls-${index}-${filterValue}`}
+                        value={filterValue}
+                      >
+                        {displayValue}
+                      </MenuItem>
+                    );
+                  })}
+                </Select>
+              </FormControl>
+            </div>
+          )}
+        </div>
       </div>
       <TableContainer
         component={Paper}
         elevation={2}
-        style={{ flexGrow: 1, height: "calc(100% - 40px)", overflow: "auto" }}
+        style={{
+          flexGrow: 1,
+          height: "calc(100% - 40px)",
+          maxHeight: "calc(100vh - 180px)",
+          overflow: "auto",
+          paddingTop: "12px",
+        }}
       >
         <Table stickyHeader>
           <TableHead>
             <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.08)" }}>
               <TableCell width="50px" />
-              <TableCell>ID</TableCell>
-              <TableCell>Kategorie</TableCell>
-              <TableCell>Ebene</TableCell>
-              <TableCell>Fläche (m²)</TableCell>
-              <TableCell>Klassifikation</TableCell>
-              <TableCell>Eigenschaften</TableCell>
+              <TableCell>EBKP</TableCell>
+              <TableCell>Bezeichnung</TableCell>
+              <TableCell>Anzahl Elemente</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredElements.map((element, index) => {
-              const category = element.category || element.type;
-              const level = element.level || "unbekannt";
-              const uniqueKey = getUniqueKey(index, element);
+            {ebkpGroups.map((group) => {
+              const isExpanded = expandedEbkp.includes(group.code);
+              // Check if group has any edited elements
+              const hasEditedElements = group.elements.some(
+                (el) => editedElements[el.id]
+              );
 
               return (
-                <React.Fragment key={uniqueKey}>
+                <React.Fragment key={`ebkp-${group.code}`}>
                   <TableRow
                     sx={{
                       "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.04)" },
                       cursor: "pointer",
+                      backgroundColor: isExpanded
+                        ? "rgba(0, 0, 255, 0.04)"
+                        : hasEditedElements
+                        ? "rgba(255, 152, 0, 0.08)"
+                        : "inherit",
                     }}
-                    onClick={() => toggleExpand(element.id)}
+                    onClick={() => toggleExpandEbkp(group.code)}
                   >
                     <TableCell>
                       <IconButton
@@ -498,214 +621,333 @@ const IfcElementsList = ({
                         size="small"
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleExpand(element.id);
+                          toggleExpandEbkp(group.code);
                         }}
                       >
-                        {expandedElements.includes(element.id) ? (
+                        {isExpanded ? (
                           <KeyboardArrowUpIcon />
                         ) : (
                           <KeyboardArrowDownIcon />
                         )}
                       </IconButton>
                     </TableCell>
-                    <TableCell>{element.global_id || element.id}</TableCell>
-                    <TableCell>{category}</TableCell>
-                    <TableCell>{level}</TableCell>
                     <TableCell>
-                      {element.area ? formatNumber(element.area) : "-"}
-                    </TableCell>
-                    <TableCell>
-                      {element.classification_id ||
-                      element.classification_name ? (
-                        <Tooltip
-                          title={
-                            <>
-                              {element.classification_id && (
-                                <div style={{ padding: "4px 0" }}>
-                                  <strong>ID:</strong>{" "}
-                                  {element.classification_id}
-                                </div>
-                              )}
-                              {!element.classification_id &&
-                                element.classification_system === "EBKP" &&
-                                element.classification_name && (
-                                  <div style={{ padding: "4px 0" }}>
-                                    <strong>Note:</strong> No classification ID
-                                    found in model
-                                  </div>
-                                )}
-                              {element.classification_name && (
-                                <div style={{ padding: "4px 0" }}>
-                                  <strong>Name:</strong>{" "}
-                                  {element.classification_name}
-                                </div>
-                              )}
-                              {element.classification_system && (
-                                <div style={{ padding: "4px 0" }}>
-                                  <strong>System:</strong>{" "}
-                                  {element.classification_system}
-                                </div>
-                              )}
-                            </>
-                          }
-                        >
-                          <Chip
-                            label={
-                              element.classification_id ||
-                              (element.classification_name
-                                ? element.classification_name.substring(0, 20) +
-                                  (element.classification_name.length > 20
-                                    ? "..."
-                                    : "")
-                                : "") ||
-                              `${element.classification_system || ""}`
-                            }
-                            size="small"
-                            color={
-                              element.classification_id ? "info" : "default"
-                            }
-                            sx={{ mr: 1, mb: 0.5 }}
-                          />
-                        </Tooltip>
-                      ) : (
-                        "-"
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {element.is_structural && (
-                        <Chip
-                          label="Tragend"
-                          size="small"
-                          color="primary"
-                          variant="outlined"
-                          sx={{ mr: 1, mb: 0.5 }}
-                        />
-                      )}
-                      {element.is_external && (
-                        <Chip
-                          label="Außen"
-                          size="small"
-                          color="secondary"
-                          variant="outlined"
-                          sx={{ mr: 1, mb: 0.5 }}
-                        />
-                      )}
-                      {element.ebkph && (
-                        <Chip
-                          label={`EBKPH: ${element.ebkph}`}
-                          size="small"
-                          color="default"
-                          variant="outlined"
-                          sx={{ mb: 0.5, mr: 1 }}
+                      <strong>{group.code}</strong>
+                      {hasEditedElements && (
+                        <EditIcon
+                          fontSize="small"
+                          sx={{
+                            ml: 1,
+                            verticalAlign: "middle",
+                            color: "warning.main",
+                          }}
                         />
                       )}
                     </TableCell>
+                    <TableCell>{group.name}</TableCell>
+                    <TableCell>{group.elements.length}</TableCell>
                   </TableRow>
-                  <TableRow key={`${uniqueKey}-details`}>
+
+                  {/* Expanded EBKP elements */}
+                  <TableRow>
                     <TableCell
                       style={{ paddingBottom: 0, paddingTop: 0 }}
-                      colSpan={7}
+                      colSpan={4}
                     >
-                      <Collapse
-                        in={expandedElements.includes(element.id)}
-                        timeout="auto"
-                        unmountOnExit
-                      >
+                      <Collapse in={isExpanded} timeout="auto" unmountOnExit>
                         <Box sx={{ margin: 1 }}>
-                          {/* Classification Section */}
-                          {(element.classification_id ||
-                            element.classification_name ||
-                            element.classification_system) && (
-                            <>
-                              <Typography
-                                variant="h6"
-                                gutterBottom
-                                component="div"
-                              >
-                                Klassifikation
-                              </Typography>
-                              <Table
-                                size="small"
-                                aria-label="classification"
-                                sx={{ mb: 3 }}
-                              >
-                                <TableHead>
-                                  <TableRow>
-                                    <TableCell>System</TableCell>
-                                    <TableCell>Code</TableCell>
-                                    <TableCell>Beschreibung</TableCell>
-                                  </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                  <TableRow>
-                                    <TableCell>
-                                      {element.classification_system || "-"}
-                                    </TableCell>
-                                    <TableCell>
-                                      {element.classification_id ? (
-                                        <Chip
-                                          label={element.classification_id}
-                                          size="small"
-                                          color="info"
-                                        />
-                                      ) : (
-                                        "-"
-                                      )}
-                                    </TableCell>
-                                    <TableCell>
-                                      {element.classification_name || "-"}
-                                    </TableCell>
-                                  </TableRow>
-                                </TableBody>
-                              </Table>
-                            </>
-                          )}
-
-                          {/* Materials Section */}
                           <Typography variant="h6" gutterBottom component="div">
-                            Materialien
+                            Elemente ({group.elements.length})
                           </Typography>
-                          <Table size="small" aria-label="materials">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Material</TableCell>
-                                <TableCell>Anteil (%)</TableCell>
-                                <TableCell>Volumen (m³)</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {getElementMaterials(element).map(
-                                (material, materialIndex) => (
-                                  <TableRow
-                                    key={`material-${uniqueKey}-${materialIndex}`}
-                                  >
-                                    <TableCell component="th" scope="row">
-                                      {material.name}
-                                    </TableCell>
-                                    <TableCell>
-                                      {material.fraction !== undefined
-                                        ? `${(material.fraction * 100).toFixed(
-                                            1
-                                          )}%`
-                                        : "-"}
-                                    </TableCell>
-                                    <TableCell>
-                                      {material.volume !== undefined
-                                        ? formatNumber(material.volume)
-                                        : "-"}
-                                    </TableCell>
-                                  </TableRow>
-                                )
-                              )}
-                              {getElementMaterials(element).length === 0 && (
-                                <TableRow>
-                                  <TableCell colSpan={3}>
-                                    Keine Materialinformationen verfügbar
-                                  </TableCell>
+                          <TableContainer
+                            sx={{
+                              maxHeight: "50vh",
+                              overflow: "auto",
+                              border: "1px solid rgba(224, 224, 224, 1)",
+                              borderRadius: 1,
+                            }}
+                          >
+                            <Table size="small" stickyHeader>
+                              <TableHead>
+                                <TableRow
+                                  sx={{
+                                    backgroundColor: "rgba(0, 0, 0, 0.05)",
+                                  }}
+                                >
+                                  <TableCell width="50px" />
+                                  <TableCell>ID</TableCell>
+                                  <TableCell>Kategorie</TableCell>
+                                  <TableCell>Ebene</TableCell>
+                                  <TableCell>Fläche (m²)</TableCell>
+                                  <TableCell>Eigenschaften</TableCell>
                                 </TableRow>
-                              )}
-                            </TableBody>
-                          </Table>
+                              </TableHead>
+                              <TableBody>
+                                {group.elements.map((element, elementIndex) => {
+                                  const isElementExpanded =
+                                    expandedElements.includes(element.id);
+                                  const category =
+                                    element.category || element.type;
+                                  const level = element.level || "unbekannt";
+                                  const uniqueKey = `${
+                                    group.code
+                                  }-${elementIndex}-${element.id.substring(
+                                    0,
+                                    8
+                                  )}`;
+
+                                  // Check if this element has been edited
+                                  const isEdited =
+                                    editedElements[element.id] !== undefined;
+                                  const editedArea = isEdited
+                                    ? editedElements[element.id].newArea
+                                    : null;
+
+                                  return (
+                                    <React.Fragment key={uniqueKey}>
+                                      <TableRow
+                                        sx={{
+                                          "&:hover": {
+                                            backgroundColor:
+                                              "rgba(0, 0, 0, 0.02)",
+                                          },
+                                          cursor: "pointer",
+                                          backgroundColor: isEdited
+                                            ? "rgba(255, 152, 0, 0.08)"
+                                            : "inherit",
+                                        }}
+                                        onClick={() =>
+                                          toggleExpandElement(element.id)
+                                        }
+                                      >
+                                        <TableCell>
+                                          <IconButton
+                                            aria-label="expand element"
+                                            size="small"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              toggleExpandElement(element.id);
+                                            }}
+                                          >
+                                            {isElementExpanded ? (
+                                              <KeyboardArrowUpIcon />
+                                            ) : (
+                                              <KeyboardArrowDownIcon />
+                                            )}
+                                          </IconButton>
+                                        </TableCell>
+                                        <TableCell>
+                                          {element.global_id || element.id}
+                                          {isEdited && (
+                                            <EditIcon
+                                              fontSize="small"
+                                              sx={{
+                                                ml: 1,
+                                                verticalAlign: "middle",
+                                                color: "warning.main",
+                                              }}
+                                            />
+                                          )}
+                                        </TableCell>
+                                        <TableCell>{category}</TableCell>
+                                        <TableCell>{level}</TableCell>
+                                        <TableCell
+                                          sx={{
+                                            position: "relative",
+                                            ...(isEdited && {
+                                              backgroundColor:
+                                                "rgba(255, 152, 0, 0.15)",
+                                              borderRadius: 1,
+                                            }),
+                                          }}
+                                        >
+                                          <TextField
+                                            variant="standard"
+                                            size="small"
+                                            type="number"
+                                            inputProps={{
+                                              step: "0.001",
+                                              style: { textAlign: "center" },
+                                            }}
+                                            value={
+                                              isEdited
+                                                ? editedArea === null
+                                                  ? ""
+                                                  : editedArea
+                                                : element.area === null ||
+                                                  element.area === undefined
+                                                ? ""
+                                                : element.area
+                                            }
+                                            onChange={(e) =>
+                                              handleAreaChange(
+                                                element.id,
+                                                element.area,
+                                                e.target.value
+                                              )
+                                            }
+                                            sx={{
+                                              width: "100%",
+                                              "& .MuiInput-root": {
+                                                "&:before, &:after": {
+                                                  borderBottom: isEdited
+                                                    ? "2px solid orange"
+                                                    : undefined,
+                                                },
+                                              },
+                                            }}
+                                          />
+                                          {isEdited && (
+                                            <Typography
+                                              variant="caption"
+                                              sx={{
+                                                display: "block",
+                                                color: "text.secondary",
+                                                textAlign: "center",
+                                                fontSize: "0.7rem",
+                                              }}
+                                            >
+                                              (Original:{" "}
+                                              {formatNumber(
+                                                editedElements[element.id]
+                                                  .originalArea
+                                              )}
+                                              )
+                                            </Typography>
+                                          )}
+                                        </TableCell>
+                                        <TableCell>
+                                          {element.is_structural && (
+                                            <Chip
+                                              label="Tragend"
+                                              size="small"
+                                              color="primary"
+                                              variant="outlined"
+                                              sx={{ mr: 1, mb: 0.5 }}
+                                            />
+                                          )}
+                                          {element.is_external && (
+                                            <Chip
+                                              label="Außen"
+                                              size="small"
+                                              color="secondary"
+                                              variant="outlined"
+                                              sx={{ mr: 1, mb: 0.5 }}
+                                            />
+                                          )}
+                                          {element.ebkph && (
+                                            <Chip
+                                              label={`EBKPH: ${element.ebkph}`}
+                                              size="small"
+                                              color="default"
+                                              variant="outlined"
+                                              sx={{ mb: 0.5, mr: 1 }}
+                                            />
+                                          )}
+                                        </TableCell>
+                                      </TableRow>
+
+                                      {/* Element details when expanded */}
+                                      <TableRow>
+                                        <TableCell
+                                          style={{
+                                            paddingBottom: 0,
+                                            paddingTop: 0,
+                                          }}
+                                          colSpan={6}
+                                        >
+                                          <Collapse
+                                            in={isElementExpanded}
+                                            timeout="auto"
+                                            unmountOnExit
+                                          >
+                                            <Box
+                                              sx={{ margin: 1, paddingLeft: 2 }}
+                                            >
+                                              {/* Materials Section */}
+                                              <Typography
+                                                variant="subtitle2"
+                                                gutterBottom
+                                                component="div"
+                                              >
+                                                Materialien
+                                              </Typography>
+                                              <Table
+                                                size="small"
+                                                aria-label="materials"
+                                              >
+                                                <TableHead>
+                                                  <TableRow>
+                                                    <TableCell>
+                                                      Material
+                                                    </TableCell>
+                                                    <TableCell>
+                                                      Anteil (%)
+                                                    </TableCell>
+                                                    <TableCell>
+                                                      Volumen (m³)
+                                                    </TableCell>
+                                                  </TableRow>
+                                                </TableHead>
+                                                <TableBody>
+                                                  {getElementMaterials(
+                                                    element
+                                                  ).map(
+                                                    (
+                                                      material,
+                                                      materialIndex
+                                                    ) => (
+                                                      <TableRow
+                                                        key={`material-${uniqueKey}-${materialIndex}`}
+                                                      >
+                                                        <TableCell
+                                                          component="th"
+                                                          scope="row"
+                                                        >
+                                                          {material.name}
+                                                        </TableCell>
+                                                        <TableCell>
+                                                          {material.fraction !==
+                                                          undefined
+                                                            ? `${(
+                                                                material.fraction *
+                                                                100
+                                                              ).toFixed(1)}%`
+                                                            : "-"}
+                                                        </TableCell>
+                                                        <TableCell>
+                                                          {material.volume !==
+                                                          undefined
+                                                            ? formatNumber(
+                                                                material.volume
+                                                              )
+                                                            : "-"}
+                                                        </TableCell>
+                                                      </TableRow>
+                                                    )
+                                                  )}
+                                                  {getElementMaterials(element)
+                                                    .length === 0 && (
+                                                    <TableRow>
+                                                      <TableCell colSpan={3}>
+                                                        Keine
+                                                        Materialinformationen
+                                                        verfügbar
+                                                      </TableCell>
+                                                    </TableRow>
+                                                  )}
+                                                </TableBody>
+                                              </Table>
+                                            </Box>
+                                          </Collapse>
+                                        </TableCell>
+                                      </TableRow>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
                         </Box>
                       </Collapse>
                     </TableCell>
@@ -713,6 +955,14 @@ const IfcElementsList = ({
                 </React.Fragment>
               );
             })}
+
+            {ebkpGroups.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={4} align="center">
+                  Keine Elemente mit EBKP-Klassifikation gefunden
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </TableContainer>
