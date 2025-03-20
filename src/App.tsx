@@ -1,9 +1,9 @@
-import { ThemeProvider } from "@emotion/react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 import MainPage from "./components/MainPage";
-import theme from "./theme";
 import "./App.css";
 import { setupAbortSignalPolyfill } from "./utils/abortSignalPolyfill";
+import { ThemeProvider } from "@emotion/react";
+import theme from "./theme";
 
 // Initialize polyfill for AbortSignal.timeout
 setupAbortSignalPolyfill();
@@ -17,13 +17,9 @@ console.log(
 function App() {
   return (
     <ThemeProvider theme={theme}>
-      <Router>
-        <div className="h-full w-full">
-          <Routes>
-            <Route path="/" element={<MainPage />} />
-          </Routes>
-        </div>
-      </Router>
+      <Routes>
+        <Route path="/" element={<MainPage />} />
+      </Routes>
     </ThemeProvider>
   );
 }

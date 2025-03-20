@@ -1,0 +1,61 @@
+# Stage 1: Development base with all dependencies
+FROM node:18-alpine AS dev
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm install --legacy-peer-deps
+
+# Fix TypeScript configs if needed
+COPY tsconfig*.json ./
+RUN echo "Fixing TypeScript configuration"
+RUN if grep -q "noUncheckedSideEffectImports" tsconfig.app.json; then \
+    sed -i 's/"noUncheckedSideEffectImports": true,//g' tsconfig.app.json; \
+    fi
+RUN if ! grep -q "\"composite\": true" tsconfig.app.json; then \
+    sed -i '/"tsBuildInfoFile"/i \    "composite": true,' tsconfig.app.json; \
+    fi
+RUN if ! grep -q "\"incremental\": true" tsconfig.app.json; then \
+    sed -i '/"tsBuildInfoFile"/i \    "incremental": true,' tsconfig.app.json; \
+    fi
+
+# Same for node config
+RUN if grep -q "noUncheckedSideEffectImports" tsconfig.node.json; then \
+    sed -i 's/"noUncheckedSideEffectImports": true,//g' tsconfig.node.json; \
+    fi
+RUN if ! grep -q "\"composite\": true" tsconfig.node.json; then \
+    sed -i '/"tsBuildInfoFile"/i \    "composite": true,' tsconfig.node.json; \
+    fi
+RUN if ! grep -q "\"incremental\": true" tsconfig.node.json; then \
+    sed -i '/"tsBuildInfoFile"/i \    "incremental": true,' tsconfig.node.json; \
+    fi
+
+# For development, we'll mount the source code as a volume
+# and run the dev server with hot reloading
+EXPOSE 3004
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3004"]
+
+# Stage 2: Build stage for production
+FROM dev AS build
+
+# Copy the rest of the source code for production build
+COPY . .
+
+# Build the application
+RUN npm run build
+
+# Stage 3: Serve the application with Nginx for production
+FROM nginx:alpine AS prod
+
+# Copy the built files from the build stage
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# Copy custom Nginx configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Expose port 80
+EXPOSE 80
+
+# Command to run Nginx in the foreground
+CMD ["nginx", "-g", "daemon off;"] 

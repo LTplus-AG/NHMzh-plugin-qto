@@ -34,36 +34,21 @@ const IfcElementsList = ({
 
   // Debug logging
   useEffect(() => {
-    console.log("Elements data:", elements);
-    // Log any elements with Material.Layers property
-    const elementsWithLayers = elements.filter(
-      (el) => el.properties && el.properties["Material.Layers"]
-    );
-    if (elementsWithLayers.length > 0) {
-      console.log(
-        "Found elements with Material.Layers:",
-        elementsWithLayers.length
-      );
-      console.log("First element with layers:", elementsWithLayers[0]);
-    }
+    // Only log the count of elements
+    console.log(`Loaded ${elements.length} IFC elements`);
 
-    // Log any elements with material_volumes
+    // Just count elements with material volumes without detailed logging
     const elementsWithVolumes = elements.filter(
       (el) => el.material_volumes && Object.keys(el.material_volumes).length > 0
     );
     if (elementsWithVolumes.length > 0) {
       console.log(
-        "Found elements with material_volumes:",
-        elementsWithVolumes.length
+        `Found ${elementsWithVolumes.length} elements with material_volumes`
       );
-      console.log("First element with volumes:", elementsWithVolumes[0]);
-    } else {
-      console.log("No elements with material_volumes found");
     }
   }, [elements]);
 
   const toggleExpand = (id: string) => {
-    console.log("Expanded element:", id);
     setExpandedElement(expandedElement === id ? null : id);
   };
 
@@ -109,9 +94,6 @@ const IfcElementsList = ({
       return element.properties;
     }
 
-    console.log("Filtering properties for element:", element.global_id);
-    console.log("Before filtering:", element.properties);
-
     // Otherwise, filter out Material.Layers property
     const filteredProperties: Record<string, string> = {};
     for (const [key, value] of Object.entries(element.properties)) {
@@ -120,7 +102,6 @@ const IfcElementsList = ({
       }
     }
 
-    console.log("After filtering:", filteredProperties);
     return filteredProperties;
   };
 
@@ -150,17 +131,7 @@ const IfcElementsList = ({
           </TableHead>
           <TableBody>
             {elements.map((element) => {
-              // Debug log when rendering each element
-              if (expandedElement === element.id) {
-                console.log("Rendering expanded element:", element);
-                console.log(
-                  "Has material_volumes:",
-                  element.material_volumes
-                    ? Object.keys(element.material_volumes).length
-                    : "none"
-                );
-              }
-
+              // No debug logs needed here
               return (
                 <>
                   <TableRow
@@ -264,41 +235,6 @@ const IfcElementsList = ({
                                 <Divider sx={{ my: 2 }} />
                               </>
                             )}
-
-                          {/* Add debug info about material_volumes */}
-                          {expandedElement === element.id && (
-                            <div
-                              style={{
-                                background: "#f5f5f5",
-                                padding: 8,
-                                marginBottom: 16,
-                                fontSize: 12,
-                              }}
-                            >
-                              <div>
-                                DEBUG: Has material_volumes:{" "}
-                                {element.material_volumes ? "Yes" : "No"}
-                              </div>
-                              {element.material_volumes && (
-                                <div>
-                                  Volume count:{" "}
-                                  {Object.keys(element.material_volumes).length}
-                                </div>
-                              )}
-                              {element.properties &&
-                                element.properties["Material.Layers"] && (
-                                  <div>
-                                    <div>
-                                      Has Material.Layers in properties: Yes
-                                    </div>
-                                    <div>
-                                      Value:{" "}
-                                      {element.properties["Material.Layers"]}
-                                    </div>
-                                  </div>
-                                )}
-                            </div>
-                          )}
 
                           {/* Volume Information */}
                           {element.volume && (

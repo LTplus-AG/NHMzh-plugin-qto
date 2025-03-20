@@ -1,0 +1,85 @@
+version: "3.8"
+
+services:
+  broker:
+    image: ${KAFKA_IMAGE}
+    hostname: ${KAFKA_BROKER_HOSTNAME}
+    container_name: ${KAFKA_CONTAINER_NAME}
+    ports:
+      - "${KAFKA_EXTERNAL_LISTENER_PORT}:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://${KAFKA_BROKER_HOSTNAME}:29092,PLAINTEXT_HOST://${KAFKA_BROKER_URL}:${KAFKA_EXTERNAL_LISTENER_PORT}"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@${KAFKA_BROKER_HOSTNAME}:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://${KAFKA_BROKER_HOSTNAME}:29092,CONTROLLER://${KAFKA_BROKER_HOSTNAME}:29093,PLAINTEXT_HOST://0.0.0.0:9092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    networks:
+      - ${NETWORK_NAME}
+
+  kafka-ui:
+    image: ${KAFKA_UI_IMAGE}
+    container_name: ${KAFKA_UI_CONTAINER_NAME}
+    hostname: ${KAFKA_UI_HOSTNAME}
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BROKER_HOSTNAME}:29092
+      KAFKA_CLUSTERS_0_KRAFT_ENABLED: "true"
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    networks:
+      - ${NETWORK_NAME}
+    depends_on:
+      - broker
+
+  qto-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: qto-backend
+    hostname: qto-backend
+    environment:
+      KAFKA_BROKER: broker:29092
+      KAFKA_QTO_TOPIC: ${KAFKA_QTO_TOPIC}
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - ${NETWORK_NAME}
+    depends_on:
+      - broker
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: dev
+    container_name: qto-frontend
+    environment:
+      VITE_API_URL: http://qto-backend:8000
+    ports:
+      - "3004:3004"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    networks:
+      - ${NETWORK_NAME}
+    depends_on:
+      - qto-backend
+
+networks:
+  nhm-network:
+    name: ${NETWORK_NAME}
+    driver: bridge

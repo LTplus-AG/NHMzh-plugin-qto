@@ -1,6 +1,5 @@
 import { CSSProperties } from "react";
 import { ColumnWidthsType } from "./types";
-import { Theme } from "@mui/material";
 
 // Define percentage-based column widths for better consistency
 export const columnWidths: ColumnWidthsType = {

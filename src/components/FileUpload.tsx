@@ -9,11 +9,11 @@ import {
   CircularProgress,
   Alert,
 } from "@mui/material";
-import { ReactElement, useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Delete as DeleteIcon } from "@mui/icons-material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
-import { MetaFile, UploadedFile, IFCElement } from "./types";
+import { MetaFile, UploadedFile } from "./types";
 
 interface FileUploadProps {
   apiUrl: string;
@@ -40,38 +40,39 @@ const FileUpload: React.FC<FileUploadProps> = ({
   const [requestFinished, setRequestFinished] = useState(false);
 
   // Function to upload IFC file to backend
-  const uploadIfcFile = async (
-    file: File
-  ): Promise<{ modelId: string } | null> => {
-    if (!backendConnected) {
-      return null;
-    }
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch(`${apiUrl}/upload-ifc/`, {
-        method: "POST",
-        body: formData,
-        signal: AbortSignal.timeout(30000), // 30 second timeout for larger files
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to upload IFC file: ${response.statusText}`);
+  const uploadIfcFile = useCallback(
+    async (file: File): Promise<{ modelId: string } | null> => {
+      if (!backendConnected) {
+        return null;
       }
 
-      const data = await response.json();
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
 
-      // After successful upload, fetch the elements
-      await fetchIfcElements(data.model_id);
+        const response = await fetch(`${apiUrl}/upload-ifc/`, {
+          method: "POST",
+          body: formData,
+          signal: AbortSignal.timeout(30000), // 30 second timeout for larger files
+        });
 
-      return { modelId: data.model_id };
-    } catch (error) {
-      console.error("Error uploading IFC file:", error);
-      return null;
-    }
-  };
+        if (!response.ok) {
+          throw new Error(`Failed to upload IFC file: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        // After successful upload, fetch the elements
+        await fetchIfcElements(data.model_id);
+
+        return { modelId: data.model_id };
+      } catch (error) {
+        console.error("Error uploading IFC file:", error);
+        return null;
+      }
+    },
+    [apiUrl, backendConnected, fetchIfcElements]
+  );
 
   const fileSize = (size: number) => {
     if (size === 0) return "0 Bytes";
@@ -81,7 +82,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
     return parseFloat((size / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  const formatMessage = (message: string, status: string) => {
+  const formatMessage = useCallback((message: string, status: string) => {
     return message.split(/(\[.*?\]\(.*?\))/g).map((part, index) => {
       const match = part.match(/\[(.*?)\]\((.*?)\)/);
       if (match) {
@@ -118,44 +119,47 @@ const FileUpload: React.FC<FileUploadProps> = ({
         </span>
       );
     });
-  };
+  }, []);
 
-  const updateStep = (index: number, message: string, status: string) => {
-    setMetaFile((prev) => {
-      if (!prev) return prev;
-      const updatedSteps = [...prev.steps];
-      updatedSteps[index] = (
-        <>
-          {formatMessage(message, status)}{" "}
-          {status === "loading" ? (
-            <CircularProgress size={10} />
-          ) : status === "success" ? (
-            "✅"
-          ) : status === "error" ? (
-            "❌"
-          ) : (
-            ""
-          )}
-        </>
-      );
-      return { ...prev, steps: updatedSteps };
-    });
-    if (status === "error" || status === "success") {
+  const updateStep = useCallback(
+    (index: number, message: string, status: string) => {
       setMetaFile((prev) => {
-        if (prev) {
-          return {
-            ...prev,
-            valid:
-              status === "success" &&
-              (prev.valid === null || prev.valid === true)
-                ? true
-                : false,
-          };
-        }
-        return prev;
+        if (!prev) return prev;
+        const updatedSteps = [...prev.steps];
+        updatedSteps[index] = (
+          <>
+            {formatMessage(message, status)}{" "}
+            {status === "loading" ? (
+              <CircularProgress size={10} />
+            ) : status === "success" ? (
+              "✅"
+            ) : status === "error" ? (
+              "❌"
+            ) : (
+              ""
+            )}
+          </>
+        );
+        return { ...prev, steps: updatedSteps };
       });
-    }
-  };
+      if (status === "error" || status === "success") {
+        setMetaFile((prev) => {
+          if (prev) {
+            return {
+              ...prev,
+              valid:
+                status === "success" &&
+                (prev.valid === null || prev.valid === true)
+                  ? true
+                  : false,
+            };
+          }
+          return prev;
+        });
+      }
+    },
+    [formatMessage]
+  );
 
   const handleRemoveFile = () => {
     setMetaFile(undefined);
@@ -258,7 +262,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
         updateStep(0, "Fehler bei der Verbindung zum Server", "error");
       }
     },
-    [instructions, uploadIfcFile, fetchIfcElements]
+    [instructions, uploadIfcFile, updateStep]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import os
@@ -11,6 +11,7 @@ import uuid
 import traceback
 import sys
 from functools import lru_cache
+from qto_producer import QTOKafkaProducer, format_ifc_elements_for_qto
 
 # Set up logging with more detailed format
 logging.basicConfig(level=logging.DEBUG, 
@@ -599,40 +600,7 @@ def get_ifc_elements(model_id: str):
                     element_volume_value = None
                     if element_volume:
                         element_volume_value = element_volume.get("net") or element_volume.get("gross")
-                    
-                    # If no volume found but element is a wall, try to calculate it from dimensions
-                    if element_volume_value is None and element.is_a("IfcWall"):
-                        # Try to get dimensions from properties
-                        length = None
-                        width = None
-                        height = None
-                        
-                        for rel_def in element.IsDefinedBy:
-                            if rel_def.is_a("IfcRelDefinesByProperties"):
-                                prop_set = rel_def.RelatingPropertyDefinition
-                                if prop_set.is_a("IfcElementQuantity"):
-                                    for quantity in prop_set.Quantities:
-                                        if quantity.is_a("IfcQuantityLength"):
-                                            if quantity.Name == "Length":
-                                                length = float(quantity.LengthValue)
-                                            elif quantity.Name == "Width" or quantity.Name == "Thickness":
-                                                width = float(quantity.LengthValue)
-                                            elif quantity.Name == "Height":
-                                                height = float(quantity.LengthValue)
-                        
-                        # Calculate volume if we have all dimensions
-                        if length and width and height:
-                            element_volume_value = length * width * height
-                            logger.debug(f"Calculated volume for wall {element.GlobalId}: {element_volume_value} (from {length}×{width}×{height})")
-                    
-                    # If still no volume, try to use a default value for testing
-                    if element_volume_value is None:
-                        # Use a placeholder volume for testing - in production this should be properly calculated
-                        if element.is_a("IfcWall") or element.is_a("IfcWallStandardCase"):
-                            # Default wall volume for testing
-                            element_volume_value = 1.0  # 1 cubic meter as default
-                            logger.debug(f"Using default volume 1.0 for wall {element.GlobalId}")
-                    
+                                        
                     # Process material associations
                     has_material_volumes = False
                     if hasattr(element, "HasAssociations"):
@@ -919,12 +887,86 @@ def delete_model(model_id: str):
 
 @app.get("/health")
 def health_check():
-    """Simple health check endpoint"""
+    """Health check endpoint for Docker healthcheck."""
+    kafka_status = "unknown"
+    
+    try:
+        # Check Kafka connection
+        producer = QTOKafkaProducer(max_retries=1, retry_delay=1)
+        # If producer was initialized successfully, set status to connected
+        kafka_status = "connected" if producer.producer else "disconnected"
+    except Exception as e:
+        logger.warning(f"Kafka health check failed: {str(e)}")
+        kafka_status = "disconnected"
+    
+    # Check models in memory
+    models_count = len(ifc_models)
+    
+    # The service is healthy even if Kafka is disconnected
+    # as the API can still process uploads and analyze IFC files
     return {
         "status": "healthy", 
-        "models_in_memory": len(ifc_models),
+        "kafka": kafka_status,
+        "models_in_memory": models_count,
         "ifcopenshell_version": ifcopenshell.version
     }
+
+@app.post("/send-qto/", response_model=Dict[str, Any])
+async def send_qto(model_id: str = Query(..., description="The ID of the model to send to Kafka")):
+    """Send QTO data to Kafka using the QTOKafkaProducer."""
+    logger.info(f"Sending QTO data to Kafka for model ID: {model_id}")
+    
+    if model_id not in ifc_models:
+        logger.warning(f"Model ID not found: {model_id}")
+        raise HTTPException(status_code=404, detail="IFC model not found")
+    
+    try:
+        # Get elements using existing function to avoid duplicating parsing logic
+        elements = get_ifc_elements(model_id)
+        
+        # Convert IFCElement model instances to dictionaries
+        element_dicts = [element.model_dump() for element in elements]
+        
+        # Get project info
+        filename = ifc_models[model_id]["filename"]
+        project_name = filename.split('.')[0]  # Use filename without extension as project name
+        file_id = f"{project_name}/{filename}"
+        
+        # Format the data for QTO message
+        qto_data = format_ifc_elements_for_qto(
+            project_name=project_name,
+            filename=filename,
+            file_id=file_id,
+            elements=element_dicts
+        )
+        
+        # Send data to Kafka
+        producer = QTOKafkaProducer()
+        send_success = producer.send_qto_message(qto_data)
+        flush_success = producer.flush()
+        
+        if not send_success or not flush_success:
+            logger.warning("Data was processed but could not be sent to Kafka. The service may be unavailable.")
+            return {
+                "message": "QTO data processed but not sent to Kafka (service unavailable)",
+                "model_id": model_id,
+                "element_count": len(elements),
+                "kafka_status": "unavailable"
+            }
+        
+        logger.info(f"Successfully sent QTO data for {len(elements)} elements to Kafka")
+        
+        return {
+            "message": "QTO data sent to Kafka successfully",
+            "model_id": model_id,
+            "element_count": len(elements),
+            "kafka_status": "connected"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error sending QTO data for model ID {model_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error sending QTO data: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
