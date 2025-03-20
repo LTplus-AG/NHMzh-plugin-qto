@@ -1,3 +1,4 @@
+import React, { useState, useEffect } from "react";
 import {
   Typography,
   Paper,
@@ -12,12 +13,19 @@ import {
   Collapse,
   IconButton,
   Box,
-  Divider,
+  Chip,
+  Tooltip,
+  Badge,
 } from "@mui/material";
 import { IFCElement } from "./types";
-import { useState, useEffect } from "react";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import InfoIcon from "@mui/icons-material/Info";
+
+// Get target IFC classes from environment variable
+const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
+  ? import.meta.env.VITE_TARGET_IFC_CLASSES.split(",")
+  : [];
 
 interface IfcElementsListProps {
   elements: IFCElement[];
@@ -30,32 +38,48 @@ const IfcElementsList = ({
   loading,
   error,
 }: IfcElementsListProps) => {
-  const [expandedElement, setExpandedElement] = useState<string | null>(null);
+  const [expandedElements, setExpandedElements] = useState<string[]>([]);
 
   // Debug logging
   useEffect(() => {
-    // Only log the count of elements
     console.log(`Loaded ${elements.length} IFC elements`);
+    console.log("Target IFC classes:", TARGET_IFC_CLASSES);
 
-    // Just count elements with material volumes without detailed logging
-    const elementsWithVolumes = elements.filter(
-      (el) => el.material_volumes && Object.keys(el.material_volumes).length > 0
-    );
-    if (elementsWithVolumes.length > 0) {
+    // Debug specific element data to check for level information
+    if (elements.length > 0) {
+      console.log("First element sample:", elements[0]);
       console.log(
-        `Found ${elementsWithVolumes.length} elements with material_volumes`
+        "Level available in elements:",
+        elements.some((e) => e.level !== undefined)
       );
+
+      // Check if any elements have level information
+      const levelsFound = elements
+        .map((e) => e.level)
+        .filter((level) => level && level !== "unbekannt");
+
+      console.log("Available levels:", levelsFound);
     }
   }, [elements]);
 
   const toggleExpand = (id: string) => {
-    setExpandedElement(expandedElement === id ? null : id);
+    setExpandedElements((prev) => {
+      // If id is already in the array, remove it (collapse)
+      if (prev.includes(id)) {
+        return prev.filter((elementId) => elementId !== id);
+      }
+      // Otherwise add it to the array (expand)
+      return [...prev, id];
+    });
   };
 
   // If loading, show a loading indicator
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-10">
+      <div
+        className="flex flex-col items-center justify-center py-10"
+        style={{ height: "100%" }}
+      >
         <CircularProgress />
         <Typography variant="body2" className="mt-4">
           IFC-Daten werden geladen...
@@ -67,7 +91,7 @@ const IfcElementsList = ({
   // If there's an error, show the error message
   if (error) {
     return (
-      <Alert severity="error" className="mb-4">
+      <Alert severity="error" className="mb-4" style={{ height: "100%" }}>
         {error}
       </Alert>
     );
@@ -84,58 +108,69 @@ const IfcElementsList = ({
     return num.toFixed(3);
   };
 
-  // Function to process elements and filter out material properties if we have material_volumes
-  const processElementProperties = (element: IFCElement) => {
-    // If no material_volumes, just return the original properties
-    if (
-      !element.material_volumes ||
-      Object.keys(element.material_volumes).length === 0
-    ) {
-      return element.properties;
-    }
-
-    // Otherwise, filter out Material.Layers property
-    const filteredProperties: Record<string, string> = {};
-    for (const [key, value] of Object.entries(element.properties)) {
-      if (key !== "Material.Layers") {
-        filteredProperties[key] = value;
-      }
-    }
-
-    return filteredProperties;
-  };
-
-  // Function to check if the element has material widths
-  const hasMaterialWidths = (element: IFCElement) => {
-    if (!element.material_volumes) return false;
-    return Object.values(element.material_volumes).some(
-      (mat) => mat.width !== undefined && mat.width > 0
-    );
+  // Function to get materials from either materials array or material_volumes object
+  const getElementMaterials = (element: IFCElement) => {
+    return element.materials || [];
   };
 
   return (
-    <div>
-      <Typography variant="h5" className="mt-4 mb-3">
-        IFC-Elemente ({elements.length})
-      </Typography>
-      <TableContainer component={Paper} elevation={2}>
-        <Table>
+    <div
+      style={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div className="flex items-center mb-3">
+        <Typography variant="h5" className="mr-2">
+          QTO Elemente ({elements.length})
+        </Typography>
+        {TARGET_IFC_CLASSES && TARGET_IFC_CLASSES.length > 0 && (
+          <Tooltip
+            title={
+              <div>
+                <p>Nur folgende IFC-Klassen werden berücksichtigt:</p>
+                <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
+                  {TARGET_IFC_CLASSES.map((cls: string) => (
+                    <li key={cls}>{cls}</li>
+                  ))}
+                </ul>
+              </div>
+            }
+            arrow
+          >
+            <Badge color="info" variant="dot" sx={{ cursor: "pointer" }}>
+              <InfoIcon fontSize="small" color="action" />
+            </Badge>
+          </Tooltip>
+        )}
+      </div>
+      <TableContainer
+        component={Paper}
+        elevation={2}
+        style={{ flexGrow: 1, height: "calc(100% - 40px)", overflow: "auto" }}
+      >
+        <Table stickyHeader>
           <TableHead>
             <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.08)" }}>
               <TableCell width="50px" />
-              <TableCell>GlobalId</TableCell>
-              <TableCell>Typ</TableCell>
-              <TableCell>Name</TableCell>
-              <TableCell>Beschreibung</TableCell>
+              <TableCell>ID</TableCell>
+              <TableCell>Kategorie</TableCell>
+              <TableCell>Ebene</TableCell>
+              <TableCell>Fläche (m²)</TableCell>
+              <TableCell>Klassifikation</TableCell>
+              <TableCell>Eigenschaften</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {elements.map((element) => {
-              // No debug logs needed here
+              const category = element.category || element.type;
+              const level = element.level || "unbekannt";
+              const id = element.global_id || element.id;
+
               return (
-                <>
+                <React.Fragment key={id}>
                   <TableRow
-                    key={element.id}
                     sx={{
                       "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.04)" },
                       cursor: "pointer",
@@ -151,160 +186,132 @@ const IfcElementsList = ({
                           toggleExpand(element.id);
                         }}
                       >
-                        {expandedElement === element.id ? (
+                        {expandedElements.includes(element.id) ? (
                           <KeyboardArrowUpIcon />
                         ) : (
                           <KeyboardArrowDownIcon />
                         )}
                       </IconButton>
                     </TableCell>
-                    <TableCell>{element.global_id}</TableCell>
-                    <TableCell>{element.type}</TableCell>
-                    <TableCell>{element.name || "-"}</TableCell>
-                    <TableCell>{element.description || "-"}</TableCell>
+                    <TableCell>{id}</TableCell>
+                    <TableCell>{category}</TableCell>
+                    <TableCell>{level}</TableCell>
+                    <TableCell>
+                      {element.area ? formatNumber(element.area) : "-"}
+                    </TableCell>
+                    <TableCell>
+                      {element.classification_id ? (
+                        <Tooltip
+                          title={
+                            <>
+                              <div>
+                                <strong>ID:</strong> {element.classification_id}
+                              </div>
+                              {element.classification_name && (
+                                <div>
+                                  <strong>Name:</strong>{" "}
+                                  {element.classification_name}
+                                </div>
+                              )}
+                              {element.classification_system && (
+                                <div>
+                                  <strong>System:</strong>{" "}
+                                  {element.classification_system}
+                                </div>
+                              )}
+                            </>
+                          }
+                        >
+                          <Chip
+                            label={element.classification_id}
+                            size="small"
+                            color="info"
+                            sx={{ mr: 1, mb: 0.5 }}
+                          />
+                        </Tooltip>
+                      ) : (
+                        "-"
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {element.is_structural && (
+                        <Chip
+                          label="Tragend"
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                          sx={{ mr: 1, mb: 0.5 }}
+                        />
+                      )}
+                      {element.is_external && (
+                        <Chip
+                          label="Außen"
+                          size="small"
+                          color="secondary"
+                          variant="outlined"
+                          sx={{ mr: 1, mb: 0.5 }}
+                        />
+                      )}
+                      {element.ebkph && (
+                        <Chip
+                          label={`EBKPH: ${element.ebkph}`}
+                          size="small"
+                          color="default"
+                          variant="outlined"
+                          sx={{ mb: 0.5 }}
+                        />
+                      )}
+                    </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell
                       style={{ paddingBottom: 0, paddingTop: 0 }}
-                      colSpan={5}
+                      colSpan={6}
                     >
                       <Collapse
-                        in={expandedElement === element.id}
+                        in={expandedElements.includes(element.id)}
                         timeout="auto"
                         unmountOnExit
                       >
                         <Box sx={{ margin: 1 }}>
-                          {/* Material Volumes Section - Show this first if available */}
-                          {element.material_volumes &&
-                            Object.keys(element.material_volumes).length >
-                              0 && (
-                              <>
-                                <Typography
-                                  variant="h6"
-                                  gutterBottom
-                                  component="div"
-                                >
-                                  Materialien und Volumen
-                                </Typography>
-                                <Table
-                                  size="small"
-                                  aria-label="material-volumes"
-                                >
-                                  <TableHead>
-                                    <TableRow>
-                                      <TableCell>Material</TableCell>
-                                      <TableCell>Anteil (%)</TableCell>
-                                      <TableCell>Volumen (m³)</TableCell>
-                                      {hasMaterialWidths(element) && (
-                                        <TableCell>Dicke (mm)</TableCell>
-                                      )}
-                                    </TableRow>
-                                  </TableHead>
-                                  <TableBody>
-                                    {Object.entries(
-                                      element.material_volumes
-                                    ).map(([materialName, info]) => (
-                                      <TableRow key={materialName}>
-                                        <TableCell component="th" scope="row">
-                                          {materialName}
-                                        </TableCell>
-                                        <TableCell>
-                                          {info.fraction !== undefined
-                                            ? `${(info.fraction * 100).toFixed(
-                                                1
-                                              )}%`
-                                            : "-"}
-                                        </TableCell>
-                                        <TableCell>
-                                          {info.volume !== undefined
-                                            ? formatNumber(info.volume)
-                                            : "-"}
-                                        </TableCell>
-                                        {hasMaterialWidths(element) && (
-                                          <TableCell>
-                                            {info.width !== undefined &&
-                                            info.width > 0
-                                              ? formatNumber(info.width)
-                                              : "-"}
-                                          </TableCell>
-                                        )}
-                                      </TableRow>
-                                    ))}
-                                  </TableBody>
-                                </Table>
-                                <Divider sx={{ my: 2 }} />
-                              </>
-                            )}
-
-                          {/* Volume Information */}
-                          {element.volume && (
-                            <>
-                              <Typography
-                                variant="h6"
-                                gutterBottom
-                                component="div"
-                              >
-                                Volumen
-                              </Typography>
-                              <Table size="small" aria-label="volume">
-                                <TableHead>
-                                  <TableRow>
-                                    <TableCell>Typ</TableCell>
-                                    <TableCell>Wert (m³)</TableCell>
-                                  </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                  {element.volume.net !== null && (
-                                    <TableRow>
-                                      <TableCell>Netto Volumen</TableCell>
-                                      <TableCell>
-                                        {formatNumber(element.volume.net)}
-                                      </TableCell>
-                                    </TableRow>
-                                  )}
-                                  {element.volume.gross !== null && (
-                                    <TableRow>
-                                      <TableCell>Brutto Volumen</TableCell>
-                                      <TableCell>
-                                        {formatNumber(element.volume.gross)}
-                                      </TableCell>
-                                    </TableRow>
-                                  )}
-                                </TableBody>
-                              </Table>
-                              <Divider sx={{ my: 2 }} />
-                            </>
-                          )}
-
-                          {/* Properties Section */}
+                          {/* Materials Section */}
                           <Typography variant="h6" gutterBottom component="div">
-                            Eigenschaften
+                            Materialien
                           </Typography>
-                          <Table size="small" aria-label="properties">
+                          <Table size="small" aria-label="materials">
                             <TableHead>
                               <TableRow>
-                                <TableCell>Eigenschaft</TableCell>
-                                <TableCell>Wert</TableCell>
+                                <TableCell>Material</TableCell>
+                                <TableCell>Anteil (%)</TableCell>
+                                <TableCell>Volumen (m³)</TableCell>
                               </TableRow>
                             </TableHead>
                             <TableBody>
-                              {processElementProperties(element) &&
-                                Object.entries(
-                                  processElementProperties(element)
-                                ).map(([key, value]) => (
-                                  <TableRow key={key}>
+                              {getElementMaterials(element).map(
+                                (material, index) => (
+                                  <TableRow key={`${material.name}-${index}`}>
                                     <TableCell component="th" scope="row">
-                                      {key}
+                                      {material.name}
                                     </TableCell>
-                                    <TableCell>{value}</TableCell>
+                                    <TableCell>
+                                      {material.fraction !== undefined
+                                        ? `${(material.fraction * 100).toFixed(
+                                            1
+                                          )}%`
+                                        : "-"}
+                                    </TableCell>
+                                    <TableCell>
+                                      {material.volume !== undefined
+                                        ? formatNumber(material.volume)
+                                        : "-"}
+                                    </TableCell>
                                   </TableRow>
-                                ))}
-                              {(!element.properties ||
-                                Object.keys(element.properties).length ===
-                                  0) && (
+                                )
+                              )}
+                              {getElementMaterials(element).length === 0 && (
                                 <TableRow>
-                                  <TableCell colSpan={2}>
-                                    Keine Eigenschaften verfügbar
+                                  <TableCell colSpan={3}>
+                                    Keine Materialinformationen verfügbar
                                   </TableCell>
                                 </TableRow>
                               )}
@@ -314,7 +321,7 @@ const IfcElementsList = ({
                       </Collapse>
                     </TableCell>
                   </TableRow>
-                </>
+                </React.Fragment>
               );
             })}
           </TableBody>

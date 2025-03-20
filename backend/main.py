@@ -36,6 +36,23 @@ app.add_middleware(
 # Store uploaded IFC models in memory
 ifc_models = {}
 
+# Get the list of target IFC classes from environment variables
+TARGET_IFC_CLASSES = os.getenv("TARGET_IFC_CLASSES", "").split(",")
+if TARGET_IFC_CLASSES and TARGET_IFC_CLASSES[0]:
+    logger.info(f"Filtering IFC elements to these classes: {TARGET_IFC_CLASSES}")
+else:
+    TARGET_IFC_CLASSES = [
+        "IfcBeam", "IfcBeamStandardCase", "IfcBearing", "IfcBuildingElementPart", 
+        "IfcBuildingElementProxy", "IfcCaissonFoundation", "IfcChimney", 
+        "IfcColumn", "IfcColumnStandardCase", "IfcCovering", "IfcCurtainWall", 
+        "IfcDeepFoundation", "IfcDoor", "IfcEarthworksCut", "IfcEarthworksFill", 
+        "IfcFooting", "IfcMember", "IfcPile", "IfcPlate", "IfcRailing", "IfcRamp", 
+        "IfcRampFlight", "IfcReinforcingBar", "IfcReinforcingElement", 
+        "IfcReinforcingMesh", "IfcRoof", "IfcSlab", "IfcSolarDevice", "IfcWall", 
+        "IfcWallStandardCase", "IfcWindow"
+    ]
+    logger.info(f"Using default IFC element types: {TARGET_IFC_CLASSES}")
+
 class IFCElement(BaseModel):
     id: str
     global_id: str
@@ -44,6 +61,10 @@ class IFCElement(BaseModel):
     description: Optional[str] = None
     properties: Dict[str, Any] = {}
     material_volumes: Optional[Dict[str, Dict[str, Any]]] = None
+    level: Optional[str] = None
+    classification_id: Optional[str] = None
+    classification_name: Optional[str] = None
+    classification_system: Optional[str] = None
 
 @lru_cache(maxsize=1024)
 def get_volume_from_properties(element) -> Dict:
@@ -391,6 +412,21 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
     
     return material_volumes
 
+def get_schema_compatible_classes(ifc_file):
+    """Filter target classes to only those compatible with the current schema"""
+    schema = ifc_file.schema
+    # IFC2X3 doesn't have these classes
+    ifc4_only_classes = ["IfcDeepFoundation", "IfcEarthworksCut", "IfcEarthworksFill", 
+                         "IfcSolarDevice", "IfcBeamStandardCase", "IfcColumnStandardCase", 
+                         "IfcBearing", "IfcCaissonFoundation", "IfcChimney"]
+    
+    filtered_classes = TARGET_IFC_CLASSES.copy()
+    if schema == "IFC2X3":
+        filtered_classes = [cls for cls in filtered_classes if cls not in ifc4_only_classes]
+    
+    logger.info(f"Filtered classes for schema {schema}: {filtered_classes}")
+    return filtered_classes
+
 @app.get("/")
 def read_root():
     logger.info("API root endpoint accessed")
@@ -528,9 +564,80 @@ def get_ifc_elements(model_id: str):
         ifc_file = ifc_models[model_id]["ifc_file"]
         elements = []
         
+        # Log schema information
+        schema = ifc_file.schema
+        logger.info(f"Processing IFC file with schema: {schema}")
+        
+        # Create a mapping of elements to their building stories
+        element_to_storey = {}
+        building_storeys = list(ifc_file.by_type("IfcBuildingStorey"))
+        
+        # Log the found building storeys
+        logger.info(f"Found {len(building_storeys)} building storeys")
+        for storey in building_storeys:
+            storey_name = storey.Name if hasattr(storey, "Name") and storey.Name else "Unknown Level"
+            logger.info(f"Building storey: {storey_name}")  # Log each storey name
+        
+        # Process spatial containment relationships with defensive programming
+        try:
+            for rel in ifc_file.by_type("IfcRelContainedInSpatialStructure"):
+                if rel is None:
+                    logger.warning("Found None relation in IfcRelContainedInSpatialStructure")
+                    continue
+                    
+                relating_structure = getattr(rel, "RelatingStructure", None)
+                if relating_structure is None:
+                    logger.warning(f"Relation has no RelatingStructure")
+                    continue
+                    
+                if not hasattr(relating_structure, "is_a") or not callable(relating_structure.is_a):
+                    logger.warning(f"RelatingStructure has no is_a method")
+                    continue
+                    
+                if relating_structure.is_a("IfcBuildingStorey"):
+                    storey_name = relating_structure.Name if hasattr(relating_structure, "Name") and relating_structure.Name else "Unknown Level"
+                    related_elements = getattr(rel, "RelatedElements", [])
+                    
+                    if related_elements is None:
+                        logger.warning(f"Relation has None RelatedElements")
+                        continue
+                        
+                    for element in related_elements:
+                        if element is None:
+                            logger.warning(f"Found None element in RelatedElements")
+                            continue
+                            
+                        try:
+                            element_id = element.id()
+                            element_to_storey[element_id] = storey_name
+                        except Exception as e:
+                            logger.warning(f"Error mapping element to storey: {e}")
+        except Exception as e:
+            logger.error(f"Error processing spatial structure: {e}")
+            logger.error(traceback.format_exc())
+        
         # Process IfcElements in chunks to avoid memory issues
         chunk_size = 100
-        all_elements = list(ifc_file.by_type("IfcElement"))
+        
+        # Filter elements by TARGET_IFC_CLASSES (with schema compatibility)
+        compatible_classes = get_schema_compatible_classes(ifc_file)
+        
+        if compatible_classes:
+            all_elements = []
+            for element_type in compatible_classes:
+                if element_type and element_type.strip():  # Skip empty strings
+                    try:
+                        type_elements = list(ifc_file.by_type(element_type.strip()))
+                        all_elements.extend(type_elements)
+                        logger.debug(f"Found {len(type_elements)} elements of type {element_type}")
+                    except Exception as type_error:
+                        logger.warning(f"Error getting elements of type {element_type}: {str(type_error)}")
+            
+            total_elements = len(list(ifc_file.by_type("IfcElement")))
+            logger.info(f"Filtered to {len(all_elements)} elements of targeted types (out of {total_elements} total elements)")
+        else:
+            all_elements = list(ifc_file.by_type("IfcElement"))
+            logger.info(f"No filtering applied. Processing all {len(all_elements)} elements.")
         
         for i in range(0, len(all_elements), chunk_size):
             chunk = all_elements[i:i+chunk_size]
@@ -545,6 +652,22 @@ def get_ifc_elements(model_id: str):
                     "description": element.Description if hasattr(element, "Description") and element.Description else None,
                     "properties": {}
                 }
+                
+                # Add building storey information
+                if element.id() in element_to_storey:
+                    element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": element_to_storey[element.id()]}
+                    # Add level directly to the element data for easier access in the frontend
+                    element_data["level"] = element_to_storey[element.id()]
+                    logger.debug(f"Element {element.GlobalId} is on level {element_to_storey[element.id()]}")
+                else:
+                    # If we couldn't find a storey, try to extract from any containment relationship
+                    for rel in element.ContainedInStructure or []:
+                        if hasattr(rel, "RelatingStructure") and rel.RelatingStructure.is_a("IfcBuildingStorey"):
+                            storey_name = rel.RelatingStructure.Name or "Unknown Level"
+                            element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": storey_name}
+                            element_data["level"] = storey_name
+                            logger.debug(f"Element {element.GlobalId} is on level {storey_name} (from direct containment)")
+                            break
                 
                 # Extract Pset properties if available
                 try:
@@ -587,7 +710,41 @@ def get_ifc_elements(model_id: str):
                                             prop_name = f"{qset_name}.{quantity.Name}"
                                             prop_value = f"{quantity.CountValue}"
                                             element_data["properties"][prop_name] = prop_value
-                
+                    
+                    # Extract classification information
+                    if hasattr(element, "HasAssociations"):
+                        # Log all associations for debugging
+                        association_types = [rel.is_a() for rel in element.HasAssociations]
+                        logger.info(f"Element {element.GlobalId} has associations: {association_types}")
+                        
+                        for relation in element.HasAssociations:
+                            if relation.is_a("IfcRelAssociatesClassification"):
+                                classification_ref = relation.RelatingClassification
+                                logger.info(f"Found classification relation for element {element.GlobalId}. Classification type: {classification_ref.is_a()}")
+                                
+                                if classification_ref.is_a("IfcClassificationReference"):
+                                    # Get classification ID and name
+                                    element_data["classification_id"] = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
+                                    element_data["classification_name"] = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    
+                                    # Get classification system name if available
+                                    if hasattr(classification_ref, "ReferencedSource") and classification_ref.ReferencedSource:
+                                        referenced_source = classification_ref.ReferencedSource
+                                        if hasattr(referenced_source, "Name"):
+                                            element_data["classification_system"] = referenced_source.Name
+                                    
+                                    logger.info(f"Element {element.GlobalId} has classification: ID={element_data.get('classification_id')}, Name={element_data.get('classification_name')}, System={element_data.get('classification_system')}")
+                                    
+                                # If directly using IfcClassification (less common)
+                                elif classification_ref.is_a("IfcClassification"):
+                                    element_data["classification_system"] = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    element_data["classification_name"] = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
+                                    logger.info(f"Element {element.GlobalId} has direct classification system: {element_data.get('classification_system')}, Name: {element_data.get('classification_name')}")
+                        
+                        # Log if no classification found
+                        if "classification_id" not in element_data and "classification_system" not in element_data:
+                            logger.info(f"No classification found for element {element.GlobalId}")
+                    
                     # Get volume information for the element
                     element_volume = get_volume_from_properties(element)
                     if element_volume:
@@ -823,6 +980,17 @@ def get_ifc_elements(model_id: str):
                 elements.append(IFCElement(**element_data))
         
         logger.info(f"Successfully extracted {len(elements)} elements from model ID: {model_id}")
+        
+        # Debug: Check if level information is present in extracted elements
+        elements_with_level = [e for e in elements if hasattr(e, "level") and e.level]
+        logger.info(f"Elements with level information: {len(elements_with_level)}/{len(elements)}")
+        
+        if elements:
+            # Log the first element as a sample
+            sample = elements[0]
+            level_info = getattr(sample, "level", None)
+            logger.info(f"Sample element level: {level_info}")
+        
         return elements
     
     except Exception as e:
@@ -924,8 +1092,19 @@ async def send_qto(model_id: str = Query(..., description="The ID of the model t
         # Get elements using existing function to avoid duplicating parsing logic
         elements = get_ifc_elements(model_id)
         
+        # Check if elements have level information
+        elements_with_level = [e for e in elements if hasattr(e, "level") and e.level]
+        logger.info(f"Elements with level info before QTO formatting: {len(elements_with_level)}/{len(elements)}")
+        
         # Convert IFCElement model instances to dictionaries
         element_dicts = [element.model_dump() for element in elements]
+        
+        # Check level information in dictionaries
+        dicts_with_level = [e for e in element_dicts if "level" in e and e["level"]]
+        logger.info(f"Dictionaries with level info: {len(dicts_with_level)}/{len(element_dicts)}")
+        
+        if element_dicts:
+            logger.info(f"Sample dict level: {element_dicts[0].get('level', 'not found')}")
         
         # Get project info
         filename = ifc_models[model_id]["filename"]
@@ -967,6 +1146,42 @@ async def send_qto(model_id: str = Query(..., description="The ID of the model t
         logger.error(f"Error sending QTO data for model ID {model_id}: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error sending QTO data: {str(e)}")
+
+@app.get("/qto-elements/{model_id}")
+def get_qto_elements(model_id: str):
+    """Get elements in QTO format for display in the frontend."""
+    logger.info(f"Retrieving QTO-formatted elements for model ID: {model_id}")
+    
+    if model_id not in ifc_models:
+        logger.warning(f"Model ID not found: {model_id}")
+        raise HTTPException(status_code=404, detail="IFC model not found")
+    
+    try:
+        # Get elements using existing function that already applies filtering
+        elements = get_ifc_elements(model_id)
+        
+        # Convert IFCElement model instances to dictionaries
+        element_dicts = [element.model_dump() for element in elements]
+        
+        # Get project info
+        filename = ifc_models[model_id]["filename"]
+        project_name = filename.split('.')[0]  # Use filename without extension as project name
+        
+        # Format the data for QTO
+        qto_data = format_ifc_elements_for_qto(
+            project_name=project_name,
+            filename=filename,
+            file_id=f"{project_name}/{filename}",
+            elements=element_dicts
+        )
+        
+        # Return just the elements part of the QTO data
+        return qto_data["elements"]
+    
+    except Exception as e:
+        logger.error(f"Error retrieving QTO elements for model ID {model_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error retrieving QTO elements: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

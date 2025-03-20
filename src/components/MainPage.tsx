@@ -139,6 +139,72 @@ const MainPage = () => {
       setIfcLoading(true);
       setIfcError(null);
 
+      // First try to get QTO-formatted elements
+      try {
+        const qtoResponse = await fetch(`${API_URL}/qto-elements/${modelId}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(10000), // 10 second timeout
+        });
+
+        if (qtoResponse.ok) {
+          const qtoData = await qtoResponse.json();
+          console.log("Using QTO-formatted elements:", qtoData);
+
+          // Map QTO elements format to IFCElement format
+          interface QTOElement {
+            id: string;
+            category: string;
+            level: string;
+            area: number;
+            is_structural: boolean;
+            is_external: boolean;
+            ebkph: string;
+            materials: Array<{
+              name: string;
+              fraction: number;
+              volume: number;
+            }>;
+            classification?: {
+              id: string;
+              name: string;
+              system: string;
+            };
+          }
+
+          const mappedElements = qtoData.map((el: QTOElement) => ({
+            id: el.id,
+            global_id: el.id, // Use id as global_id for compatibility
+            type: el.category,
+            name: el.category,
+            description: null,
+            properties: {},
+            // QTO specific fields
+            category: el.category,
+            level: el.level,
+            area: el.area,
+            is_structural: el.is_structural,
+            is_external: el.is_external,
+            ebkph: el.ebkph,
+            materials: el.materials,
+            // Map classification data if available
+            classification_id: el.classification?.id || null,
+            classification_name: el.classification?.name || null,
+            classification_system: el.classification?.system || null,
+          }));
+
+          setIfcElements(mappedElements);
+          setIfcLoading(false);
+          return;
+        }
+      } catch (qtoError) {
+        console.warn(
+          "Error fetching QTO elements, falling back to standard IFC elements:",
+          qtoError
+        );
+      }
+
+      // Fallback to standard IFC elements if QTO endpoint fails
       const response = await fetch(`${API_URL}/ifc-elements/${modelId}`, {
         method: "GET",
         headers: { Accept: "application/json" },
@@ -321,10 +387,10 @@ const MainPage = () => {
         <div>
           <Typography
             variant="h3"
-            className="text-5xl mb-2"
-            style={{ color: "black" }}
+            className="text-5xl mb-2 font-thin tracking-wide"
+            color="black"
           >
-            Modell
+            Mengenermittlung
           </Typography>
           <div className="flex flex-col mt-2 gap-1">
             <FormLabel focused htmlFor="select-project">
@@ -403,29 +469,58 @@ const MainPage = () => {
       </div>
 
       {/* Main content area - IFC Elements */}
-      <div className="main-content flex-grow overflow-y-auto p-10">
-        <div className="flex justify-between items-center mb-6">
-          <Typography variant="h2" className="text-5xl">
-            Mengenermittlung
+      <div className="main-content flex-grow overflow-y-auto p-6 flex flex-col">
+        {/* Header section with title */}
+        <div className="flex justify-between items-center mb-4 pt-3">
+          <Typography variant="h4" className="text-3xl font-bold">
+            IFC Elemente
           </Typography>
+        </div>
 
-          <div className="flex gap-2">
+        {/* Info section - model info and alerts */}
+        <div className="mb-4">
+          {/* Active model info */}
+          {selectedFile && (
+            <Typography variant="subtitle1" className="mb-2">
+              Aktives Modell: <strong>{selectedFile.filename}</strong>
+            </Typography>
+          )}
+
+          {/* Message when no IFC file is loaded */}
+          {!ifcLoading && ifcElements.length === 0 && !ifcError && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Bitte laden Sie eine IFC-Datei hoch, um die Daten anzuzeigen. Die
+              IFC-Elemente werden mit ifcopenshell 0.8.1 verarbeitet.
+            </Alert>
+          )}
+
+          {/* Note about the filtering */}
+          {ifcElements.length > 0 && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Es werden nur die ausgewählten IFC-Elementtypen angezeigt. Andere
+              Elementtypen wie IfcSpace, IfcFurnishingElement, etc. werden nicht
+              berücksichtigt.
+            </Alert>
+          )}
+        </div>
+
+        {/* Action buttons */}
+        {selectedFile && (
+          <div className="flex gap-2 mb-4">
             {/* Reload Button */}
-            {selectedFile && (
-              <Button
-                variant="outlined"
-                color="primary"
-                onClick={() =>
-                  selectedFile.modelId && fetchIfcElements(selectedFile.modelId)
-                }
-                disabled={ifcLoading || !backendConnected}
-              >
-                {ifcLoading ? "Loading..." : "Reload Model"}
-              </Button>
-            )}
+            <Button
+              variant="outlined"
+              color="primary"
+              onClick={() =>
+                selectedFile.modelId && fetchIfcElements(selectedFile.modelId)
+              }
+              disabled={ifcLoading || !backendConnected}
+            >
+              {ifcLoading ? "Loading..." : "Reload Model"}
+            </Button>
 
             {/* Send to Kafka Button */}
-            {selectedFile && ifcElements.length > 0 && (
+            {ifcElements.length > 0 && (
               <Button
                 variant="contained"
                 color="primary"
@@ -437,33 +532,10 @@ const MainPage = () => {
               </Button>
             )}
           </div>
-        </div>
-
-        {/* Active model info */}
-        {selectedFile && (
-          <Typography variant="subtitle1" className="mb-2">
-            Aktives Modell: <strong>{selectedFile.filename}</strong>
-          </Typography>
         )}
 
-        {/* Message when no IFC file is loaded */}
-        {!ifcLoading && ifcElements.length === 0 && !ifcError && (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            Bitte laden Sie eine IFC-Datei hoch, um die Daten anzuzeigen. Die
-            IFC-Elemente werden mit ifcopenshell 0.8.1 verarbeitet.
-          </Alert>
-        )}
-
-        {/* IFC Elements List */}
-        <div
-          className="border border-gray-200 rounded-md"
-          style={{
-            height: "400px",
-            overflowY: "auto",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+        {/* Element list container - expanded to fill remaining space */}
+        <div className="border border-gray-200 rounded-md flex-grow flex flex-col min-h-0">
           <IfcElementsList
             elements={ifcElements}
             loading={ifcLoading}

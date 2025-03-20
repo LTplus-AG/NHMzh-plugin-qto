@@ -231,13 +231,21 @@ def format_ifc_elements_for_qto(project_name: str,
         element_data = {
             "id": element.get("global_id", ""),
             "category": element_type,
-            "level": element.get("properties", {}).get("Pset_BuildingStoreyElevation", {}).get("Name", "unknown"),
+            "level": element.get("level") or element.get("properties", {}).get("Pset_BuildingStoreyElevation", {}).get("Name", "unknown"),
             "area": area,
             "is_structural": is_structural,
             "is_external": is_external,
             "ebkph": ebkph,
             "materials": materials
         }
+        
+        # Add classification information if available
+        if element.get("classification_id") or element.get("classification_name"):
+            element_data["classification"] = {
+                "id": element.get("classification_id", ""),
+                "name": element.get("classification_name", ""),
+                "system": element.get("classification_system", "")
+            }
         
         qto_data["elements"].append(element_data)
     
