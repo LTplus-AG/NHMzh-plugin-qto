@@ -179,6 +179,11 @@ def format_ifc_elements_for_qto(project_name: str,
             if "code" in prop_name.lower() and "material" in prop_name.lower():
                 ebkph = value
                 break
+                
+        # If no EBKPH in properties, try to get it from classification if it's an EBKP code
+        if not ebkph and element.get("classification_system") == "EBKP" and element.get("classification_id"):
+            ebkph = element.get("classification_id")
+            logger.debug(f"Using EBKP classification ID as EBKPH: {ebkph}")
         
         # Extract area from properties if available - first look for net, then gross
         area = 0.0
@@ -240,12 +245,49 @@ def format_ifc_elements_for_qto(project_name: str,
         }
         
         # Add classification information if available
-        if element.get("classification_id") or element.get("classification_name"):
+        if element.get("classification_id") or element.get("classification_name") or element.get("classification_system"):
+            # Handle the case when ID is missing but we have name+system
+            classification_id = element.get("classification_id", "")
+            classification_name = element.get("classification_name", "")
+            classification_system = element.get("classification_system", "")
+            
+            # Create classification object for QTO data
             element_data["classification"] = {
-                "id": element.get("classification_id", ""),
-                "name": element.get("classification_name", ""),
-                "system": element.get("classification_system", "")
+                "id": classification_id,
+                "name": classification_name,
+                "system": classification_system
             }
+            
+            # Set ebkph if it's an EBKP classification with ID
+            if classification_system == "EBKP" and classification_id and not element_data["ebkph"]:
+                element_data["ebkph"] = classification_id
+                logger.debug(f"Set ebkph value to EBKP code in QTO data: {element_data['ebkph']}")
+            # If we have EBKP with no ID but a name, try to extract a code
+            elif classification_system == "EBKP" and not classification_id and classification_name and not element_data["ebkph"]:
+                # Use the name to code mapping for common building elements
+                name_to_code = {
+                    "decke": "C4.1",
+                    "dach": "G2",
+                    "innenwand": "C2.1",
+                    "aussenwand": "C2.2",
+                    "boden": "C3.1",
+                    "wasser": "I1",
+                    "gas": "I2",
+                    "luft": "I4",
+                    "sanitär": "I1",
+                    "heizung": "I3",
+                    "lüftung": "I4",
+                    "klima": "I5",
+                    "elektro": "J"
+                }
+                
+                name_lower = classification_name.lower()
+                for term, code in name_to_code.items():
+                    if term in name_lower:
+                        element_data["classification"]["id"] = code
+                        element_data["ebkph"] = code
+                        logger.debug(f"QTO: Mapped classification name '{classification_name}' to code '{code}'")
+                        break
         
         qto_data["elements"].append(element_data)
     

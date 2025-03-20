@@ -412,21 +412,6 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
     
     return material_volumes
 
-def get_schema_compatible_classes(ifc_file):
-    """Filter target classes to only those compatible with the current schema"""
-    schema = ifc_file.schema
-    # IFC2X3 doesn't have these classes
-    ifc4_only_classes = ["IfcDeepFoundation", "IfcEarthworksCut", "IfcEarthworksFill", 
-                         "IfcSolarDevice", "IfcBeamStandardCase", "IfcColumnStandardCase", 
-                         "IfcBearing", "IfcCaissonFoundation", "IfcChimney"]
-    
-    filtered_classes = TARGET_IFC_CLASSES.copy()
-    if schema == "IFC2X3":
-        filtered_classes = [cls for cls in filtered_classes if cls not in ifc4_only_classes]
-    
-    logger.info(f"Filtered classes for schema {schema}: {filtered_classes}")
-    return filtered_classes
-
 @app.get("/")
 def read_root():
     logger.info("API root endpoint accessed")
@@ -564,10 +549,6 @@ def get_ifc_elements(model_id: str):
         ifc_file = ifc_models[model_id]["ifc_file"]
         elements = []
         
-        # Log schema information
-        schema = ifc_file.schema
-        logger.info(f"Processing IFC file with schema: {schema}")
-        
         # Create a mapping of elements to their building stories
         element_to_storey = {}
         building_storeys = list(ifc_file.by_type("IfcBuildingStorey"))
@@ -577,54 +558,25 @@ def get_ifc_elements(model_id: str):
         for storey in building_storeys:
             storey_name = storey.Name if hasattr(storey, "Name") and storey.Name else "Unknown Level"
             logger.info(f"Building storey: {storey_name}")  # Log each storey name
-        
-        # Process spatial containment relationships with defensive programming
-        try:
+            
+            # Process spatial containment relationship
             for rel in ifc_file.by_type("IfcRelContainedInSpatialStructure"):
-                if rel is None:
-                    logger.warning("Found None relation in IfcRelContainedInSpatialStructure")
-                    continue
-                    
-                relating_structure = getattr(rel, "RelatingStructure", None)
-                if relating_structure is None:
-                    logger.warning(f"Relation has no RelatingStructure")
-                    continue
-                    
-                if not hasattr(relating_structure, "is_a") or not callable(relating_structure.is_a):
-                    logger.warning(f"RelatingStructure has no is_a method")
-                    continue
-                    
-                if relating_structure.is_a("IfcBuildingStorey"):
-                    storey_name = relating_structure.Name if hasattr(relating_structure, "Name") and relating_structure.Name else "Unknown Level"
-                    related_elements = getattr(rel, "RelatedElements", [])
-                    
-                    if related_elements is None:
-                        logger.warning(f"Relation has None RelatedElements")
-                        continue
-                        
-                    for element in related_elements:
-                        if element is None:
-                            logger.warning(f"Found None element in RelatedElements")
-                            continue
-                            
-                        try:
-                            element_id = element.id()
-                            element_to_storey[element_id] = storey_name
-                        except Exception as e:
-                            logger.warning(f"Error mapping element to storey: {e}")
-        except Exception as e:
-            logger.error(f"Error processing spatial structure: {e}")
-            logger.error(traceback.format_exc())
+                if rel.RelatingStructure and rel.RelatingStructure.is_a("IfcBuildingStorey"):
+                    storey_name = rel.RelatingStructure.Name if hasattr(rel.RelatingStructure, "Name") and rel.RelatingStructure.Name else "Unknown Level"
+                    for element in rel.RelatedElements:
+                        if element is not None:
+                            try:
+                                element_to_storey[element.id()] = storey_name
+                            except Exception as e:
+                                logger.warning(f"Error mapping element to storey: {e}")
         
         # Process IfcElements in chunks to avoid memory issues
         chunk_size = 100
         
-        # Filter elements by TARGET_IFC_CLASSES (with schema compatibility)
-        compatible_classes = get_schema_compatible_classes(ifc_file)
-        
-        if compatible_classes:
+        # Filter elements by TARGET_IFC_CLASSES
+        if TARGET_IFC_CLASSES:
             all_elements = []
-            for element_type in compatible_classes:
+            for element_type in TARGET_IFC_CLASSES:
                 if element_type and element_type.strip():  # Skip empty strings
                     try:
                         type_elements = list(ifc_file.by_type(element_type.strip()))
@@ -633,8 +585,7 @@ def get_ifc_elements(model_id: str):
                     except Exception as type_error:
                         logger.warning(f"Error getting elements of type {element_type}: {str(type_error)}")
             
-            total_elements = len(list(ifc_file.by_type("IfcElement")))
-            logger.info(f"Filtered to {len(all_elements)} elements of targeted types (out of {total_elements} total elements)")
+            logger.info(f"Filtered to {len(all_elements)} elements of targeted types (out of {len(list(ifc_file.by_type('IfcElement')))} total elements)")
         else:
             all_elements = list(ifc_file.by_type("IfcElement"))
             logger.info(f"No filtering applied. Processing all {len(all_elements)} elements.")
@@ -650,7 +601,10 @@ def get_ifc_elements(model_id: str):
                     "type": element.is_a(),
                     "name": element.Name if hasattr(element, "Name") and element.Name else "Unnamed",
                     "description": element.Description if hasattr(element, "Description") and element.Description else None,
-                    "properties": {}
+                    "properties": {},
+                    "classification_id": None,
+                    "classification_name": None,
+                    "classification_system": None
                 }
                 
                 # Add building storey information
@@ -713,15 +667,9 @@ def get_ifc_elements(model_id: str):
                     
                     # Extract classification information
                     if hasattr(element, "HasAssociations"):
-                        # Log all associations for debugging
-                        association_types = [rel.is_a() for rel in element.HasAssociations]
-                        logger.info(f"Element {element.GlobalId} has associations: {association_types}")
-                        
                         for relation in element.HasAssociations:
                             if relation.is_a("IfcRelAssociatesClassification"):
                                 classification_ref = relation.RelatingClassification
-                                logger.info(f"Found classification relation for element {element.GlobalId}. Classification type: {classification_ref.is_a()}")
-                                
                                 if classification_ref.is_a("IfcClassificationReference"):
                                     # Get classification ID and name
                                     element_data["classification_id"] = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
@@ -733,17 +681,13 @@ def get_ifc_elements(model_id: str):
                                         if hasattr(referenced_source, "Name"):
                                             element_data["classification_system"] = referenced_source.Name
                                     
-                                    logger.info(f"Element {element.GlobalId} has classification: ID={element_data.get('classification_id')}, Name={element_data.get('classification_name')}, System={element_data.get('classification_system')}")
+                                    logger.debug(f"Element {element.GlobalId} has classification: {element_data.get('classification_id')} - {element_data.get('classification_name')}")
                                     
                                 # If directly using IfcClassification (less common)
                                 elif classification_ref.is_a("IfcClassification"):
                                     element_data["classification_system"] = classification_ref.Name if hasattr(classification_ref, "Name") else None
                                     element_data["classification_name"] = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
-                                    logger.info(f"Element {element.GlobalId} has direct classification system: {element_data.get('classification_system')}, Name: {element_data.get('classification_name')}")
-                        
-                        # Log if no classification found
-                        if "classification_id" not in element_data and "classification_system" not in element_data:
-                            logger.info(f"No classification found for element {element.GlobalId}")
+                                    logger.debug(f"Element {element.GlobalId} has direct classification system: {element_data.get('classification_system')}")
                     
                     # Get volume information for the element
                     element_volume = get_volume_from_properties(element)
@@ -794,7 +738,7 @@ def get_ifc_elements(model_id: str):
                                     # Layer set case - calculate based on layer thickness
                                     constituent_fractions, constituent_widths = compute_constituent_fractions(
                                         ifc_file, 
-                                        relating_material, 
+                                        relating_material,
                                         [element],
                                         unit_scale
                                     )
@@ -867,105 +811,6 @@ def get_ifc_elements(model_id: str):
                                                 
                                                 element_data["material_volumes"][unique_name] = volume_data
                                                 total_fraction += fraction
-                    
-                    # Fallback: For elements with Material.Layers property but no material associations
-                    if not has_material_volumes and "Material.Layers" in element_data["properties"]:
-                        logger.debug(f"Using Material.Layers fallback for element {element.GlobalId}")
-                        material_layers_string = element_data["properties"]["Material.Layers"]
-                        
-                        # Try to get actual layer thicknesses from any material layer set in the project
-                        material_names = []
-                        material_layers_map = {}
-                        
-                        # Extract material names from the Material.Layers string
-                        layers = [layer.strip() for layer in material_layers_string.split('|')]
-                        for layer in layers:
-                            if '(' in layer and ')' in layer:
-                                name_part = layer[:layer.rfind('(')].strip()
-                                material_names.append(name_part)
-                            else:
-                                material_names.append(layer.strip())
-                        
-                        # Look for corresponding material layer sets in the project
-                        material_layer_sets = []
-                        all_rel_materials = list(ifc_file.by_type("IfcRelAssociatesMaterial"))
-                        
-                        for rel_material in all_rel_materials:
-                            relating_material = rel_material.RelatingMaterial
-                            if relating_material.is_a('IfcMaterialLayerSet') or relating_material.is_a('IfcMaterialLayerSetUsage'):
-                                layer_set = relating_material if relating_material.is_a('IfcMaterialLayerSet') else relating_material.ForLayerSet
-                                if layer_set and layer_set.MaterialLayers:
-                                    material_layer_sets.append(layer_set)
-                        
-                        logger.debug(f"Found {len(material_layer_sets)} material layer sets in the project")
-                        
-                        # Try to match material names to layer sets
-                        for material_name in material_names:
-                            for layer_set in material_layer_sets:
-                                for layer in layer_set.MaterialLayers:
-                                    if layer.Material and layer.Material.Name == material_name:
-                                        material_layers_map[material_name] = layer
-                                        logger.debug(f"Matched material {material_name} to layer with thickness {layer.LayerThickness}")
-                                        break
-                        
-                        # If we found any matches, use those for calculating fractions
-                        if material_layers_map:
-                            logger.debug(f"Using actual layer thicknesses for {len(material_layers_map)} materials")
-                            total_thickness = sum(layer.LayerThickness for layer in material_layers_map.values() if hasattr(layer, 'LayerThickness'))
-                            
-                            if total_thickness > 0:
-                                material_volumes = {}
-                                for name, layer in material_layers_map.items():
-                                    if hasattr(layer, 'LayerThickness'):
-                                        fraction = layer.LayerThickness / total_thickness
-                                        material_volumes[name] = {
-                                            "fraction": _round_value(fraction, 5),
-                                            "width": _round_value(layer.LayerThickness, 5)
-                                        }
-                                        logger.debug(f"Material {name}: thickness={layer.LayerThickness}, fraction={fraction}")
-                                
-                                # For materials without matches, distribute the remaining fraction equally
-                                unmatched_materials = [name for name in material_names if name not in material_layers_map]
-                                if unmatched_materials:
-                                    remaining_fraction = 1.0 - sum(info["fraction"] for info in material_volumes.values())
-                                    equal_fraction = remaining_fraction / len(unmatched_materials) if unmatched_materials else 0
-                                    
-                                    for name in unmatched_materials:
-                                        material_volumes[name] = {
-                                            "fraction": _round_value(equal_fraction, 5)
-                                        }
-                                        logger.debug(f"Unmatched material {name}: assigned equal fraction {equal_fraction}")
-                                
-                                # Add volumes if we have element volume
-                                if element_volume_value:
-                                    for material_name, info in material_volumes.items():
-                                        fraction = info["fraction"]
-                                        material_volumes[material_name]["volume"] = _round_value(element_volume_value * fraction, 5)
-                                
-                                element_data["material_volumes"] = material_volumes
-                                logger.debug(f"Created material volumes with actual thicknesses: {material_volumes}")
-                            else:
-                                # Fall back to string parsing
-                                material_volumes = extract_material_layers_from_string(material_layers_string)
-                                
-                                if material_volumes and element_volume_value:
-                                    for material_name, info in material_volumes.items():
-                                        fraction = info["fraction"]
-                                        material_volumes[material_name]["volume"] = _round_value(element_volume_value * fraction, 5)
-                                
-                                element_data["material_volumes"] = material_volumes
-                                logger.debug(f"Extracted {len(material_volumes)} materials from Material.Layers string (fallback)")
-                        else:
-                            # Fall back to string parsing
-                            material_volumes = extract_material_layers_from_string(material_layers_string)
-                            
-                            if material_volumes and element_volume_value:
-                                for material_name, info in material_volumes.items():
-                                    fraction = info["fraction"]
-                                    material_volumes[material_name]["volume"] = _round_value(element_volume_value * fraction, 5)
-                            
-                            element_data["material_volumes"] = material_volumes
-                            logger.debug(f"Extracted {len(material_volumes)} materials from Material.Layers string (no matches found)")
                     
                     # Remove material_volumes if empty
                     if not element_data["material_volumes"]:

@@ -1,5 +1,5 @@
 import { CSSProperties } from "react";
-import { ColumnWidthsType } from "./types";
+import { ColumnWidthsType } from "../types/types";
 
 // Define percentage-based column widths for better consistency
 export const columnWidths: ColumnWidthsType = {

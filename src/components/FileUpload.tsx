@@ -13,7 +13,7 @@ import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Delete as DeleteIcon } from "@mui/icons-material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
-import { MetaFile, UploadedFile } from "./types";
+import { MetaFile, UploadedFile } from "../types/types";
 
 interface FileUploadProps {
   apiUrl: string;

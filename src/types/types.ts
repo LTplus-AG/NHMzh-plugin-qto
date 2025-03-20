@@ -17,13 +17,13 @@ export interface IFCElement {
   id: string;
   global_id: string;
   type: string;
-  name: string | null;
-  description: string | null;
-  properties: Record<string, string>;
+  name: string;
+  description?: string | null;
+  properties: Record<string, string | number | boolean | null>;
   material_volumes?: Record<
     string,
     {
-      fraction: number;
+      fraction?: number;
       volume?: number;
       width?: number;
     }
@@ -32,6 +32,20 @@ export interface IFCElement {
     net: number | null;
     gross: number | null;
   };
+  level?: string;
+  area?: number;
+  is_structural?: boolean;
+  is_external?: boolean;
+  ebkph?: string;
+  category?: string;
+  materials?: Array<{
+    name: string;
+    fraction: number;
+    volume: number;
+  }>;
+  classification_id?: string | null;
+  classification_name?: string | null;
+  classification_system?: string | null;
 }
 
 export interface EBKPItem {

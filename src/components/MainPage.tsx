@@ -14,7 +14,7 @@ import {
 import { useEffect, useState } from "react";
 import FileUpload from "./FileUpload";
 import IfcElementsList from "./IfcElementsList";
-import { IFCElement, UploadedFile } from "./types";
+import { IFCElement, UploadedFile } from "../types/types";
 import SendIcon from "@mui/icons-material/Send";
 
 // Define API URL - using relative path for proxy to avoid HTTPS upgrade issues
