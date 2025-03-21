@@ -166,101 +166,76 @@ When sending QTO data to Kafka, the following JSON format is used:
 
 AGPL
 
-# QTO Plugin - Docker Setup
+# QTO Plugin
 
-This repository contains a QTO (Quantity Take-Off) plugin that processes IFC building models and sends the data to Kafka.
+This plugin provides Quantity Takeoff (QTO) functionality for IFC models.
 
-## Architecture
+## Docker Setup
 
-The application consists of:
+### Prerequisites
 
-- **Frontend**: A Vite.js application for uploading IFC files and visualizing data
-- **Backend**: A FastAPI service for processing IFC files and extracting quantity data
-- **Kafka**: Message broker for streaming the processed data
-- **MinIO**: Object storage for storing IFC files
+- Docker and Docker Compose installed
+- Git (to clone the repository)
 
-## Prerequisites
-
-- Docker and Docker Compose installed on your machine
-- Git
-
-## Quick Start
+### Running the application
 
 1. Clone the repository:
 
-   ```bash
-   git clone https://github.com/yourusername/plugin-qto.git
-   cd plugin-qto
-   ```
+```bash
+git clone <repository-url>
+cd plugin-qto
+```
 
-2. Create your `.env` file (or use the default one in the repo):
+2. Configure environment variables (optional):
 
-   ```bash
-   cp .env.example .env
-   ```
+   - Copy `.env.example` to `.env` if needed and adjust settings
 
-3. Start all services:
+3. Start the development environment:
 
-   ```bash
-   docker-compose up -d
-   ```
+```bash
+docker-compose up
+```
 
-4. Access the application:
-   - Frontend: http://localhost (port 80)
-   - Backend API: http://localhost:8000
-   - Kafka UI: http://localhost:8080
-   - MinIO Console: http://localhost:9001 (username/password: see .env file)
+This will start:
 
-## Services
+- Kafka broker and UI
+- Backend API on port 8000
+- Frontend development server on port 3004
 
-### Frontend
+4. For production deployment:
 
-The frontend application runs on port 80 and is built with React/Vite. It provides:
+```bash
+docker-compose up frontend
+```
 
-- IFC file upload
-- Visualization of extracted elements
-- Ability to send data to Kafka
+This will build and serve the frontend through Nginx on port 80.
 
-### Backend
+### Architecture
 
-The backend runs on port 8000 and exposes several endpoints:
+The system consists of three main components:
 
-- `/upload-ifc/`: Upload IFC files
-- `/ifc-elements/{model_id}`: Get elements from a model
-- `/send-qto/`: Send QTO data to Kafka
+1. **Backend**: A FastAPI application that processes IFC files using ifcopenshell and sends QTO data to Kafka
+2. **Frontend**: A React application that provides the user interface
+3. **Kafka**: A message broker for sending QTO data to other systems
 
-### Kafka
+### Environment Variables
 
-Kafka runs with KRaft mode (no ZooKeeper) on ports:
+| Variable           | Description                       | Default               |
+| ------------------ | --------------------------------- | --------------------- |
+| API_URL            | URL for the backend API           | http://localhost:8000 |
+| FRONTEND_PORT      | Port for the development frontend | 3004                  |
+| FRONTEND_PROD_PORT | Port for the production frontend  | 80                    |
+| BACKEND_PORT       | Port for the backend API          | 8000                  |
+| KAFKA_QTO_TOPIC    | Kafka topic for QTO data          | qto-elements          |
 
-- 9092: External port for local development
-- 29092: Internal port for container communication
+See `.env` file for more configuration options.
 
-### MinIO
+### Development
 
-MinIO provides object storage and runs on:
+The development environment mounts the source code as volumes, so changes to the code will be reflected immediately without rebuilding the containers.
 
-- 9000: API port
-- 9001: Console port
+### Production Deployment
 
-## Development
+For production, the frontend is built and served through Nginx, which also proxies API requests to the backend.
 
-To develop locally with Docker:
-
-1. Make your code changes
-2. Rebuild and restart the affected service:
-   ```bash
-   docker-compose up -d --build qto-backend
-   # or
-   docker-compose up -d --build frontend
-   ```
-
-## Troubleshooting
-
-- **Kafka connection issues**: Check the Kafka UI to verify topics and messages
-- **Backend health**: Visit http://localhost:8000/health
-- **Container logs**: Run `docker-compose logs -f [service-name]`
-
-## License
-
-[Your License]
+Make sure to set proper environment variables for production deployment, especially the API_URL.

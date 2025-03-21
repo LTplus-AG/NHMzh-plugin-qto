@@ -62,6 +62,16 @@ export interface HealthResponse {
   ifcopenshell_version: string;
 }
 
+// Get API URL from environment or use default
+const getApiBaseUrl = () => {
+  // For Vite, environment variables must be prefixed with VITE_
+  if (import.meta.env?.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  // Fallback to default
+  return "/api";
+};
+
 /**
  * QTO API Client Class
  */
@@ -70,10 +80,11 @@ export class QTOApiClient {
 
   /**
    * Creates a new QTO API client
-   * @param baseUrl - The base URL of the API (default: "/api")
+   * @param baseUrl - The base URL of the API (default from environment or "/api")
    */
-  constructor(baseUrl = "/api") {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getApiBaseUrl();
+    console.log(`API Client initialized with base URL: ${this.baseUrl}`);
   }
 
   /**

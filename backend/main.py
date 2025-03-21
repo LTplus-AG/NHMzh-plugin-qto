@@ -32,10 +32,19 @@ app = FastAPI(
     redoc_url=None  # Disable default redoc to use custom implementation
 )
 
-# Add CORS middleware with more permissive settings
+# Get CORS settings from environment variables
+cors_origins_str = os.getenv("CORS_ORIGINS", "*")
+if cors_origins_str == "*":
+    cors_origins = ["*"]
+else:
+    cors_origins = [origin.strip() for origin in cors_origins_str.split(",")]
+
+logger.info(f"CORS origins: {cors_origins}")
+
+# Add CORS middleware with appropriate settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins in development
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
