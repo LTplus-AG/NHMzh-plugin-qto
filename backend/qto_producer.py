@@ -98,7 +98,15 @@ class QTOKafkaProducer:
         
         Args:
             qto_data: Dictionary containing QTO data
+            
+        Returns:
+            Boolean indicating if all messages were sent successfully
         """
+        # Check if this data contains an elements array - if so, use the per-element sender
+        if isinstance(qto_data.get('elements'), list) and len(qto_data.get('elements', [])) > 0:
+            return self.send_qto_messages_per_element(qto_data)
+            
+        # Otherwise proceed with single message sending
         if self.producer is None:
             logger.error("Kafka producer not initialized, cannot send message")
             return False
@@ -112,6 +120,80 @@ class QTOKafkaProducer:
         except Exception as e:
             logger.error(f"Error sending QTO data to Kafka: {e}")
             return False
+    
+    def send_qto_messages_per_element(self, qto_data: Dict[str, Any]):
+        """Send QTO data to Kafka topic with one message per element.
+        
+        Args:
+            qto_data: Dictionary containing QTO data with 'elements' list
+            
+        Returns:
+            Boolean indicating if all messages were sent successfully
+        """
+        if self.producer is None:
+            logger.error("Kafka producer not initialized, cannot send messages")
+            return False
+            
+        # Extract elements and base metadata
+        elements = qto_data.get('elements', [])
+        if not elements:
+            logger.warning("No elements found in QTO data, no messages sent")
+            return False
+            
+        # Extract metadata that will be common for all messages
+        metadata = {
+            "project": qto_data.get("project"),
+            "filename": qto_data.get("filename"),
+            "timestamp": qto_data.get("timestamp"),
+            "file_id": qto_data.get("file_id")
+        }
+        
+        success = True
+        element_count = 0
+        batch_size = 100  # Process in batches for large element counts
+        
+        # Process elements in batches for better Kafka performance
+        for i in range(0, len(elements), batch_size):
+            batch_elements = elements[i:i+batch_size]
+            
+            # Send one message per element in the batch
+            for element in batch_elements:
+                try:
+                    # Create a completely flat message structure
+                    flat_message = {
+                        **metadata,
+                        "element_id": element.get("id"),
+                        "category": element.get("category"),
+                        "level": element.get("level"),
+                        "area": element.get("area"),
+                        "is_structural": element.get("is_structural"),
+                        "is_external": element.get("is_external"),
+                        "ebkph": element.get("ebkph"),
+                        "materials": element.get("materials", []),
+                        "classification": element.get("classification", {})
+                    }
+                    
+                    # Send the message
+                    message = json.dumps(flat_message)
+                    self.producer.produce(self.topic, message, callback=self.delivery_report)
+                    element_count += 1
+                except Exception as e:
+                    logger.error(f"Error sending QTO element data to Kafka: {e}")
+                    success = False
+            
+            # Poll to trigger callbacks and clear internal queue after each batch
+            self.producer.poll(0)
+            
+            # Log batch progress for large datasets
+            if len(elements) > batch_size:
+                logger.info(f"Processed batch of {len(batch_elements)} elements ({i+len(batch_elements)}/{len(elements)})")
+        
+        # Final flush to ensure all messages are delivered
+        if element_count > 0:
+            self.producer.flush(timeout=10)
+        
+        logger.info(f"Sent {element_count} individual QTO element messages for project {metadata.get('project', 'unknown')}")
+        return success
     
     def flush(self):
         """Wait for all messages to be delivered."""
