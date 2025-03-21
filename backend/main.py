@@ -1,6 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.openapi.utils import get_openapi
 import os
 import ifcopenshell
 import tempfile
@@ -22,7 +24,13 @@ logger = logging.getLogger(__name__)
 logger.info(f"Using ifcopenshell version: {ifcopenshell.version}")
 logger.info(f"Python version: {sys.version}")
 
-app = FastAPI()
+app = FastAPI(
+    title="QTO IFC Parser API",
+    description="API for parsing IFC files and extracting QTO data",
+    version="1.0.0",
+    docs_url=None,  # Disable default docs to use custom implementation
+    redoc_url=None  # Disable default redoc to use custom implementation
+)
 
 # Add CORS middleware with more permissive settings
 app.add_middleware(
@@ -54,6 +62,7 @@ else:
     logger.info(f"Using default IFC element types: {TARGET_IFC_CLASSES}")
 
 class IFCElement(BaseModel):
+    """IFC Element data model"""
     id: str
     global_id: str
     type: str
@@ -65,6 +74,59 @@ class IFCElement(BaseModel):
     classification_id: Optional[str] = None
     classification_name: Optional[str] = None
     classification_system: Optional[str] = None
+
+class QTOResponse(BaseModel):
+    """Response model for QTO operation"""
+    message: str
+    model_id: str
+    element_count: int
+    kafka_status: str
+
+class ModelUploadResponse(BaseModel):
+    """Response model for model upload"""
+    message: str
+    model_id: str
+    filename: str
+    element_count: int
+    entity_types: Dict[str, int]
+
+class ModelDeleteResponse(BaseModel):
+    """Response model for model deletion"""
+    message: str
+
+class HealthResponse(BaseModel):
+    """Response model for health check"""
+    status: str
+    kafka: str
+    models_in_memory: int
+    ifcopenshell_version: str
+
+class ModelInfo(BaseModel):
+    """Model information"""
+    model_id: str
+    filename: str
+    element_count: int
+    entity_counts: Dict[str, int]
+
+# Custom OpenAPI schema
+@app.get("/openapi.json", include_in_schema=False)
+async def get_open_api_endpoint():
+    return get_openapi(
+        title="QTO IFC Parser API",
+        version="1.0.0",
+        description="API for parsing IFC files and extracting QTO data for Quantity Takeoff",
+        routes=app.routes,
+    )
+
+# Custom Swagger UI
+@app.get("/docs", include_in_schema=False)
+async def get_documentation():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="API Documentation")
+
+# Custom ReDoc
+@app.get("/redoc", include_in_schema=False)
+async def get_redoc_documentation():
+    return get_redoc_html(openapi_url="/openapi.json", title="API Documentation")
 
 @lru_cache(maxsize=1024)
 def get_volume_from_properties(element) -> Dict:
@@ -412,13 +474,21 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
     
     return material_volumes
 
-@app.get("/")
+@app.get("/", response_model=Dict[str, str])
 def read_root():
+    """API root endpoint that confirms the service is running"""
     logger.info("API root endpoint accessed")
     return {"message": "IFC Parser API is running"}
 
-@app.post("/upload-ifc/", response_model=Dict[str, Any])
+@app.post("/upload-ifc/", response_model=ModelUploadResponse)
 async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+    """
+    Upload an IFC file for processing
+    
+    - **file**: The IFC file to upload
+    
+    Returns information about the uploaded model including a model_id for future reference.
+    """
     logger.info(f"Received file upload request for {file.filename} with content type {file.content_type}")
     
     if not file.filename.endswith('.ifc'):
@@ -539,6 +609,13 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
 
 @app.get("/ifc-elements/{model_id}", response_model=List[IFCElement])
 def get_ifc_elements(model_id: str):
+    """
+    Retrieve IFC elements from a previously uploaded model
+    
+    - **model_id**: ID of the model to retrieve elements from
+    
+    Returns a list of IFC elements with their properties and classifications.
+    """
     logger.info(f"Retrieving elements for model ID: {model_id}")
     
     if model_id not in ifc_models:
@@ -843,8 +920,13 @@ def get_ifc_elements(model_id: str):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error retrieving elements: {str(e)}")
 
-@app.get("/models", response_model=List[Dict[str, Any]])
+@app.get("/models", response_model=List[ModelInfo])
 def list_models():
+    """
+    List all uploaded models
+    
+    Returns information about all models uploaded to the server.
+    """
     logger.info("Retrieving list of models")
     
     try:
@@ -872,8 +954,15 @@ def list_models():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error retrieving model list: {str(e)}")
 
-@app.delete("/models/{model_id}")
+@app.delete("/models/{model_id}", response_model=ModelDeleteResponse)
 def delete_model(model_id: str):
+    """
+    Delete a previously uploaded model
+    
+    - **model_id**: ID of the model to delete
+    
+    Returns a confirmation message.
+    """
     logger.info(f"Deleting model ID: {model_id}")
     
     if model_id not in ifc_models:
@@ -898,9 +987,13 @@ def delete_model(model_id: str):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error deleting model: {str(e)}")
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health_check():
-    """Health check endpoint for Docker healthcheck."""
+    """
+    Health check endpoint for monitoring service status
+    
+    Returns the status of the service, Kafka connection, and other diagnostics.
+    """
     kafka_status = "unknown"
     
     try:
@@ -924,9 +1017,15 @@ def health_check():
         "ifcopenshell_version": ifcopenshell.version
     }
 
-@app.post("/send-qto/", response_model=Dict[str, Any])
+@app.post("/send-qto/", response_model=QTOResponse)
 async def send_qto(model_id: str = Query(..., description="The ID of the model to send to Kafka")):
-    """Send QTO data to Kafka using the QTOKafkaProducer."""
+    """
+    Send QTO data to Kafka using the QTOKafkaProducer
+    
+    - **model_id**: ID of the model to send to Kafka
+    
+    Returns the status of the Kafka sending operation.
+    """
     logger.info(f"Sending QTO data to Kafka for model ID: {model_id}")
     
     if model_id not in ifc_models:
@@ -994,7 +1093,13 @@ async def send_qto(model_id: str = Query(..., description="The ID of the model t
 
 @app.get("/qto-elements/{model_id}")
 def get_qto_elements(model_id: str):
-    """Get elements in QTO format for display in the frontend."""
+    """
+    Get elements in QTO format for display in the frontend
+    
+    - **model_id**: ID of the model to retrieve QTO elements from
+    
+    Returns elements formatted for QTO visualization.
+    """
     logger.info(f"Retrieving QTO-formatted elements for model ID: {model_id}")
     
     if model_id not in ifc_models:

@@ -14,9 +14,9 @@ import { useDropzone } from "react-dropzone";
 import { Delete as DeleteIcon } from "@mui/icons-material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { MetaFile, UploadedFile } from "../types/types";
+import apiClient from "../api/ApiClient";
 
 interface FileUploadProps {
-  apiUrl: string;
   backendConnected: boolean;
   uploadedFiles: UploadedFile[];
   selectedFile: UploadedFile | null;
@@ -27,7 +27,6 @@ interface FileUploadProps {
 }
 
 const FileUpload: React.FC<FileUploadProps> = ({
-  apiUrl,
   backendConnected,
   uploadedFiles,
   selectedFile,
@@ -47,31 +46,18 @@ const FileUpload: React.FC<FileUploadProps> = ({
       }
 
       try {
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const response = await fetch(`${apiUrl}/upload-ifc/`, {
-          method: "POST",
-          body: formData,
-          signal: AbortSignal.timeout(30000), // 30 second timeout for larger files
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to upload IFC file: ${response.statusText}`);
-        }
-
-        const data = await response.json();
+        const response = await apiClient.uploadIFC(file);
 
         // After successful upload, fetch the elements
-        await fetchIfcElements(data.model_id);
+        await fetchIfcElements(response.model_id);
 
-        return { modelId: data.model_id };
+        return { modelId: response.model_id };
       } catch (error) {
         console.error("Error uploading IFC file:", error);
         return null;
       }
     },
-    [apiUrl, backendConnected, fetchIfcElements]
+    [backendConnected, fetchIfcElements]
   );
 
   const fileSize = (size: number) => {

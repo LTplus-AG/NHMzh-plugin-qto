@@ -10,15 +10,14 @@ import {
   StepLabel,
   Stepper,
   Typography,
+  Divider,
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import FileUpload from "./FileUpload";
 import IfcElementsList from "./IfcElementsList";
-import { IFCElement, UploadedFile } from "../types/types";
+import { UploadedFile } from "../types/types";
 import SendIcon from "@mui/icons-material/Send";
-
-// Define API URL - using relative path for proxy to avoid HTTPS upgrade issues
-const API_URL = "/api";
+import apiClient, { IFCElement } from "../api/ApiClient";
 
 const MainPage = () => {
   const Instructions = [
@@ -58,31 +57,15 @@ const MainPage = () => {
 
   // Function to check if backend is available
   const checkBackendConnectivity = async () => {
-    const url = `${API_URL}/health`;
-    console.log("Checking backend connectivity at:", url);
+    console.log("Checking backend connectivity");
 
     try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        // Set a short timeout to quickly detect if backend is down
-        signal: AbortSignal.timeout(3000),
-      });
-
-      if (response.ok) {
-        setBackendConnected(true);
-        console.log("Backend connection successful");
-        // Get the ifcopenshell version from response
-        const data = await response.json();
-        console.log(`Using ifcopenshell version: ${data.ifcopenshell_version}`);
-      } else {
-        setBackendConnected(false);
-        console.warn(
-          "Backend health check failed with status:",
-          response.status
-        );
-        setShowConnectionError(true);
-      }
+      const healthData = await apiClient.getHealth();
+      setBackendConnected(true);
+      console.log("Backend connection successful");
+      console.log(
+        `Using ifcopenshell version: ${healthData.ifcopenshell_version}`
+      );
     } catch (error) {
       console.warn("Backend connectivity check failed:", error);
       setBackendConnected(false);
@@ -102,18 +85,8 @@ const MainPage = () => {
   // Function to load the list of available models from the backend
   const loadModelsList = async () => {
     try {
-      const response = await fetch(`${API_URL}/models`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to load models list: ${response.statusText}`);
-      }
-
-      const models = await response.json();
-      if (Array.isArray(models) && models.length > 0) {
+      const models = await apiClient.listModels();
+      if (models.length > 0) {
         const modelFiles: UploadedFile[] = models.map((model) => ({
           filename: model.filename,
           created_at: new Date().toISOString(),
@@ -141,62 +114,54 @@ const MainPage = () => {
 
       // First try to get QTO-formatted elements
       try {
-        const qtoResponse = await fetch(`${API_URL}/qto-elements/${modelId}`, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(10000), // 10 second timeout
-        });
+        const qtoData = await apiClient.getQTOElements(modelId);
+        console.log("Using QTO-formatted elements:", qtoData);
 
-        if (qtoResponse.ok) {
-          const qtoData = await qtoResponse.json();
-          console.log("Using QTO-formatted elements:", qtoData);
-
-          // Map QTO elements format to IFCElement format
-          interface QTOElement {
+        // Map QTO elements format to IFCElement format
+        interface QTOElement {
+          id: string;
+          category: string;
+          level: string;
+          area: number;
+          is_structural: boolean;
+          is_external: boolean;
+          ebkph: string;
+          materials: Array<{
+            name: string;
+            fraction: number;
+            volume: number;
+          }>;
+          classification?: {
             id: string;
-            category: string;
-            level: string;
-            area: number;
-            is_structural: boolean;
-            is_external: boolean;
-            ebkph: string;
-            materials: Array<{
-              name: string;
-              fraction: number;
-              volume: number;
-            }>;
-            classification?: {
-              id: string;
-              name: string;
-              system: string;
-            };
-          }
-
-          const mappedElements = qtoData.map((el: QTOElement) => ({
-            id: el.id,
-            global_id: el.id, // Use id as global_id for compatibility
-            type: el.category,
-            name: el.category,
-            description: null,
-            properties: {},
-            // QTO specific fields
-            category: el.category,
-            level: el.level,
-            area: el.area,
-            is_structural: el.is_structural,
-            is_external: el.is_external,
-            ebkph: el.ebkph,
-            materials: el.materials,
-            // Map classification data if available
-            classification_id: el.classification?.id || null,
-            classification_name: el.classification?.name || null,
-            classification_system: el.classification?.system || null,
-          }));
-
-          setIfcElements(mappedElements);
-          setIfcLoading(false);
-          return;
+            name: string;
+            system: string;
+          };
         }
+
+        const mappedElements = qtoData.map((el: QTOElement) => ({
+          id: el.id,
+          global_id: el.id, // Use id as global_id for compatibility
+          type: el.category,
+          name: el.category,
+          description: null,
+          properties: {},
+          // QTO specific fields
+          category: el.category,
+          level: el.level,
+          area: el.area,
+          is_structural: el.is_structural,
+          is_external: el.is_external,
+          ebkph: el.ebkph,
+          materials: el.materials,
+          // Map classification data if available
+          classification_id: el.classification?.id || null,
+          classification_name: el.classification?.name || null,
+          classification_system: el.classification?.system || null,
+        }));
+
+        setIfcElements(mappedElements);
+        setIfcLoading(false);
+        return;
       } catch (qtoError) {
         console.warn(
           "Error fetching QTO elements, falling back to standard IFC elements:",
@@ -205,18 +170,8 @@ const MainPage = () => {
       }
 
       // Fallback to standard IFC elements if QTO endpoint fails
-      const response = await fetch(`${API_URL}/ifc-elements/${modelId}`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(10000), // 10 second timeout
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch IFC elements: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setIfcElements(data);
+      const elements = await apiClient.getIFCElements(modelId);
+      setIfcElements(elements);
     } catch (error) {
       console.error(`Error fetching IFC elements for model ${modelId}:`, error);
       setIfcError(
@@ -266,56 +221,17 @@ const MainPage = () => {
 
       // First check if the model is still available on the server
       try {
-        const checkResponse = await fetch(
-          `${API_URL}/ifc-elements/${selectedFile.modelId}`,
-          {
-            method: "GET",
-            headers: { Accept: "application/json" },
-            signal: AbortSignal.timeout(5000),
-          }
-        );
-
-        if (!checkResponse.ok) {
-          // If the model is not found, try to reload the model list
-          await loadModelsList();
-          throw new Error(
-            "Model not found on server. It may have been deleted or the server was restarted."
-          );
-        }
+        await apiClient.getIFCElements(selectedFile.modelId);
       } catch (checkError) {
+        // If the model is not found, try to reload the model list
+        await loadModelsList();
         throw new Error(
-          `Failed to verify model: ${
-            checkError instanceof Error
-              ? checkError.message
-              : String(checkError)
-          }`
+          "Model not found on server. It may have been deleted or the server was restarted."
         );
       }
 
-      const response = await fetch(
-        `${API_URL}/send-qto/?model_id=${selectedFile.modelId}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          signal: AbortSignal.timeout(10000), // 10 second timeout
-        }
-      );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error(
-            "Model not found on server. It may have been deleted or the server was restarted."
-          );
-        } else {
-          throw new Error(`Failed to send QTO data: ${response.statusText}`);
-        }
-      }
-
-      const data = await response.json();
-      console.log("QTO data sent successfully:", data);
+      const response = await apiClient.sendQTO(selectedFile.modelId);
+      console.log("QTO data sent successfully:", response);
       setKafkaSuccess(true);
     } catch (error) {
       console.error("Error sending QTO data to Kafka:", error);
@@ -342,10 +258,7 @@ const MainPage = () => {
   };
 
   return (
-    <div
-      className="w-full flex h-full overflow-hidden"
-      style={{ height: "100vh" }}
-    >
+    <div className="w-full flex h-full overflow-hidden">
       {/* Backend Connection Error Snackbar */}
       <Snackbar
         open={showConnectionError}
@@ -382,14 +295,10 @@ const MainPage = () => {
       </Snackbar>
 
       {/* Sidebar */}
-      <div className="sidebar text-primary">
+      <div className="w-1/4 min-w-[300px] max-w-[400px] p-8 bg-light text-primary flex flex-col h-full">
         {/* Header und Inhalte */}
-        <div>
-          <Typography
-            variant="h3"
-            className="text-5xl mb-2 font-thin tracking-wide"
-            color="black"
-          >
+        <div className="flex flex-col flex-grow overflow-hidden">
+          <Typography variant="h3" className="text-5xl mb-2" color="primary">
             Mengenermittlung
           </Typography>
           <div className="flex flex-col mt-2 gap-1">
@@ -436,7 +345,6 @@ const MainPage = () => {
 
         {/* File Upload Component */}
         <FileUpload
-          apiUrl={API_URL}
           backendConnected={backendConnected}
           uploadedFiles={uploadedFiles}
           selectedFile={selectedFile}
@@ -446,101 +354,122 @@ const MainPage = () => {
           fetchIfcElements={fetchIfcElements}
         />
 
-        {/* Fußzeile */}
-        <div className="flex flex-col mt-auto">
-          <span className="font-bold">Anleitung</span>
-          <Stepper orientation="vertical" nonLinear className="max-w-xs">
-            {Instructions.map((step) => (
-              <Step key={step.label} active>
-                <StepLabel>
-                  <span className="leading-tight text-primary font-bold">
-                    {step.label}
-                  </span>
-                </StepLabel>
-                <div className="ml-8 -mt-2">
-                  <span className="text-sm leading-none">
-                    {step.description}
-                  </span>
-                </div>
-              </Step>
-            ))}
-          </Stepper>
+        {/* Fusszeile */}
+        <div className="flex flex-col flex-1 mt-auto">
+          {/* Anleitung Section */}
+          <div>
+            <Typography
+              variant="subtitle1"
+              className="font-bold mb-2"
+              color="primary"
+            >
+              Anleitung
+            </Typography>
+            <Divider sx={{ mb: 2 }} />
+            <Stepper orientation="vertical" nonLinear className="max-w-xs">
+              {Instructions.map((step) => (
+                <Step key={step.label} active>
+                  <StepLabel>
+                    <span
+                      className="leading-tight text-primary font-bold"
+                      style={{ color: "#0D0599" }}
+                    >
+                      {step.label}
+                    </span>
+                  </StepLabel>
+                  <div className="ml-8 -mt-2">
+                    <span
+                      className="text-sm leading-none"
+                      style={{ color: "#0D0599" }}
+                    >
+                      {step.description}
+                    </span>
+                  </div>
+                </Step>
+              ))}
+            </Stepper>
+          </div>
         </div>
       </div>
 
       {/* Main content area - IFC Elements */}
-      <div className="main-content flex-grow overflow-y-auto p-6 flex flex-col">
-        {/* Header section with title */}
-        <div className="flex justify-between items-center mb-4 pt-3">
-          <Typography variant="h4" className="text-3xl font-bold">
+      <div className="flex-1 w-3/4 flex flex-col h-full overflow-hidden">
+        <div className="flex-grow overflow-y-auto p-10 flex flex-col h-full">
+          <Typography variant="h2" className="text-5xl">
             IFC Elemente
           </Typography>
-        </div>
 
-        {/* Info section - model info and alerts */}
-        <div className="mb-4">
-          {/* Active model info */}
-          {selectedFile && (
-            <Typography variant="subtitle1" className="mb-2">
-              Aktives Modell: <strong>{selectedFile.filename}</strong>
-            </Typography>
-          )}
+          <div className="flex mt-5 w-full mb-10">
+            {/* We'll keep the content area focused on IFC elements without tabs */}
+          </div>
 
-          {/* Message when no IFC file is loaded */}
-          {!ifcLoading && ifcElements.length === 0 && !ifcError && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Bitte laden Sie eine IFC-Datei hoch, um die Daten anzuzeigen. Die
-              IFC-Elemente werden mit ifcopenshell 0.8.1 verarbeitet.
-            </Alert>
-          )}
+          {/* Info section - model info and alerts */}
+          <div className="mb-4">
+            {/* Active model info */}
+            {selectedFile && (
+              <div className="font-medium mb-2">
+                Aktives Modell: <strong>{selectedFile.filename}</strong>
+              </div>
+            )}
 
-          {/* Note about the filtering */}
-          {ifcElements.length > 0 && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Es werden nur die ausgewählten IFC-Elementtypen angezeigt. Andere
-              Elementtypen wie IfcSpace, IfcFurnishingElement, etc. werden nicht
-              berücksichtigt.
-            </Alert>
-          )}
-        </div>
+            {/* Message when no IFC file is loaded */}
+            {!ifcLoading && ifcElements.length === 0 && !ifcError && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Bitte laden Sie eine IFC-Datei hoch, um die Daten anzuzeigen.
+                Die IFC-Elemente werden mit ifcopenshell 0.8.1 verarbeitet.
+              </Alert>
+            )}
 
-        {/* Action buttons */}
-        {selectedFile && (
-          <div className="flex gap-2 mb-4">
-            {/* Reload Button */}
-            <Button
-              variant="outlined"
-              color="primary"
-              onClick={() =>
-                selectedFile.modelId && fetchIfcElements(selectedFile.modelId)
-              }
-              disabled={ifcLoading || !backendConnected}
-            >
-              {ifcLoading ? "Loading..." : "Reload Model"}
-            </Button>
-
-            {/* Send to Kafka Button */}
+            {/* Note about the filtering */}
             {ifcElements.length > 0 && (
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={<SendIcon />}
-                onClick={sendQtoToKafka}
-                disabled={kafkaSending || !backendConnected}
-              >
-                {kafkaSending ? "Sending..." : "Send to Kafka"}
-              </Button>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Es werden nur die ausgewählten IFC-Elementtypen angezeigt.
+                Andere Elementtypen wie IfcSpace, IfcFurnishingElement, etc.
+                werden nicht berücksichtigt.
+              </Alert>
             )}
           </div>
-        )}
 
-        {/* Element list container - expanded to fill remaining space */}
-        <div className="border border-gray-200 rounded-md flex-grow flex flex-col min-h-0">
-          <IfcElementsList
-            elements={ifcElements}
-            loading={ifcLoading}
-            error={ifcError}
-          />
+          {/* Action buttons */}
+          {selectedFile && (
+            <div className="flex gap-2 mb-4">
+              {/* Reload Button */}
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={() =>
+                  selectedFile.modelId && fetchIfcElements(selectedFile.modelId)
+                }
+                disabled={ifcLoading || !backendConnected}
+                className="text-primary border-primary"
+              >
+                {ifcLoading ? "Loading..." : "Reload Model"}
+              </Button>
+
+              {/* Send to Kafka Button */}
+              {ifcElements.length > 0 && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<SendIcon />}
+                  onClick={sendQtoToKafka}
+                  disabled={kafkaSending || !backendConnected}
+                  className="bg-primary"
+                >
+                  {kafkaSending ? "Sending..." : "Send to Kafka"}
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Element list container - expanded to fill remaining space */}
+          <div className="border border-gray-200 rounded-md flex-grow flex flex-col min-h-0">
+            <IfcElementsList
+              elements={ifcElements}
+              loading={ifcLoading}
+              error={ifcError}
+            />
+          </div>
         </div>
       </div>
     </div>

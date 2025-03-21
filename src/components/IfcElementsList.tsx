@@ -1,20 +1,19 @@
-import React, { useState, useEffect } from "react";
 import {
-  Typography,
+  Alert,
+  CircularProgress,
   Paper,
   Table,
+  TableBody,
+  TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  TableCell,
-  TableBody,
-  CircularProgress,
-  Alert,
+  Typography,
 } from "@mui/material";
+import { useEffect, useState } from "react";
 import { IFCElement } from "../types/types";
-import InfoIcon from "@mui/icons-material/Info";
-import ElementsHeader from "./IfcElements/ElementsHeader";
 import EbkpGroupRow from "./IfcElements/EbkpGroupRow";
+import ElementsHeader from "./IfcElements/ElementsHeader";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 

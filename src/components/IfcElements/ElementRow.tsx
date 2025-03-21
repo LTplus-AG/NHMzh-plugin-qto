@@ -1,23 +1,20 @@
-import React from "react";
-import {
-  TableRow,
-  TableCell,
-  IconButton,
-  Chip,
-  Typography,
-  Collapse,
-  Box,
-  Table,
-  TableHead,
-  TableBody,
-  TextField,
-} from "@mui/material";
+import EditIcon from "@mui/icons-material/Edit";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
-import EditIcon from "@mui/icons-material/Edit";
+import {
+  Box,
+  Chip,
+  Collapse,
+  IconButton,
+  TableCell,
+  TableRow,
+  TextField,
+  Typography
+} from "@mui/material";
+import React from "react";
 import { IFCElement } from "../../types/types";
-import { EditedArea } from "./types";
 import MaterialsTable from "./MaterialsTable";
+import { EditedArea } from "./types";
 
 interface ElementRowProps {
   element: IFCElement;

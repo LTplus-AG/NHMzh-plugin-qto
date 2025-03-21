@@ -78,6 +78,71 @@ uvicorn main:app --reload
 | `/models/{model_id}`       | DELETE | Delete a model                           |
 | `/simulation/ifc-elements` | GET    | Get simulated IFC elements (for testing) |
 
+## 📝 Kafka Message Format
+
+When sending QTO data to Kafka, the following JSON format is used:
+
+```json
+{
+  "project": "project_name",
+  "filename": "ifc_filename.ifc",
+  "timestamp": "2023-12-31T12:00:00Z",
+  "file_id": "ifc_filename_2023-12-31T12:00:00Z",
+  "elements": [
+    {
+      "id": "1HFUtCRj9D3RelhQMZCBu8",
+      "category": "ifcwall",
+      "level": "EG",
+      "area": 24.56,
+      "is_structural": true,
+      "is_external": false,
+      "ebkph": "C2.1",
+      "materials": [
+        {
+          "name": "Concrete",
+          "fraction": 0.78,
+          "volume": 2.45
+        },
+        {
+          "name": "Insulation",
+          "fraction": 0.22,
+          "volume": 0.65
+        }
+      ],
+      "classification": {
+        "id": "C2.1",
+        "name": "Innenwand",
+        "system": "EBKP"
+      }
+    }
+  ]
+}
+```
+
+### Message Fields Explanation
+
+| Field       | Description                                                            |
+| ----------- | ---------------------------------------------------------------------- |
+| `project`   | Project name                                                           |
+| `filename`  | Original IFC filename                                                  |
+| `timestamp` | ISO 8601 timestamp when the data was sent                              |
+| `file_id`   | Unique identifier for the file (combination of filename and timestamp) |
+| `elements`  | Array of building elements extracted from the IFC file                 |
+
+#### Element Fields
+
+| Field            | Description                                     |
+| ---------------- | ----------------------------------------------- |
+| `id`             | Global unique ID of the element                 |
+| `category`       | Element type/category (e.g., ifcwall, ifcslab)  |
+| `level`          | Building level or story                         |
+| `area`           | Surface area in square meters                   |
+| `is_structural`  | Boolean indicating if the element is structural |
+| `is_external`    | Boolean indicating if the element is external   |
+| `ebkph`          | eBKP-H classification code                      |
+| `materials`      | Array of materials used in the element          |
+| `classification` | Classification information (optional)           |
+
 ## 🛠️ Tech Stack
 
 ### Frontend

@@ -1,4 +1,5 @@
 import React from "react";
+import { IFCElement as ApiIFCElement } from "../api/ApiClient";
 
 export interface CostItem {
   ebkp: string;
@@ -13,26 +14,7 @@ export interface CostItem {
   expanded?: boolean;
 }
 
-export interface IFCElement {
-  id: string;
-  global_id: string;
-  type: string;
-  name: string;
-  description?: string | null;
-  properties: Record<string, string | number | boolean | null>;
-  material_volumes?: Record<
-    string,
-    {
-      fraction?: number;
-      volume?: number;
-      width?: number;
-    }
-  >;
-  volume?: {
-    net: number | null;
-    gross: number | null;
-  };
-  level?: string;
+export type IFCElement = ApiIFCElement & {
   area?: number;
   is_structural?: boolean;
   is_external?: boolean;
@@ -43,10 +25,7 @@ export interface IFCElement {
     fraction: number;
     volume: number;
   }>;
-  classification_id?: string | null;
-  classification_name?: string | null;
-  classification_system?: string | null;
-}
+};
 
 export interface EBKPItem {
   code: string;
