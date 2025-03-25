@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -13,16 +13,32 @@ import uuid
 import traceback
 import sys
 from functools import lru_cache
-from qto_producer import QTOKafkaProducer, format_ifc_elements_for_qto
+from qto_producer import QTOKafkaProducer, format_ifc_elements_for_qto, MongoDBHelper
+import re
 
-# Set up logging with more detailed format
-logging.basicConfig(level=logging.DEBUG, 
+# Set up logging
+logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Log ifcopenshell version at startup
 logger.info(f"Using ifcopenshell version: {ifcopenshell.version}")
 logger.info(f"Python version: {sys.version}")
+
+# Initialize MongoDB connection at startup
+mongodb = None
+
+def init_mongodb():
+    """Initialize MongoDB connection and create necessary collections"""
+    global mongodb
+    try:
+        mongodb = MongoDBHelper()
+        logger.info("MongoDB initialization completed")
+        return mongodb.db is not None
+    except Exception as e:
+        logger.error(f"Error initializing MongoDB: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
 
 app = FastAPI(
     title="QTO IFC Parser API",
@@ -83,6 +99,14 @@ class IFCElement(BaseModel):
     classification_id: Optional[str] = None
     classification_name: Optional[str] = None
     classification_system: Optional[str] = None
+    # Additional fields for QTO data
+    area: Optional[float] = None
+    original_area: Optional[float] = None
+    category: Optional[str] = None
+    is_structural: Optional[bool] = None
+    is_external: Optional[bool] = None
+    ebkph: Optional[str] = None
+    materials: Optional[List[Dict[str, Any]]] = None
 
 class QTOResponse(BaseModel):
     """Response model for QTO operation"""
@@ -107,6 +131,7 @@ class HealthResponse(BaseModel):
     """Response model for health check"""
     status: str
     kafka: str
+    mongodb: str
     models_in_memory: int
     ifcopenshell_version: str
 
@@ -116,6 +141,10 @@ class ModelInfo(BaseModel):
     filename: str
     element_count: int
     entity_counts: Dict[str, int]
+
+# Add a model for the request body
+class QTORequestBody(BaseModel):
+    elements: Optional[List[Dict[str, Any]]] = None
 
 # Custom OpenAPI schema
 @app.get("/openapi.json", include_in_schema=False)
@@ -483,6 +512,13 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
     
     return material_volumes
 
+@app.on_event("startup")
+async def startup_event():
+    """Run startup tasks"""
+    # Initialize MongoDB
+    mongodb_status = init_mongodb()
+    logger.info(f"MongoDB initialization status: {'success' if mongodb_status else 'failed'}")
+
 @app.get("/", response_model=Dict[str, str])
 def read_root():
     """API root endpoint that confirms the service is running"""
@@ -498,7 +534,7 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
     
     Returns information about the uploaded model including a model_id for future reference.
     """
-    logger.info(f"Received file upload request for {file.filename} with content type {file.content_type}")
+    logger.info(f"Received file upload request for {file.filename}")
     
     if not file.filename.endswith('.ifc'):
         logger.warning(f"Rejected non-IFC file: {file.filename}")
@@ -518,10 +554,7 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
         file_uuid = str(uuid.uuid4())
         temp_file_path = os.path.join(temp_dir, f"{file_uuid}_{file.filename}")
         
-        logger.info(f"Saving uploaded file to {temp_file_path}")
         contents = await file.read()
-        
-        logger.debug(f"File size: {len(contents)} bytes")
         if len(contents) == 0:
             logger.error("Uploaded file is empty")
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
@@ -535,20 +568,18 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
             raise HTTPException(status_code=500, detail="Failed to save uploaded file")
             
         file_size = os.path.getsize(temp_file_path)
-        logger.info(f"File saved successfully. Size on disk: {file_size} bytes")
+        logger.info(f"File saved successfully. Size: {file_size} bytes")
         
-        # Open the IFC file with ifcopenshell - wrapped in try/except
+        # Open the IFC file with ifcopenshell
         try:
-            logger.info(f"Opening IFC file with ifcopenshell {ifcopenshell.version}: {temp_file_path}")
             ifc_file = ifcopenshell.open(temp_file_path)
             logger.info(f"IFC file opened successfully with schema: {ifc_file.schema}")
         except Exception as ifc_error:
             logger.error(f"ifcopenshell failed to open the file: {str(ifc_error)}")
-            # Add more detailed error info
             error_traceback = traceback.format_exc()
             logger.error(f"Traceback: {error_traceback}")
             
-            # Check if file is actually an IFC file by inspecting first few bytes
+            # Check if file is actually an IFC file
             try:
                 with open(temp_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     first_line = f.readline()
@@ -560,7 +591,7 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
                 logger.error(f"Error checking file format: {str(read_error)}")
                 
             raise HTTPException(status_code=400, 
-                              detail=f"Error processing IFC file: {str(ifc_error)}. The file may be corrupted or in an unsupported format.")
+                              detail=f"Error processing IFC file: {str(ifc_error)}")
         
         # Generate a unique ID for this IFC model
         model_id = file_uuid
@@ -583,10 +614,8 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
                 entities_by_type[entity_type] += 1
             
             logger.info(f"IFC file processed successfully. Found {element_count} elements.")
-            logger.info(f"Entity types: {entities_by_type}")
         except Exception as stat_error:
             logger.error(f"Error getting file statistics: {str(stat_error)}")
-            # Continue anyway since the file was loaded
             element_count = 0
             entities_by_type = {}
         
@@ -599,7 +628,6 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
         }
     
     except HTTPException:
-        # Re-raise HTTP exceptions as they already have status codes
         raise
     except Exception as e:
         logger.error(f"Unexpected error processing IFC file: {str(e)}")
@@ -609,11 +637,9 @@ async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundT
         if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
             try:
                 os.unlink(temp_file_path)
-                logger.info(f"Temporary file {temp_file_path} removed")
             except Exception as cleanup_error:
                 logger.error(f"Error removing temp file: {str(cleanup_error)}")
         
-        # Return a more detailed error message
         raise HTTPException(status_code=500, detail=f"Error processing IFC file: {str(e)}")
 
 @app.get("/ifc-elements/{model_id}", response_model=List[IFCElement])
@@ -639,79 +665,68 @@ def get_ifc_elements(model_id: str):
         element_to_storey = {}
         building_storeys = list(ifc_file.by_type("IfcBuildingStorey"))
         
-        # Log the found building storeys
-        logger.info(f"Found {len(building_storeys)} building storeys")
-        for storey in building_storeys:
-            storey_name = storey.Name if hasattr(storey, "Name") and storey.Name else "Unknown Level"
-            logger.info(f"Building storey: {storey_name}")  # Log each storey name
-            
-            # Process spatial containment relationship
-            for rel in ifc_file.by_type("IfcRelContainedInSpatialStructure"):
-                if rel.RelatingStructure and rel.RelatingStructure.is_a("IfcBuildingStorey"):
-                    storey_name = rel.RelatingStructure.Name if hasattr(rel.RelatingStructure, "Name") and rel.RelatingStructure.Name else "Unknown Level"
-                    for element in rel.RelatedElements:
-                        if element is not None:
-                            try:
-                                element_to_storey[element.id()] = storey_name
-                            except Exception as e:
-                                logger.warning(f"Error mapping element to storey: {e}")
-        
-        # Process IfcElements in chunks to avoid memory issues
-        chunk_size = 100
+        # Process spatial containment relationship
+        for rel in ifc_file.by_type("IfcRelContainedInSpatialStructure"):
+            if rel.RelatingStructure and rel.RelatingStructure.is_a("IfcBuildingStorey"):
+                storey_name = rel.RelatingStructure.Name if hasattr(rel.RelatingStructure, "Name") and rel.RelatingStructure.Name else "Unknown Level"
+                for element in rel.RelatedElements:
+                    if element is not None:
+                        try:
+                            element_to_storey[element.id()] = storey_name
+                        except Exception as e:
+                            logger.warning(f"Error mapping element to storey: {e}")
         
         # Filter elements by TARGET_IFC_CLASSES
         if TARGET_IFC_CLASSES:
             all_elements = []
             for element_type in TARGET_IFC_CLASSES:
-                if element_type and element_type.strip():  # Skip empty strings
+                if element_type and element_type.strip():
                     try:
                         type_elements = list(ifc_file.by_type(element_type.strip()))
                         all_elements.extend(type_elements)
-                        logger.debug(f"Found {len(type_elements)} elements of type {element_type}")
                     except Exception as type_error:
                         logger.warning(f"Error getting elements of type {element_type}: {str(type_error)}")
             
-            logger.info(f"Filtered to {len(all_elements)} elements of targeted types (out of {len(list(ifc_file.by_type('IfcElement')))} total elements)")
+            logger.info(f"Filtered to {len(all_elements)} elements of targeted types")
         else:
             all_elements = list(ifc_file.by_type("IfcElement"))
-            logger.info(f"No filtering applied. Processing all {len(all_elements)} elements.")
+            logger.info(f"Processing all {len(all_elements)} elements")
         
+        # Process elements in chunks
+        chunk_size = 100
         for i in range(0, len(all_elements), chunk_size):
             chunk = all_elements[i:i+chunk_size]
             
             for element in chunk:
-                # Extract basic properties
-                element_data = {
-                    "id": str(element.id()),
-                    "global_id": element.GlobalId,
-                    "type": element.is_a(),
-                    "name": element.Name if hasattr(element, "Name") and element.Name else "Unnamed",
-                    "description": element.Description if hasattr(element, "Description") and element.Description else None,
-                    "properties": {},
-                    "classification_id": None,
-                    "classification_name": None,
-                    "classification_system": None
-                }
-                
-                # Add building storey information
-                if element.id() in element_to_storey:
-                    element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": element_to_storey[element.id()]}
-                    # Add level directly to the element data for easier access in the frontend
-                    element_data["level"] = element_to_storey[element.id()]
-                    logger.debug(f"Element {element.GlobalId} is on level {element_to_storey[element.id()]}")
-                else:
-                    # If we couldn't find a storey, try to extract from any containment relationship
-                    for rel in element.ContainedInStructure or []:
-                        if hasattr(rel, "RelatingStructure") and rel.RelatingStructure.is_a("IfcBuildingStorey"):
-                            storey_name = rel.RelatingStructure.Name or "Unknown Level"
-                            element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": storey_name}
-                            element_data["level"] = storey_name
-                            logger.debug(f"Element {element.GlobalId} is on level {storey_name} (from direct containment)")
-                            break
-                
-                # Extract Pset properties if available
                 try:
-                    # Extract quantities (using 0.8.1 API)
+                    # Extract basic properties
+                    element_data = {
+                        "id": str(element.id()),
+                        "global_id": element.GlobalId,
+                        "type": element.is_a(),
+                        "name": element.Name if hasattr(element, "Name") and element.Name else "Unnamed",
+                        "description": element.Description if hasattr(element, "Description") and element.Description else None,
+                        "properties": {},
+                        "classification_id": None,
+                        "classification_name": None,
+                        "classification_system": None,
+                        "area": None  # Initialize area as None
+                    }
+                    
+                    # Add building storey information
+                    if element.id() in element_to_storey:
+                        element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": element_to_storey[element.id()]}
+                        element_data["level"] = element_to_storey[element.id()]
+                    else:
+                        # If we couldn't find a storey, try to extract from any containment relationship
+                        for rel in element.ContainedInStructure or []:
+                            if hasattr(rel, "RelatingStructure") and rel.RelatingStructure.is_a("IfcBuildingStorey"):
+                                storey_name = rel.RelatingStructure.Name or "Unknown Level"
+                                element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": storey_name}
+                                element_data["level"] = storey_name
+                                break
+                    
+                    # Extract Pset properties if available
                     if hasattr(element, "IsDefinedBy"):
                         for definition in element.IsDefinedBy:
                             # Get property sets
@@ -740,6 +755,20 @@ def get_ifc_elements(model_id: str):
                                             prop_name = f"{qset_name}.{quantity.Name}"
                                             prop_value = f"{quantity.AreaValue:.3f}"
                                             element_data["properties"][prop_name] = prop_value
+                                            
+                                            # Also extract area values to the top level for easier access
+                                            if element_data["area"] is None:
+                                                # Prioritize NetArea, NetSideArea or GrossArea if available
+                                                area_name = quantity.Name.lower() if quantity.Name else ""
+                                                if (
+                                                    "netarea" in area_name.replace(" ", "") or 
+                                                    "netsidearea" in area_name.replace(" ", "") or
+                                                    "area" in area_name.replace(" ", "")
+                                                ):
+                                                    try:
+                                                        element_data["area"] = float(quantity.AreaValue)
+                                                    except (ValueError, TypeError):
+                                                        pass
                                         
                                         elif quantity.is_a('IfcQuantityVolume'):
                                             prop_name = f"{qset_name}.{quantity.Name}"
@@ -757,9 +786,20 @@ def get_ifc_elements(model_id: str):
                             if relation.is_a("IfcRelAssociatesClassification"):
                                 classification_ref = relation.RelatingClassification
                                 if classification_ref.is_a("IfcClassificationReference"):
-                                    # Get classification ID and name
-                                    element_data["classification_id"] = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
-                                    element_data["classification_name"] = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    # Handle IFC2X3 schema differences
+                                    schema_version = ifc_file.schema
+                                    if "2X3" in schema_version:
+                                        # IFC2X3 uses ItemReference instead of Identification
+                                        classification_id = classification_ref.ItemReference if hasattr(classification_ref, "ItemReference") else None
+                                        classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    else:
+                                        # IFC4 and newer use Identification
+                                        classification_id = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
+                                        classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    
+                                    # Store the classification data
+                                    element_data["classification_id"] = classification_id
+                                    element_data["classification_name"] = classification_name
                                     
                                     # Get classification system name if available
                                     if hasattr(classification_ref, "ReferencedSource") and classification_ref.ReferencedSource:
@@ -767,13 +807,18 @@ def get_ifc_elements(model_id: str):
                                         if hasattr(referenced_source, "Name"):
                                             element_data["classification_system"] = referenced_source.Name
                                     
-                                    logger.debug(f"Element {element.GlobalId} has classification: {element_data.get('classification_id')} - {element_data.get('classification_name')}")
-                                    
                                 # If directly using IfcClassification (less common)
                                 elif classification_ref.is_a("IfcClassification"):
                                     element_data["classification_system"] = classification_ref.Name if hasattr(classification_ref, "Name") else None
                                     element_data["classification_name"] = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
-                                    logger.debug(f"Element {element.GlobalId} has direct classification system: {element_data.get('classification_system')}")
+                    
+                    # If no classification was found, try looking in properties
+                    if not element_data["classification_id"]:
+                        for prop_name, prop_value in element_data["properties"].items():
+                            if isinstance(prop_value, str) and ("ebkp" in prop_name.lower() or "classification" in prop_name.lower()):
+                                element_data["classification_id"] = prop_value
+                                element_data["classification_system"] = "EBKP"
+                                break
                     
                     # Get volume information for the element
                     element_volume = get_volume_from_properties(element)
@@ -789,13 +834,10 @@ def get_ifc_elements(model_id: str):
                         element_volume_value = element_volume.get("net") or element_volume.get("gross")
                                         
                     # Process material associations
-                    has_material_volumes = False
                     if hasattr(element, "HasAssociations"):
                         for association in element.HasAssociations:
                             if association.is_a("IfcRelAssociatesMaterial"):
-                                has_material_volumes = True
                                 relating_material = association.RelatingMaterial
-                                logger.debug(f"Processing material association type: {relating_material.is_a()} for element {element.GlobalId}")
                                 
                                 unit_scale = 1.0  # Default scale factor
                                 
@@ -901,26 +943,22 @@ def get_ifc_elements(model_id: str):
                     # Remove material_volumes if empty
                     if not element_data["material_volumes"]:
                         element_data.pop("material_volumes")
-                    else:
-                        logger.debug(f"Material volumes for {element.GlobalId}: {element_data['material_volumes']}")
                                             
+                    # Set area to 0 if no area was found, to avoid null values
+                    if element_data["area"] is None:
+                        element_data["area"] = 0
+                    
+                    elements.append(IFCElement(**element_data))
                 except Exception as prop_error:
                     logger.error(f"Error extracting properties for element {element.id()}: {str(prop_error)}")
                     logger.error(traceback.format_exc())
-                
-                elements.append(IFCElement(**element_data))
         
         logger.info(f"Successfully extracted {len(elements)} elements from model ID: {model_id}")
         
-        # Debug: Check if level information is present in extracted elements
-        elements_with_level = [e for e in elements if hasattr(e, "level") and e.level]
-        logger.info(f"Elements with level information: {len(elements_with_level)}/{len(elements)}")
-        
-        if elements:
-            # Log the first element as a sample
-            sample = elements[0]
-            level_info = getattr(sample, "level", None)
-            logger.info(f"Sample element level: {level_info}")
+        # Log summary statistics
+        elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
+        elements_with_materials = [e for e in elements if hasattr(e, "material_volumes") and e.material_volumes]
+        logger.info(f"Summary: {len(elements_with_area)} elements with area, {len(elements_with_materials)} elements with materials")
         
         return elements
     
@@ -1004,6 +1042,7 @@ def health_check():
     Returns the status of the service, Kafka connection, and other diagnostics.
     """
     kafka_status = "unknown"
+    mongodb_status = "unknown"
     
     try:
         # Check Kafka connection
@@ -1014,54 +1053,84 @@ def health_check():
         logger.warning(f"Kafka health check failed: {str(e)}")
         kafka_status = "disconnected"
     
+    try:
+        # Check MongoDB connection
+        if mongodb is not None and mongodb.db is not None:
+            # Try a simple operation to verify connection is working
+            mongodb.db.command('ping')
+            mongodb_status = "connected"
+        else:
+            mongodb_status = "disconnected"
+    except Exception as e:
+        logger.warning(f"MongoDB health check failed: {str(e)}")
+        mongodb_status = "disconnected"
+    
     # Check models in memory
     models_count = len(ifc_models)
     
-    # The service is healthy even if Kafka is disconnected
+    # The service is healthy if at least Kafka or MongoDB is connected
     # as the API can still process uploads and analyze IFC files
     return {
         "status": "healthy", 
         "kafka": kafka_status,
+        "mongodb": mongodb_status,
         "models_in_memory": models_count,
         "ifcopenshell_version": ifcopenshell.version
     }
 
 @app.post("/send-qto/", response_model=QTOResponse)
-async def send_qto(model_id: str = Query(..., description="The ID of the model to send to Kafka")):
+async def send_qto(
+    model_id: str = Query(..., description="The ID of the model to send to Kafka"),
+    body: Optional[QTORequestBody] = None
+):
     """
     Send QTO data to Kafka using the QTOKafkaProducer
     
     - **model_id**: ID of the model to send to Kafka
+    - **request body**: Optional list of updated elements with user edits
     
     Returns the status of the Kafka sending operation.
     """
-    logger.info(f"Sending QTO data to Kafka for model ID: {model_id}")
+    logger.info(f"Sending QTO data for model ID: {model_id}")
     
     if model_id not in ifc_models:
         logger.warning(f"Model ID not found: {model_id}")
         raise HTTPException(status_code=404, detail="IFC model not found")
     
     try:
-        # Get elements using existing function to avoid duplicating parsing logic
-        elements = get_ifc_elements(model_id)
-        
-        # Check if elements have level information
-        elements_with_level = [e for e in elements if hasattr(e, "level") and e.level]
-        logger.info(f"Elements with level info before QTO formatting: {len(elements_with_level)}/{len(elements)}")
-        
-        # Convert IFCElement model instances to dictionaries
+        # Check if we have updated elements in the request body
+        if body and body.elements:
+            logger.info(f"Processing {len(body.elements)} updated elements")
+            elements = []
+            for elem_dict in body.elements:
+                try:
+                    cleaned_elem = {k: v for k, v in elem_dict.items() if v is not None}
+                    element = IFCElement(**cleaned_elem)
+                    elements.append(element)
+                except Exception as e:
+                    logger.error(f"Error converting element {elem_dict.get('id')}: {str(e)}")
+                    element = IFCElement(
+                        id=elem_dict.get('id', ''),
+                        global_id=elem_dict.get('global_id', ''),
+                        type=elem_dict.get('type', ''),
+                        name=elem_dict.get('name', ''),
+                        properties=elem_dict.get('properties', {})
+                    )
+                    if 'area' in elem_dict:
+                        element.area = elem_dict['area']
+                    if 'original_area' in elem_dict:
+                        element.original_area = elem_dict['original_area']
+                    elements.append(element)
+        else:
+            elements = get_ifc_elements(model_id)
+            logger.info("Using original elements from IFC model")
+
+        # Convert elements to dictionaries
         element_dicts = [element.model_dump() for element in elements]
-        
-        # Check level information in dictionaries
-        dicts_with_level = [e for e in element_dicts if "level" in e and e["level"]]
-        logger.info(f"Dictionaries with level info: {len(dicts_with_level)}/{len(element_dicts)}")
-        
-        if element_dicts:
-            logger.info(f"Sample dict level: {element_dicts[0].get('level', 'not found')}")
         
         # Get project info
         filename = ifc_models[model_id]["filename"]
-        project_name = filename.split('.')[0]  # Use filename without extension as project name
+        project_name = filename.split('.')[0]
         file_id = f"{project_name}/{filename}"
         
         # Format the data for QTO message
@@ -1072,13 +1141,26 @@ async def send_qto(model_id: str = Query(..., description="The ID of the model t
             elements=element_dicts
         )
         
+        # Save to MongoDB if available
+        if mongodb is not None and mongodb.db is not None:
+            project_id = mongodb.save_project({
+                "name": project_name,
+                "description": f"Project for {filename}",
+                "metadata": {
+                    "file_id": file_id,
+                    "filename": filename
+                }
+            })
+            if project_id:
+                logger.info(f"Saved project to MongoDB with ID: {project_id}")
+        
         # Send data to Kafka
         producer = QTOKafkaProducer()
         send_success = producer.send_qto_message(qto_data)
         flush_success = producer.flush()
         
         if not send_success or not flush_success:
-            logger.warning("Data was processed but could not be sent to Kafka. The service may be unavailable.")
+            logger.warning("Data was processed but could not be sent to Kafka")
             return {
                 "message": "QTO data processed but not sent to Kafka (service unavailable)",
                 "model_id": model_id,
@@ -1086,7 +1168,7 @@ async def send_qto(model_id: str = Query(..., description="The ID of the model t
                 "kafka_status": "unavailable"
             }
         
-        logger.info(f"Successfully sent QTO data for {len(elements)} elements to Kafka")
+        logger.info(f"Successfully sent QTO data for {len(elements)} elements")
         
         return {
             "message": "QTO data sent to Kafka successfully",
@@ -1096,7 +1178,7 @@ async def send_qto(model_id: str = Query(..., description="The ID of the model t
         }
     
     except Exception as e:
-        logger.error(f"Error sending QTO data for model ID {model_id}: {str(e)}")
+        logger.error(f"Error sending QTO data: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error sending QTO data: {str(e)}")
 
@@ -1119,8 +1201,30 @@ def get_qto_elements(model_id: str):
         # Get elements using existing function that already applies filtering
         elements = get_ifc_elements(model_id)
         
+        # Log area values to diagnose issues
+        elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
+        logger.info(f"Found {len(elements_with_area)}/{len(elements)} elements with non-zero area values")
+        if elements_with_area:
+            for i, element in enumerate(elements_with_area[:3]):  # Log first 3 elements with area
+                logger.info(f"Element {element.id} has area: {element.area}, type: {type(element.area).__name__}")
+        
+        # Log material volumes information
+        elements_with_materials = [e for e in elements if hasattr(e, "material_volumes") and e.material_volumes]
+        logger.info(f"Found {len(elements_with_materials)}/{len(elements)} elements with material volumes")
+        if elements_with_materials:
+            for i, element in enumerate(elements_with_materials[:3]):  # Log first 3 elements with materials
+                logger.info(f"Element {element.id} has {len(element.material_volumes)} materials")
+                # Log first material as sample
+                if element.material_volumes:
+                    first_material = list(element.material_volumes.items())[0] if element.material_volumes else None
+                    logger.info(f"Sample material: {first_material}")
+        
         # Convert IFCElement model instances to dictionaries
         element_dicts = [element.model_dump() for element in elements]
+        
+        # Log area values after conversion to dictionaries
+        dicts_with_area = [e for e in element_dicts if "area" in e and e["area"] and e["area"] > 0]
+        logger.info(f"After conversion, found {len(dicts_with_area)}/{len(element_dicts)} dictionaries with non-zero area values")
         
         # Get project info
         filename = ifc_models[model_id]["filename"]
@@ -1133,6 +1237,13 @@ def get_qto_elements(model_id: str):
             file_id=f"{project_name}/{filename}",
             elements=element_dicts
         )
+        
+        # Log area values in formatted QTO data
+        qto_elements_with_area = [e for e in qto_data["elements"] if "area" in e and e["area"] and e["area"] > 0]
+        logger.info(f"After QTO formatting, found {len(qto_elements_with_area)}/{len(qto_data['elements'])} elements with non-zero area values")
+        if qto_elements_with_area:
+            for i, element in enumerate(qto_elements_with_area[:3]):  # Log first 3 elements with area
+                logger.info(f"QTO element {element['id']} has area: {element['area']}")
         
         # Return just the elements part of the QTO data
         return qto_data["elements"]

@@ -9,7 +9,7 @@ import {
   TableCell,
   TableRow,
   TextField,
-  Typography
+  Typography,
 } from "@mui/material";
 import React from "react";
 import { IFCElement } from "../../types/types";
@@ -49,6 +49,13 @@ const ElementRow: React.FC<ElementRowProps> = ({
   // Check if this element has been edited
   const isEdited = editedElement !== undefined;
   const editedArea = isEdited ? editedElement.newArea : null;
+
+  // Debug original vs edited area values
+  if (isEdited) {
+    console.log(
+      `Element ${element.id} edited: original=${editedElement.originalArea}, new=${editedElement.newArea}, current=${element.area}`
+    );
+  }
 
   // Format decimal number to display with 3 decimal places
   const formatNumber = (num: number | null | undefined) => {
@@ -158,7 +165,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
           )}
           {element.is_external && (
             <Chip
-              label="Außen"
+              label="Aussen"
               size="small"
               color="secondary"
               variant="outlined"

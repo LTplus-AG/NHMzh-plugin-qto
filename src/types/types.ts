@@ -14,18 +14,42 @@ export interface CostItem {
   expanded?: boolean;
 }
 
-export type IFCElement = ApiIFCElement & {
-  area?: number;
+export interface IFCElement {
+  id: string;
+  global_id: string;
+  type: string;
+  name: string;
+  description?: string | null;
+  properties: Record<string, any>;
+  material_volumes?: Record<
+    string,
+    {
+      fraction?: number;
+      volume?: number;
+      width?: number;
+    }
+  > | null;
+  volume?: {
+    net: number | null;
+    gross: number | null;
+  };
+  level?: string | null;
+  classification_id?: string | null;
+  classification_name?: string | null;
+  classification_system?: string | null;
+  // Additional properties for QTO formatted elements
+  area?: number | null;
+  category?: string;
   is_structural?: boolean;
   is_external?: boolean;
   ebkph?: string;
-  category?: string;
   materials?: Array<{
     name: string;
-    fraction: number;
-    volume: number;
+    volume?: number;
+    unit?: string;
+    fraction?: number;
   }>;
-};
+}
 
 export interface EBKPItem {
   code: string;

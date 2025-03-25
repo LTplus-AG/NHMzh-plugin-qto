@@ -27,6 +27,17 @@ export interface IFCElement {
   classification_id?: string | null;
   classification_name?: string | null;
   classification_system?: string | null;
+  // Additional properties for QTO formatted elements
+  area?: number | null;
+  category?: string;
+  is_structural?: boolean;
+  is_external?: boolean;
+  ebkph?: string;
+  materials?: Array<{
+    name: string;
+    volume?: number;
+    unit?: string;
+  }>;
 }
 
 export interface ModelUploadResponse {
@@ -176,19 +187,71 @@ export class QTOApiClient {
   /**
    * Send QTO data to Kafka
    * @param modelId - The ID of the model to send to Kafka
+   * @param updatedElements - Optional list of elements with updated values (for user edits)
    * @returns The result of the operation
    */
-  async sendQTO(modelId: string): Promise<QTOResponse> {
-    const response = await fetch(
-      `${this.baseUrl}/send-qto/?model_id=${modelId}`,
-      {
-        method: "POST",
+  async sendQTO(
+    modelId: string,
+    updatedElements?: IFCElement[]
+  ): Promise<QTOResponse> {
+    // Create URL with model_id parameter
+    const url = `${this.baseUrl}/send-qto/?model_id=${modelId}`;
+
+    // Log if we're sending updated elements
+    if (updatedElements && updatedElements.length > 0) {
+      console.log(
+        `Sending ${updatedElements.length} elements with updates to the backend`
+      );
+
+      // Check for any edited elements (look for non-zero areas)
+      const editedElements = updatedElements.filter(
+        (el) => el.area !== 0 && el.area !== null && el.area !== undefined
+      );
+      if (editedElements.length > 0) {
+        console.log(
+          `Found ${editedElements.length} elements with non-zero areas`
+        );
+        console.log("Sample element with non-zero area:", editedElements[0]);
       }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to send QTO data: ${response.statusText}`);
     }
-    return await response.json();
+
+    // Create request configuration
+    const headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+
+    const requestBody = updatedElements ? { elements: updatedElements } : {};
+
+    console.log(
+      "Request body:",
+      JSON.stringify(requestBody).substring(0, 100) + "..."
+    ); // Log truncated body
+
+    const options: RequestInit = {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify(requestBody),
+    };
+
+    if (options.body) {
+      console.log("Request payload size:", options.body.length, "bytes");
+    }
+
+    try {
+      const response = await fetch(url, options);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Error response:", errorText);
+        throw new Error(`Failed to send QTO data: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error("Network error:", error);
+      throw error;
+    }
   }
 }
 

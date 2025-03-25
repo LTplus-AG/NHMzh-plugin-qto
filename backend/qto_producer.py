@@ -6,6 +6,9 @@ import socket
 import time
 from typing import Dict, Any, List
 import re
+from pymongo import MongoClient
+from bson.objectid import ObjectId
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -19,6 +22,171 @@ def is_running_in_docker():
             return 'docker' in f.read()
     except:
         return False
+
+class MongoDBHelper:
+    """Helper class for MongoDB operations."""
+    def __init__(self, uri=None, db_name=None, max_retries=3, retry_delay=2):
+        """Initialize MongoDB connection.
+        
+        Args:
+            uri: MongoDB connection string (defaults to environment variable)
+            db_name: Database name (defaults to environment variable)
+            max_retries: Maximum number of connection retries
+            retry_delay: Delay between retries in seconds
+        """
+        # Get configuration from environment variables or use default values
+        self.uri = uri or os.getenv('MONGODB_URI', 'mongodb://admin:secure_password@mongodb:27017')
+        self.db_name = db_name or os.getenv('MONGODB_DATABASE', 'qto')
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.client = None
+        self.db = None
+        
+        logger.info(f"MongoDB Helper initializing with database: {self.db_name}")
+        
+        # Initialize MongoDB connection with retries
+        self._initialize_connection()
+    
+    def _initialize_connection(self):
+        """Initialize MongoDB connection with retry logic."""
+        retries = 0
+        while retries <= self.max_retries:
+            try:
+                # Create the MongoDB client
+                self.client = MongoClient(self.uri)
+                # Test the connection by pinging the server
+                self.client.admin.command('ping')
+                
+                # Get database
+                self.db = self.client[self.db_name]
+                
+                logger.info(f"MongoDB connection initialized successfully to database {self.db_name}")
+                
+                # Ensure collections exist
+                self._ensure_collections()
+                return
+            except Exception as e:
+                retries += 1
+                if retries <= self.max_retries:
+                    logger.warning(f"Failed to connect to MongoDB (attempt {retries}/{self.max_retries}): {e}")
+                    logger.info(f"Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error(f"Failed to connect to MongoDB after {self.max_retries} attempts: {e}")
+    
+    def _ensure_collections(self):
+        """Ensure required collections exist with proper indexes."""
+        try:
+            # Check if collections exist, create them if not
+            collection_names = self.db.list_collection_names()
+            
+            # Projects collection
+            if "projects" not in collection_names:
+                logger.info("Creating projects collection")
+                self.db.create_collection("projects")
+                self.db.projects.create_index("name")
+            
+            # Elements collection
+            if "elements" not in collection_names:
+                logger.info("Creating elements collection")
+                self.db.create_collection("elements")
+                self.db.elements.create_index("project_id")
+        except Exception as e:
+            logger.error(f"Error ensuring collections: {e}")
+    
+    def save_project(self, project_data: Dict[str, Any]) -> ObjectId:
+        """Save project data to MongoDB.
+        
+        Args:
+            project_data: Dictionary containing project data
+            
+        Returns:
+            ObjectId of inserted/updated project document
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot save project")
+            return None
+            
+        try:
+            # Add timestamps if they don't exist
+            if 'created_at' not in project_data:
+                project_data['created_at'] = datetime.utcnow()
+            
+            project_data['updated_at'] = datetime.utcnow()
+            
+            # Check if project already exists by name
+            existing_project = self.db.projects.find_one({"name": project_data["name"]})
+            
+            if existing_project:
+                # Update existing project
+                self.db.projects.update_one(
+                    {"_id": existing_project["_id"]},
+                    {"$set": project_data}
+                )
+                logger.info(f"Updated existing project: {existing_project['_id']}")
+                return existing_project["_id"]
+            else:
+                # Insert new project
+                result = self.db.projects.insert_one(project_data)
+                logger.info(f"Inserted new project: {result.inserted_id}")
+                return result.inserted_id
+        except Exception as e:
+            logger.error(f"Error saving project to MongoDB: {e}")
+            return None
+    
+    def save_element(self, element_data: Dict[str, Any]) -> ObjectId:
+        """Save element data to MongoDB.
+        
+        Args:
+            element_data: Dictionary containing element data
+            
+        Returns:
+            ObjectId of inserted element document
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot save element")
+            return None
+            
+        try:
+            # Add timestamps if they don't exist
+            if 'created_at' not in element_data:
+                element_data['created_at'] = datetime.utcnow()
+            
+            element_data['updated_at'] = datetime.utcnow()
+            
+            # Make sure project_id is an ObjectId
+            if 'project_id' in element_data and isinstance(element_data['project_id'], str):
+                element_data['project_id'] = ObjectId(element_data['project_id'])
+            
+            # Insert element
+            result = self.db.elements.insert_one(element_data)
+            logger.info(f"Inserted element: {result.inserted_id}")
+            return result.inserted_id
+        except Exception as e:
+            logger.error(f"Error saving element to MongoDB: {e}")
+            return None
+    
+    def get_element(self, element_id: str) -> Dict[str, Any]:
+        """Get element by ID.
+        
+        Args:
+            element_id: String ID of the element
+            
+        Returns:
+            Element document as dictionary
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot get element")
+            return None
+            
+        try:
+            # Convert string ID to ObjectId
+            obj_id = ObjectId(element_id)
+            element = self.db.elements.find_one({"_id": obj_id})
+            return element
+        except Exception as e:
+            logger.error(f"Error getting element from MongoDB: {e}")
+            return None
 
 class QTOKafkaProducer:
     def __init__(self, bootstrap_servers=None, topic=None, max_retries=3, retry_delay=2):
@@ -148,6 +316,23 @@ class QTOKafkaProducer:
             "file_id": qto_data.get("file_id")
         }
         
+        # Initialize MongoDB helper
+        mongodb = MongoDBHelper()
+        
+        # Save project to MongoDB and get project ID
+        project_id = mongodb.save_project({
+            "name": metadata["project"],
+            "description": f"Project for {metadata['filename']}",
+            "metadata": {
+                "file_id": metadata["file_id"],
+                "filename": metadata["filename"]
+            }
+        })
+        
+        if not project_id:
+            logger.error("Failed to save project to MongoDB, cannot proceed with elements")
+            return False
+        
         success = True
         element_count = 0
         batch_size = 100  # Process in batches for large element counts
@@ -159,24 +344,71 @@ class QTOKafkaProducer:
             # Send one message per element in the batch
             for element in batch_elements:
                 try:
-                    # Create a completely flat message structure
-                    flat_message = {
-                        **metadata,
-                        "element_id": element.get("id"),
-                        "category": element.get("category"),
-                        "level": element.get("level"),
-                        "area": element.get("area"),
-                        "is_structural": element.get("is_structural"),
-                        "is_external": element.get("is_external"),
-                        "ebkph": element.get("ebkph"),
-                        "materials": element.get("materials", []),
-                        "classification": element.get("classification", {})
+                    # Log the raw element area before creating element_to_save
+                    area_value = element.get("area")
+                    original_area_value = element.get("original_area")
+                    
+                    # Print details about types to help debug
+                    logger.info(f"Element {element.get('id')} area details:")
+                    logger.info(f"  - area: {area_value} (type: {type(area_value).__name__})")
+                    logger.info(f"  - original_area: {original_area_value} (type: {type(original_area_value).__name__ if original_area_value is not None else 'None'})")
+                    
+                    # Save element to MongoDB first
+                    element_to_save = {
+                        "project_id": project_id,
+                        "element_type": element.get("category"),
+                        "quantity": element.get("area"),  # This will use the edited area value
+                        "original_area": element.get("original_area"),  # Store original_area at top level
+                        "properties": {
+                            "level": element.get("level"),
+                            "is_structural": element.get("is_structural"),
+                            "is_external": element.get("is_external"),
+                            "ebkph": element.get("ebkph"),
+                            "classification": element.get("classification", {})
+                        },
+                        "materials": element.get("materials", []),  # Include materials as a top-level array
+                        "status": "active"
                     }
                     
-                    # Send the message
-                    message = json.dumps(flat_message)
+                    # Log the area value being saved
+                    logger.info(f"Saving element {element.get('id')} to MongoDB with area: {element.get('area')}, original: {element.get('original_area')}")
+                    
+                    # Log materials data being saved
+                    if element.get("materials") and len(element.get("materials", [])) > 0:
+                        logger.info(f"Saving element {element.get('id')} with {len(element.get('materials', []))} materials")
+                        logger.info(f"First material sample: {element.get('materials', [])[0] if element.get('materials', []) else 'None'}")
+                    
+                    # Save to MongoDB and get element ID
+                    element_id = mongodb.save_element(element_to_save)
+                    
+                    if not element_id:
+                        logger.error("Failed to save element to MongoDB, skipping Kafka notification")
+                        success = False
+                        continue
+                    
+                    # Create a message with only IDs and minimal data
+                    kafka_message = {
+                        "eventType": "ELEMENT_CREATED",
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "producer": "plugin-qto",
+                        "payload": {
+                            "projectId": str(project_id),
+                            "elementId": str(element_id),
+                            "elementType": element.get("category")
+                        },
+                        "metadata": {
+                            "version": "1.0",
+                            "correlationId": metadata["file_id"]
+                        }
+                    }
+                    
+                    # Log the formatted area for some elements to verify values are preserved
+                    if len(qto_data["elements"]) < 3:  # Only log for first few elements
+                        logger.info(f"Formatted element {element.get('id')} with area: {element.get('area')} (original: {element.get('original_area')})")
+                    
+                    # Send message to Kafka
+                    message = json.dumps(kafka_message)
                     self.producer.produce(self.topic, message, callback=self.delivery_report)
-                    element_count += 1
                 except Exception as e:
                     logger.error(f"Error sending QTO element data to Kafka: {e}")
                     success = False
@@ -241,6 +473,9 @@ def format_ifc_elements_for_qto(project_name: str,
     }
     
     for element in elements:
+        # Log raw element data to diagnose issue
+        logger.info(f"Processing element {element.get('id')}: raw area = {element.get('area')}, raw original_area = {element.get('original_area')}")
+        
         # Get element type
         element_type = element.get("type", "").lower()
         
@@ -249,129 +484,107 @@ def format_ifc_elements_for_qto(project_name: str,
         
         # Check if element is external based on common property
         is_external = False
-        for pset_name in [f"Pset_{element_type.replace('ifc', '').capitalize()}Common", "Pset_WallCommon"]:
-            pset_common = element.get("properties", {}).get(pset_name, {})
-            if pset_common.get("IsExternal") in [True, "True", "true", "1"]:
-                is_external = True
-                break
-        
-        # Get EBKPH from properties
-        ebkph = ""
-        for prop_name, value in element.get("properties", {}).items():
-            if "code" in prop_name.lower() and "material" in prop_name.lower():
-                ebkph = value
-                break
-                
-        # If no EBKPH in properties, try to get it from classification if it's an EBKP code
-        if not ebkph and element.get("classification_system") == "EBKP" and element.get("classification_id"):
-            ebkph = element.get("classification_id")
-            logger.debug(f"Using EBKP classification ID as EBKPH: {ebkph}")
-        
-        # Extract area from properties if available - first look for net, then gross
-        area = 0.0
-        
-        # First, try to find properties with net area
-        for prop_name, value in element.get("properties", {}).items():
-            if "area" in prop_name.lower() and "net" in prop_name.lower():
-                try:
-                    area = float(value)
+        if "properties" in element:
+            # Check for IsExternal property (variations of capitalization)
+            for prop_name, prop_value in element["properties"].items():
+                if prop_name.lower() == "isexternal" and str(prop_value).lower() in ["true", "1", "yes"]:
+                    is_external = True
                     break
-                except (ValueError, TypeError):
-                    pass
         
-        # If no net area found, look for gross area
-        if area <= 0.0:
-            for prop_name, value in element.get("properties", {}).items():
-                if "area" in prop_name.lower() and "gross" in prop_name.lower():
-                    try:
-                        area = float(value)
-                        break
-                    except (ValueError, TypeError):
-                        pass
+        # Get the original area - may be stored directly or in properties
+        original_area = element.get("original_area")
+        if original_area is None and "properties" in element and "original_area" in element["properties"]:
+            original_area = element["properties"]["original_area"]
+            logger.info(f"Found original_area in properties: {original_area}")
         
-        # Process materials - consolidate by base name
-        materials = []
-        if element.get("material_volumes"):
-            # Consolidate materials with same base name (without numbering)
-            consolidated_materials = {}
-            
-            for mat_name, mat_info in element.get("material_volumes").items():
-                # Extract base material name (removing suffixes like " (1)", " (2)", etc.)
-                base_name = re.sub(r'\s*\(\d+\)\s*$', '', mat_name)
-                
-                # Create or update the entry in the consolidated materials dictionary
-                if base_name not in consolidated_materials:
-                    consolidated_materials[base_name] = {
-                        "name": base_name,
-                        "fraction": mat_info.get("fraction", 0),
-                        "volume": mat_info.get("volume", 0)
-                    }
-                else:
-                    # Add to existing material
-                    consolidated_materials[base_name]["fraction"] += mat_info.get("fraction", 0)
-                    consolidated_materials[base_name]["volume"] += mat_info.get("volume", 0)
-            
-            # Convert the consolidated materials dictionary to a list
-            materials = list(consolidated_materials.values())
-        
-        # Build the element data structure
-        element_data = {
-            "id": element.get("global_id", ""),
-            "category": element_type,
-            "level": element.get("level") or element.get("properties", {}).get("Pset_BuildingStoreyElevation", {}).get("Name", "unknown"),
-            "area": area,
+        # Format element for QTO
+        formatted_element = {
+            "id": element.get("id", ""),
+            "category": element.get("type", "Unknown"),
+            "level": element.get("level", ""),
+            "area": element.get("area", 0),  # Get area directly from top-level property
+            "original_area": original_area,  # Include original_area in output
             "is_structural": is_structural,
             "is_external": is_external,
-            "ebkph": ebkph,
-            "materials": materials
+            "ebkph": element.get("classification_id", ""),
+            "materials": [],
+            "classification": {
+                "id": element.get("classification_id", ""),
+                "name": element.get("classification_name", ""),
+                "system": element.get("classification_system", "")
+            }
         }
         
-        # Add classification information if available
-        if element.get("classification_id") or element.get("classification_name") or element.get("classification_system"):
-            # Handle the case when ID is missing but we have name+system
-            classification_id = element.get("classification_id", "")
-            classification_name = element.get("classification_name", "")
-            classification_system = element.get("classification_system", "")
+        # Log the area value to diagnose issues
+        area_value = formatted_element["area"]
+        if area_value != 0:
+            logger.info(f"Non-zero area found for element {formatted_element['id']}: {area_value}")
+        
+        # Ensure area value is numeric (in case it was stored as string)
+        if isinstance(area_value, str):
+            try:
+                formatted_element["area"] = float(area_value)
+            except (ValueError, TypeError):
+                formatted_element["area"] = 0
+        
+        # If area is still None or null, try to get it from properties
+        if not formatted_element["area"]:
+            # Look for area in properties
+            if "properties" in element:
+                props = element.get("properties", {})
+                for prop_name, prop_value in props.items():
+                    if "area" in prop_name.lower():
+                        try:
+                            if isinstance(prop_value, str):
+                                # Remove any units and convert to float
+                                clean_value = prop_value.replace("m²", "").replace("m2", "").strip()
+                                area_val = float(clean_value)
+                                formatted_element["area"] = area_val
+                                logger.info(f"Extracted area {area_val} from property {prop_name} for element {formatted_element['id']}")
+                                break
+                            elif isinstance(prop_value, (int, float)):
+                                formatted_element["area"] = float(prop_value)
+                                logger.info(f"Using numeric area {prop_value} from property {prop_name} for element {formatted_element['id']}")
+                                break
+                        except (ValueError, TypeError):
+                            pass
+        
+        # Log the formatted area for some elements to verify values are preserved
+        if len(qto_data["elements"]) < 3:  # Only log for first few elements
+            logger.info(f"Formatted element {element.get('id')} with area: {formatted_element['area']} (original: {element.get('original_area')})")
+        
+        # Extract materials 
+        if "material_volumes" in element and element["material_volumes"]:
+            # Log the materials found in the element
+            logger.info(f"Materials found for element {element.get('id')}: {len(element['material_volumes'])} materials")
             
-            # Create classification object for QTO data
-            element_data["classification"] = {
-                "id": classification_id,
-                "name": classification_name,
-                "system": classification_system
-            }
-            
-            # Set ebkph if it's an EBKP classification with ID
-            if classification_system == "EBKP" and classification_id and not element_data["ebkph"]:
-                element_data["ebkph"] = classification_id
-                logger.debug(f"Set ebkph value to EBKP code in QTO data: {element_data['ebkph']}")
-            # If we have EBKP with no ID but a name, try to extract a code
-            elif classification_system == "EBKP" and not classification_id and classification_name and not element_data["ebkph"]:
-                # Use the name to code mapping for common building elements
-                name_to_code = {
-                    "decke": "C4.1",
-                    "dach": "G2",
-                    "innenwand": "C2.1",
-                    "aussenwand": "C2.2",
-                    "boden": "C3.1",
-                    "wasser": "I1",
-                    "gas": "I2",
-                    "luft": "I4",
-                    "sanitär": "I1",
-                    "heizung": "I3",
-                    "lüftung": "I4",
-                    "klima": "I5",
-                    "elektro": "J"
+            for material_name, material_data in element["material_volumes"].items():
+                material_entry = {
+                    "name": material_name,
+                    "unit": "m³"
                 }
                 
-                name_lower = classification_name.lower()
-                for term, code in name_to_code.items():
-                    if term in name_lower:
-                        element_data["classification"]["id"] = code
-                        element_data["ebkph"] = code
-                        logger.debug(f"QTO: Mapped classification name '{classification_name}' to code '{code}'")
-                        break
+                # Add volume if available
+                if "volume" in material_data:
+                    material_entry["volume"] = material_data.get("volume", 0)
+                
+                # Add fraction if available
+                if "fraction" in material_data:
+                    material_entry["fraction"] = material_data.get("fraction", 0)
+                
+                formatted_element["materials"].append(material_entry)
         
-        qto_data["elements"].append(element_data)
-    
+        # If no materials were found from material_volumes, check for materials array
+        if not formatted_element["materials"] and "materials" in element and element["materials"]:
+            # This handles the case where materials come directly as an array
+            logger.info(f"Using direct materials array for element {element.get('id')}: {len(element['materials'])} materials")
+            formatted_element["materials"] = element["materials"]
+        
+        # Log if no materials were found
+        if not formatted_element["materials"]:
+            logger.info(f"No materials found for element {element.get('id')}")
+        
+        qto_data["elements"].append(formatted_element)
+        
     return qto_data
 

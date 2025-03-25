@@ -3,4 +3,5 @@ uvicorn==0.23.2
 python-multipart==0.0.6
 ifcopenshell==0.8.1
 pydantic==2.3.0
-confluent-kafka==2.3.0 
+confluent-kafka==2.3.0
+pymongo==4.5.0 

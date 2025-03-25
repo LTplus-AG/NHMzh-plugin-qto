@@ -15,7 +15,7 @@ import { IFCElement } from "../types/types";
 import EbkpGroupRow from "./IfcElements/EbkpGroupRow";
 import ElementsHeader from "./IfcElements/ElementsHeader";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
-import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
+import { EditedArea } from "./IfcElements/types";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -26,21 +26,30 @@ interface IfcElementsListProps {
   elements: IFCElement[];
   loading: boolean;
   error: string | null;
+  editedElements: Record<string, EditedArea>;
+  editedElementsCount: number;
+  handleAreaChange: (
+    elementId: string,
+    originalArea: number | null | undefined,
+    newValue: string
+  ) => void;
+  resetEdits: () => void;
 }
 
 const IfcElementsList = ({
   elements,
   loading,
   error,
+  editedElements,
+  editedElementsCount,
+  handleAreaChange,
+  resetEdits,
 }: IfcElementsListProps) => {
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
   const [classificationFilter, setClassificationFilter] = useState<string>("");
 
-  // Use custom hooks for stateful logic
-  const { editedElements, editedElementsCount, handleAreaChange, resetEdits } =
-    useElementEditing();
-
+  // Use only the EBKP groups hook, not the element editing hook
   const { ebkpGroups, uniqueClassifications } = useEbkpGroups(
     elements,
     classificationFilter
