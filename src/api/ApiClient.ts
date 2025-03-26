@@ -188,11 +188,13 @@ export class QTOApiClient {
    * Send QTO data to Kafka
    * @param modelId - The ID of the model to send to Kafka
    * @param updatedElements - Optional list of elements with updated values (for user edits)
+   * @param projectName - Optional project name to use (from sidebar dropdown)
    * @returns The result of the operation
    */
   async sendQTO(
     modelId: string,
-    updatedElements?: IFCElement[]
+    updatedElements?: IFCElement[],
+    projectName?: string
   ): Promise<QTOResponse> {
     // Create URL with model_id parameter
     const url = `${this.baseUrl}/send-qto/?model_id=${modelId}`;
@@ -215,13 +217,22 @@ export class QTOApiClient {
       }
     }
 
+    // Log if we're using a specific project name
+    if (projectName) {
+      console.log(`Using project name from sidebar: ${projectName}`);
+    }
+
     // Create request configuration
     const headers = {
       "Content-Type": "application/json",
       Accept: "application/json",
     };
 
-    const requestBody = updatedElements ? { elements: updatedElements } : {};
+    // Include project name in the request if provided
+    const requestBody = {
+      ...(updatedElements ? { elements: updatedElements } : {}),
+      ...(projectName ? { project: projectName } : {}),
+    };
 
     console.log(
       "Request body:",

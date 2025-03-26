@@ -145,6 +145,7 @@ class ModelInfo(BaseModel):
 # Add a model for the request body
 class QTORequestBody(BaseModel):
     elements: Optional[List[Dict[str, Any]]] = None
+    project: Optional[str] = None  # Add project field for the project name from sidebar
 
 # Custom OpenAPI schema
 @app.get("/openapi.json", include_in_schema=False)
@@ -1084,14 +1085,14 @@ async def send_qto(
     body: Optional[QTORequestBody] = None
 ):
     """
-    Send QTO data to Kafka using the QTOKafkaProducer
+    Send QTO data from an IFC model to Kafka
     
-    - **model_id**: ID of the model to send to Kafka
-    - **request body**: Optional list of updated elements with user edits
+    - **model_id**: ID of the model to process and send
+    - **body**: Optional request body with updated elements and project name
     
-    Returns the status of the Kafka sending operation.
+    Returns confirmation of the data being sent to Kafka.
     """
-    logger.info(f"Sending QTO data for model ID: {model_id}")
+    logger.info(f"Processing model ID {model_id} to send to QTO system")
     
     if model_id not in ifc_models:
         logger.warning(f"Model ID not found: {model_id}")
@@ -1130,7 +1131,15 @@ async def send_qto(
         
         # Get project info
         filename = ifc_models[model_id]["filename"]
-        project_name = filename.split('.')[0]
+        
+        # Use the project name from the request if available, otherwise use filename
+        if body and body.project:
+            project_name = body.project
+            logger.info(f"Using project name from sidebar: {project_name}")
+        else:
+            project_name = filename.split('.')[0]
+            logger.info(f"Using filename as project name: {project_name}")
+            
         file_id = f"{project_name}/{filename}"
         
         # Format the data for QTO message

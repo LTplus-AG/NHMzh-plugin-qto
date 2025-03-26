@@ -63,6 +63,9 @@ const MainPage = () => {
   const { editedElements, editedElementsCount, handleAreaChange, resetEdits } =
     useElementEditing();
 
+  // Add state for selected project
+  const [selectedProject, setSelectedProject] = useState<string>("Projekt 1");
+
   // Check backend connectivity on load
   useEffect(() => {
     checkBackendConnectivity();
@@ -553,10 +556,24 @@ const MainPage = () => {
         console.log("Edited elements:", editedElements);
       }
 
+      // Get the actual project name from the selected project (removing the "Projekt X: " prefix)
+      const projectName =
+        selectedProject === "Projekt 1"
+          ? "Recyclingzentrum Juch-Areal"
+          : selectedProject === "Projekt 2"
+          ? "Gesamterneuerung Stadthausanlage"
+          : selectedProject === "Projekt 3"
+          ? "Amtshaus Walche"
+          : "Gemeinschaftszentrum Wipkingen";
+
+      console.log(`Using project from sidebar: ${projectName}`);
+
       // Use the API client to send the updated elements to the backend
+      // Pass the selected project name from the sidebar dropdown
       const response = await apiClient.sendQTO(
         selectedFile.modelId,
-        updatedElements
+        updatedElements,
+        projectName // Pass the actual project name
       );
       console.log("QTO data sent successfully to database:", response);
       setKafkaSuccess(true);
@@ -673,7 +690,8 @@ const MainPage = () => {
               <Select
                 id="select-project"
                 size="small"
-                value={"Projekt 1"}
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value as string)}
                 labelId="select-project"
               >
                 <MenuItem value={"Projekt 1"}>

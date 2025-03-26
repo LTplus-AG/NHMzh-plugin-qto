@@ -6,8 +6,11 @@ WORKDIR /app
 # Copy package.json and package-lock.json
 COPY package*.json ./
 
-# Install dependencies with legacy-peer-deps to bypass dependency conflicts
-RUN npm install --legacy-peer-deps
+# Install dependencies with clean cache to ensure correct versions
+RUN npm cache clean --force && \
+    npm install --legacy-peer-deps && \
+    npm uninstall esbuild && \
+    npm install esbuild@0.19.12 --save-dev
 
 # Copy the rest of the application files
 COPY . ./

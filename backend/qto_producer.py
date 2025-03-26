@@ -188,6 +188,72 @@ class MongoDBHelper:
             logger.error(f"Error getting element from MongoDB: {e}")
             return None
 
+    def delete_project_elements(self, project_id: ObjectId) -> bool:
+        """Delete all elements for a project.
+        
+        Args:
+            project_id: ObjectId of the project
+            
+        Returns:
+            Boolean indicating if deletion was successful
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot delete elements")
+            return False
+            
+        try:
+            # Convert string ID to ObjectId if needed
+            if isinstance(project_id, str):
+                project_id = ObjectId(project_id)
+                
+            # Delete all elements for this project
+            result = self.db.elements.delete_many({"project_id": project_id})
+            logger.info(f"Deleted {result.deleted_count} elements for project {project_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting project elements: {e}")
+            return False
+
+    def save_elements_batch(self, elements: List[Dict[str, Any]], project_id: ObjectId) -> bool:
+        """Save multiple elements, replacing all existing elements for the project.
+        Since we're not using a replica set, we'll do this without transactions.
+        
+        Args:
+            elements: List of element dictionaries to save
+            project_id: ObjectId of the project
+            
+        Returns:
+            Boolean indicating if save was successful
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot save elements")
+            return False
+            
+        try:
+            # First delete all existing elements for this project
+            delete_result = self.db.elements.delete_many({"project_id": project_id})
+            logger.info(f"Deleted {delete_result.deleted_count} existing elements for project {project_id}")
+            
+            # Now insert all new elements
+            if elements:
+                # Add timestamps and ensure project_id is ObjectId
+                for element in elements:
+                    if 'created_at' not in element:
+                        element['created_at'] = datetime.utcnow()
+                    element['updated_at'] = datetime.utcnow()
+                    if isinstance(element.get('project_id'), str):
+                        element['project_id'] = ObjectId(element['project_id'])
+                
+                # Insert all elements
+                result = self.db.elements.insert_many(elements)
+                logger.info(f"Inserted {len(result.inserted_ids)} new elements for project {project_id}")
+            
+            return True
+                    
+        except Exception as e:
+            logger.error(f"Error in save_elements_batch: {e}")
+            return False
+
 class QTOKafkaProducer:
     def __init__(self, bootstrap_servers=None, topic=None, max_retries=3, retry_delay=2):
         """Initialize the Kafka producer.
@@ -268,18 +334,18 @@ class QTOKafkaProducer:
             qto_data: Dictionary containing QTO data
             
         Returns:
-            Boolean indicating if all messages were sent successfully
+            Boolean indicating if message was sent successfully
         """
-        # Check if this data contains an elements array - if so, use the per-element sender
-        if isinstance(qto_data.get('elements'), list) and len(qto_data.get('elements', [])) > 0:
-            return self.send_qto_messages_per_element(qto_data)
-            
-        # Otherwise proceed with single message sending
         if self.producer is None:
             logger.error("Kafka producer not initialized, cannot send message")
             return False
             
         try:
+            # Check if this data contains an elements array
+            if isinstance(qto_data.get('elements'), list) and len(qto_data.get('elements', [])) > 0:
+                return self.send_project_update_notification(qto_data)
+            
+            # Otherwise proceed with single message sending
             message = json.dumps(qto_data)
             self.producer.produce(self.topic, message, callback=self.delivery_report)
             self.producer.poll(0)  # Trigger any callbacks
@@ -289,23 +355,24 @@ class QTOKafkaProducer:
             logger.error(f"Error sending QTO data to Kafka: {e}")
             return False
     
-    def send_qto_messages_per_element(self, qto_data: Dict[str, Any]):
-        """Send QTO data to Kafka topic with one message per element.
+    def send_project_update_notification(self, qto_data: Dict[str, Any]):
+        """Send a simplified project update notification to Kafka topic.
+        Instead of sending all elements, just notify that the project has been updated.
         
         Args:
             qto_data: Dictionary containing QTO data with 'elements' list
             
         Returns:
-            Boolean indicating if all messages were sent successfully
+            Boolean indicating if the notification was sent successfully
         """
         if self.producer is None:
-            logger.error("Kafka producer not initialized, cannot send messages")
+            logger.error("Kafka producer not initialized, cannot send notification")
             return False
             
         # Extract elements and base metadata
         elements = qto_data.get('elements', [])
         if not elements:
-            logger.warning("No elements found in QTO data, no messages sent")
+            logger.warning("No elements found in QTO data, no notification sent")
             return False
             
         # Extract metadata that will be common for all messages
@@ -333,99 +400,80 @@ class QTOKafkaProducer:
             logger.error("Failed to save project to MongoDB, cannot proceed with elements")
             return False
         
-        success = True
-        element_count = 0
-        batch_size = 100  # Process in batches for large element counts
+        # Format all elements for saving
+        elements_to_save = []
+        for element in elements:
+            try:
+                # Get area and original_area values
+                area = element.get("area", 0)
+                original_area = element.get("original_area")
+                
+                # If original_area is None, try to get it from properties
+                if original_area is None and "properties" in element:
+                    original_area = element["properties"].get("original_area")
+                
+                # If still None, use the current area as original_area
+                if original_area is None:
+                    original_area = area
+                    logger.info(f"Using current area {area} as original_area for element {element.get('id')}")
+                
+                # Format element data for saving
+                element_to_save = {
+                    "project_id": project_id,
+                    "element_type": element.get("category"),
+                    "quantity": area,
+                    "original_area": original_area,
+                    "properties": {
+                        "level": element.get("level"),
+                        "is_structural": element.get("is_structural"),
+                        "is_external": element.get("is_external"),
+                        "ebkph": element.get("ebkph"),
+                        "classification": element.get("classification", {})
+                    },
+                    "materials": element.get("materials", []),
+                    "status": "active"
+                }
+                elements_to_save.append(element_to_save)
+            except Exception as e:
+                logger.error(f"Error formatting element for saving: {e}")
         
-        # Process elements in batches for better Kafka performance
-        for i in range(0, len(elements), batch_size):
-            batch_elements = elements[i:i+batch_size]
-            
-            # Send one message per element in the batch
-            for element in batch_elements:
-                try:
-                    # Log the raw element area before creating element_to_save
-                    area_value = element.get("area")
-                    original_area_value = element.get("original_area")
-                    
-                    # Print details about types to help debug
-                    logger.info(f"Element {element.get('id')} area details:")
-                    logger.info(f"  - area: {area_value} (type: {type(area_value).__name__})")
-                    logger.info(f"  - original_area: {original_area_value} (type: {type(original_area_value).__name__ if original_area_value is not None else 'None'})")
-                    
-                    # Save element to MongoDB first
-                    element_to_save = {
-                        "project_id": project_id,
-                        "element_type": element.get("category"),
-                        "quantity": element.get("area"),  # This will use the edited area value
-                        "original_area": element.get("original_area"),  # Store original_area at top level
-                        "properties": {
-                            "level": element.get("level"),
-                            "is_structural": element.get("is_structural"),
-                            "is_external": element.get("is_external"),
-                            "ebkph": element.get("ebkph"),
-                            "classification": element.get("classification", {})
-                        },
-                        "materials": element.get("materials", []),  # Include materials as a top-level array
-                        "status": "active"
-                    }
-                    
-                    # Log the area value being saved
-                    logger.info(f"Saving element {element.get('id')} to MongoDB with area: {element.get('area')}, original: {element.get('original_area')}")
-                    
-                    # Log materials data being saved
-                    if element.get("materials") and len(element.get("materials", [])) > 0:
-                        logger.info(f"Saving element {element.get('id')} with {len(element.get('materials', []))} materials")
-                        logger.info(f"First material sample: {element.get('materials', [])[0] if element.get('materials', []) else 'None'}")
-                    
-                    # Save to MongoDB and get element ID
-                    element_id = mongodb.save_element(element_to_save)
-                    
-                    if not element_id:
-                        logger.error("Failed to save element to MongoDB, skipping Kafka notification")
-                        success = False
-                        continue
-                    
-                    # Create a message with only IDs and minimal data
-                    kafka_message = {
-                        "eventType": "ELEMENT_CREATED",
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
-                        "producer": "plugin-qto",
-                        "payload": {
-                            "projectId": str(project_id),
-                            "elementId": str(element_id),
-                            "elementType": element.get("category")
-                        },
-                        "metadata": {
-                            "version": "1.0",
-                            "correlationId": metadata["file_id"]
-                        }
-                    }
-                    
-                    # Log the formatted area for some elements to verify values are preserved
-                    if len(qto_data["elements"]) < 3:  # Only log for first few elements
-                        logger.info(f"Formatted element {element.get('id')} with area: {element.get('area')} (original: {element.get('original_area')})")
-                    
-                    # Send message to Kafka
-                    message = json.dumps(kafka_message)
-                    self.producer.produce(self.topic, message, callback=self.delivery_report)
-                except Exception as e:
-                    logger.error(f"Error sending QTO element data to Kafka: {e}")
-                    success = False
-            
-            # Poll to trigger callbacks and clear internal queue after each batch
-            self.producer.poll(0)
-            
-            # Log batch progress for large datasets
-            if len(elements) > batch_size:
-                logger.info(f"Processed batch of {len(batch_elements)} elements ({i+len(batch_elements)}/{len(elements)})")
+        # Save all elements in a single batch
+        if elements_to_save:
+            success = mongodb.save_elements_batch(elements_to_save, project_id)
+            if not success:
+                logger.error("Failed to save elements to MongoDB")
+                return False
+            logger.info(f"Saved {len(elements_to_save)} elements to MongoDB for project {metadata['project']}")
         
-        # Final flush to ensure all messages are delivered
-        if element_count > 0:
-            self.producer.flush(timeout=10)
-        
-        logger.info(f"Sent {element_count} individual QTO element messages for project {metadata.get('project', 'unknown')}")
-        return success
+        # Send a single project update notification
+        try:
+            # Create a simplified notification message
+            notification = {
+                "eventType": "PROJECT_UPDATED",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "producer": "plugin-qto",
+                "payload": {
+                    "projectId": str(project_id),
+                    "projectName": metadata["project"],
+                    "elementCount": len(elements_to_save)
+                },
+                "metadata": {
+                    "version": "1.0",
+                    "correlationId": metadata["file_id"]
+                }
+            }
+            
+            # Send message to Kafka
+            message = json.dumps(notification)
+            self.producer.produce(self.topic, message, callback=self.delivery_report)
+            self.producer.poll(0)  # Trigger any callbacks
+            self.producer.flush(timeout=5)  # Ensure message is delivered
+            
+            logger.info(f"Sent project update notification for '{metadata['project']}' with {len(elements_to_save)} elements")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending project update notification to Kafka: {e}")
+            return False
     
     def flush(self):
         """Wait for all messages to be delivered."""
@@ -451,7 +499,7 @@ def format_ifc_elements_for_qto(project_name: str,
     """Format IFC elements data for QTO Kafka message.
     
     Args:
-        project_name: Name of the project
+        project_name: Name of the project or active project from sidebar dropdown
         filename: Name of the IFC file
         file_id: Unique identifier for the file
         elements: List of IFC elements with property data
@@ -549,10 +597,6 @@ def format_ifc_elements_for_qto(project_name: str,
                         except (ValueError, TypeError):
                             pass
         
-        # Log the formatted area for some elements to verify values are preserved
-        if len(qto_data["elements"]) < 3:  # Only log for first few elements
-            logger.info(f"Formatted element {element.get('id')} with area: {formatted_element['area']} (original: {element.get('original_area')})")
-        
         # Extract materials 
         if "material_volumes" in element and element["material_volumes"]:
             # Log the materials found in the element
@@ -579,10 +623,6 @@ def format_ifc_elements_for_qto(project_name: str,
             # This handles the case where materials come directly as an array
             logger.info(f"Using direct materials array for element {element.get('id')}: {len(element['materials'])} materials")
             formatted_element["materials"] = element["materials"]
-        
-        # Log if no materials were found
-        if not formatted_element["materials"]:
-            logger.info(f"No materials found for element {element.get('id')}")
         
         qto_data["elements"].append(formatted_element)
         
