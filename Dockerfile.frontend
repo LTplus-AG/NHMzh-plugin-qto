@@ -6,11 +6,8 @@ WORKDIR /app
 # Copy package.json and package-lock.json
 COPY package*.json ./
 
-# Install dependencies with clean cache to ensure correct versions
-RUN npm cache clean --force && \
-    npm install --legacy-peer-deps && \
-    npm uninstall esbuild && \
-    npm install esbuild@0.19.12 --save-dev
+# Install dependencies using npm ci for better caching and consistency
+RUN npm ci
 
 # Copy the rest of the application files
 COPY . ./
@@ -26,10 +23,14 @@ FROM node:18-alpine as build
 
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
-RUN npm install --legacy-peer-deps
+# Install dependencies using npm ci
+RUN npm ci
 
+# Copy source code
 COPY . .
+# Build the app
 RUN npm run build
 
 # Stage 3: Serve the application with Nginx for production
