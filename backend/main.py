@@ -776,10 +776,6 @@ def get_ifc_elements(model_id: str):
                                             prop_value = f"{quantity.VolumeValue:.3f}"
                                             element_data["properties"][prop_name] = prop_value
                                         
-                                        elif quantity.is_a('IfcQuantityCount'):
-                                            prop_name = f"{qset_name}.{quantity.Name}"
-                                            prop_value = f"{quantity.CountValue}"
-                                            element_data["properties"][prop_name] = prop_value
                     
                     # Extract classification information
                     if hasattr(element, "HasAssociations"):

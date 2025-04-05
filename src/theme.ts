@@ -3,13 +3,13 @@ import { createTheme } from "@mui/material/styles";
 const theme = createTheme({
   palette: {
     primary: {
-      main: "#1976d2",
+      main: "#0D0599",
       light: "#42a5f5",
       dark: "#1565c0",
       contrastText: "#fff",
     },
     secondary: {
-      main: "#9c27b0",
+      main: "#98CDFA",
       light: "#ba68c8",
       dark: "#7b1fa2",
       contrastText: "#fff",
@@ -39,8 +39,8 @@ const theme = createTheme({
       contrastText: "#fff",
     },
     text: {
-      primary: "rgba(0, 0, 0, 0.87)",
-      secondary: "rgba(0, 0, 0, 0.6)",
+      primary: "#333333",
+      secondary: "#555555",
       disabled: "rgba(0, 0, 0, 0.38)",
     },
     background: {
@@ -50,6 +50,21 @@ const theme = createTheme({
   },
   typography: {
     fontFamily: "Roboto, Arial, sans-serif",
+    h2: {
+      fontWeight: 500,
+    },
+    h3: {
+      fontWeight: "lighter",
+    },
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: "none",
+        },
+      },
+    },
   },
 });
 

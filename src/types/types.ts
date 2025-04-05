@@ -1,5 +1,4 @@
 import React from "react";
-import { IFCElement as ApiIFCElement } from "../api/ApiClient";
 
 export interface CostItem {
   ebkp: string;

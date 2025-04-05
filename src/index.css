@@ -10,24 +10,22 @@
 
 html,
 body {
+  height: 100%;
   margin: 0;
   padding: 0;
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-}
-
-body {
   min-height: 100vh;
-  background-color: #ffffff;
+  width: 100%;
 }
 
 #root {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
   width: 100%;
-  overflow: hidden;
+}
+
+body {
+  background-color: #ffffff;
 }
 
 /* Utility classes similar to tailwind */

@@ -1,44 +1,35 @@
+import InfoIcon from "@mui/icons-material/Info";
+import SendIcon from "@mui/icons-material/Send";
 import {
   Alert,
+  Box,
   Button,
-  FormControl,
-  FormLabel,
-  MenuItem,
-  Select,
-  Snackbar,
-  Step,
-  StepLabel,
-  Stepper,
-  Typography,
-  Divider,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
+  FormControl,
+  FormLabel,
+  IconButton,
+  MenuItem,
+  Select,
+  Snackbar,
+  Tooltip,
+  Typography,
 } from "@mui/material";
 import { useEffect, useState } from "react";
-import FileUpload from "./FileUpload";
-import IfcElementsList from "./IfcElementsList";
-import { UploadedFile } from "../types/types";
-import SendIcon from "@mui/icons-material/Send";
 import apiClient, { IFCElement } from "../api/ApiClient";
+import { UploadedFile } from "../types/types";
+import FileUpload from "./FileUpload";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
+import IfcElementsList from "./IfcElementsList";
 
 const MainPage = () => {
-  const Instructions = [
-    {
-      label: "Modell hochladen",
-      description: `Laden Sie Ihr Modell hoch, anschliessend wird dieses gegen die bereitgestellten Information Delivery Specifications (IDS) geprüft.`,
-    },
-    {
-      label: "Modell senden",
-      description:
-        'Nach erfolgreicher Prüfung reichen Sie Ihr Modell über den Button "Freigeben" ein.',
-    },
-  ];
+  // Removed unused Instructions array
 
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  // Changed to underscore prefix to mark as intentionally partially used
+  const [_uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
 
   // IFC elements state
@@ -56,12 +47,18 @@ const MainPage = () => {
   const [connectionChecked, setConnectionChecked] = useState(false);
   const [showConnectionError, setShowConnectionError] = useState(false);
 
-  // State for confirmation dialog
+  // State for confirmation dialog (keeping it for potential future use, but not triggered by main button now)
   const [confirmDialogOpen, setConfirmDialogOpen] = useState<boolean>(false);
+
+  // State for preview dialog
+  const [previewDialogOpen, setPreviewDialogOpen] = useState<boolean>(false);
 
   // Use the element editing hook at the MainPage level so state is shared
   const { editedElements, editedElementsCount, handleAreaChange, resetEdits } =
     useElementEditing();
+
+  // Add state to track if EBKP groups exist
+  const [hasEbkpGroups, setHasEbkpGroups] = useState<boolean>(true); // Assume true initially
 
   // Add state for selected project
   const [selectedProject, setSelectedProject] = useState<string>("Projekt 1");
@@ -251,10 +248,15 @@ const MainPage = () => {
                             key.includes("Class") ||
                             key.includes("class")
                         )
-                        .reduce((obj, key) => {
-                          obj[key] = el.properties[key];
+                        .reduce((obj: Record<string, any>, key) => {
+                          if (
+                            el.properties &&
+                            el.properties.hasOwnProperty(key)
+                          ) {
+                            obj[key] = el.properties[key];
+                          }
                           return obj;
-                        }, {})
+                        }, {} as Record<string, any>)
                     : {},
                 },
               }))
@@ -481,10 +483,6 @@ const MainPage = () => {
     }
   };
 
-  const handleFileUploaded = (newFile: UploadedFile) => {
-    setUploadedFiles((prev) => [newFile, ...prev]);
-  };
-
   // Function to send QTO data to Database (formerly Kafka)
   const sendQtoToDatabase = async () => {
     if (!selectedFile?.modelId) {
@@ -517,34 +515,40 @@ const MainPage = () => {
 
       // Apply user edits to elements before sending to database
       const updatedElements = ifcElements.map((element) => {
-        // Check if this element has been edited by the user
-        const edited = editedElements[element.id];
-        if (edited && edited.newArea !== null && edited.newArea !== undefined) {
-          // Create a deep copy of the element to modify
-          const updatedElement = JSON.parse(JSON.stringify(element));
+        // Check if this element has been edited by the user and the key exists
+        if (editedElements.hasOwnProperty(element.id)) {
+          const edited = editedElements[element.id];
+          if (
+            edited &&
+            edited.newArea !== null &&
+            edited.newArea !== undefined
+          ) {
+            // Create a deep copy of the element to modify
+            const updatedElement = JSON.parse(JSON.stringify(element));
 
-          // Ensure area is stored as a number, not a string
-          const numericArea =
-            typeof edited.newArea === "string"
-              ? parseFloat(edited.newArea)
-              : edited.newArea;
+            // Ensure area is stored as a number, not a string
+            const numericArea =
+              typeof edited.newArea === "string"
+                ? parseFloat(edited.newArea)
+                : edited.newArea;
 
-          // Store the original area value - use the original value from editedElements
-          // since that's what was stored when the edit was first made
-          updatedElement.original_area = edited.originalArea;
+            // Store the original area value - use the original value from editedElements
+            // since that's what was stored when the edit was first made
+            updatedElement.original_area = edited.originalArea;
 
-          // Log the original and new values for debugging
-          console.log(
-            `Element ${element.id} saving original area: ${edited.originalArea} (from edit tracking)`
-          );
+            // Log the original and new values for debugging
+            console.log(
+              `Element ${element.id} saving original area: ${edited.originalArea} (from edit tracking)`
+            );
 
-          // Update the area with the new value
-          updatedElement.area = numericArea;
+            // Update the area with the new value
+            updatedElement.area = numericArea;
 
-          console.log(
-            `Element ${element.id} area updated from ${updatedElement.original_area} to ${numericArea}`
-          );
-          return updatedElement;
+            console.log(
+              `Element ${element.id} area updated from ${updatedElement.original_area} to ${numericArea}`
+            );
+            return updatedElement;
+          }
         }
         return element;
       });
@@ -587,18 +591,23 @@ const MainPage = () => {
       setKafkaSuccess(false);
     } finally {
       setKafkaSending(false);
-      setConfirmDialogOpen(false);
+      setPreviewDialogOpen(false); // Close the preview dialog after sending
     }
   };
 
-  // Open confirmation dialog
-  const handleOpenConfirmDialog = () => {
-    setConfirmDialogOpen(true);
-  };
-
-  // Close confirmation dialog
+  // Handler for closing confirmation dialog - needed by the dialog component
   const handleCloseConfirmDialog = () => {
     setConfirmDialogOpen(false);
+  };
+
+  // Open preview dialog
+  const handleOpenPreviewDialog = () => {
+    setPreviewDialogOpen(true);
+  };
+
+  // Close preview dialog
+  const handleClosePreviewDialog = () => {
+    setPreviewDialogOpen(false);
   };
 
   // Handle closing the connection error snackbar
@@ -613,7 +622,7 @@ const MainPage = () => {
   };
 
   return (
-    <div className="w-full flex h-full overflow-hidden">
+    <div className="w-full flex h-full">
       {/* Backend Connection Error Snackbar */}
       <Snackbar
         open={showConnectionError}
@@ -649,7 +658,7 @@ const MainPage = () => {
         </Alert>
       </Snackbar>
 
-      {/* Confirmation Dialog */}
+      {/* Confirmation Dialog (kept for potential future use) */}
       <Dialog
         open={confirmDialogOpen}
         onClose={handleCloseConfirmDialog}
@@ -675,12 +684,63 @@ const MainPage = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Preview Dialog */}
+      <Dialog
+        open={previewDialogOpen}
+        onClose={handleClosePreviewDialog}
+        aria-labelledby="preview-dialog-title"
+        maxWidth="md" // Use a wider dialog for the preview table
+        fullWidth
+      >
+        <DialogTitle id="preview-dialog-title">
+          Vorschau der zu sendenden Daten
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText component="div" id="preview-dialog-description">
+            <Typography variant="body1" gutterBottom>
+              Bitte überprüfen Sie die folgenden Daten vor dem Senden:
+            </Typography>
+            <Typography variant="body2">
+              Projekt: <strong>{selectedProject}</strong>
+            </Typography>
+            <Typography variant="body2">
+              Datei: <strong>{selectedFile?.filename}</strong>
+            </Typography>
+            <Typography variant="body2">
+              Anzahl Elemente: <strong>{ifcElements.length}</strong>
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              Anzahl bearbeitete Elemente:{" "}
+              <strong>{editedElementsCount}</strong>
+            </Typography>
+            {/* TODO: Add a small preview table/list here if needed for more detail */}
+            <Typography variant="caption">
+              (Hinweis: Eine detaillierte Elementvorschau ist hier nicht
+              implementiert, nur eine Zusammenfassung.)
+            </Typography>
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleClosePreviewDialog} color="primary">
+            Abbrechen
+          </Button>
+          <Button
+            onClick={sendQtoToDatabase}
+            color="primary"
+            disabled={kafkaSending}
+            autoFocus
+          >
+            {kafkaSending ? "Senden..." : "Senden"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Sidebar */}
-      <div className="w-1/4 min-w-[300px] max-w-[400px] p-8 bg-light text-primary flex flex-col h-full">
+      <div className="w-1/4 p-8 bg-light text-primary flex flex-col">
         {/* Header und Inhalte */}
-        <div className="flex flex-col flex-grow overflow-hidden">
-          <Typography variant="h3" className="text-5xl mb-2" color="primary">
-            Mengenermittlung
+        <div className="flex flex-col">
+          <Typography variant="h3" color="primary" sx={{ mb: 2 }}>
+            Mengen
           </Typography>
           <div className="flex flex-col mt-2 gap-1">
             <FormLabel focused htmlFor="select-project">
@@ -728,124 +788,113 @@ const MainPage = () => {
         {/* File Upload Component */}
         <FileUpload
           backendConnected={backendConnected}
-          uploadedFiles={uploadedFiles}
           selectedFile={selectedFile}
-          instructions={Instructions}
           onFileSelected={handleFileSelected}
-          onFileUploaded={handleFileUploaded}
           fetchIfcElements={fetchIfcElements}
         />
 
         {/* Fusszeile */}
-        <div className="flex flex-col flex-1 mt-auto">
-          {/* Anleitung Section */}
-          <div>
-            <Typography
-              variant="subtitle1"
-              className="font-bold mb-2"
-              color="primary"
-            >
-              Anleitung
-            </Typography>
-            <Divider sx={{ mb: 2 }} />
-            <Stepper orientation="vertical" nonLinear className="max-w-xs">
-              {Instructions.map((step) => (
-                <Step key={step.label} active>
-                  <StepLabel>
-                    <span
-                      className="leading-tight text-primary font-bold"
-                      style={{ color: "#0D0599" }}
-                    >
-                      {step.label}
-                    </span>
-                  </StepLabel>
-                  <div className="ml-8 -mt-2">
-                    <span
-                      className="text-sm leading-none"
-                      style={{ color: "#0D0599" }}
-                    >
-                      {step.description}
-                    </span>
-                  </div>
-                </Step>
-              ))}
-            </Stepper>
-          </div>
+        <div className="flex flex-col mt-auto">
+          {/* Removed Anleitung Section */}
         </div>
       </div>
 
       {/* Main content area - IFC Elements */}
-      <div className="flex-1 w-3/4 flex flex-col h-full overflow-hidden">
-        <div className="flex-grow overflow-y-auto p-10 flex flex-col h-full">
-          <Typography variant="h2" className="text-5xl">
-            IFC Elemente
-          </Typography>
-
-          <div className="flex mt-5 w-full mb-10">
-            {/* We'll keep the content area focused on IFC elements without tabs */}
-          </div>
+      <div className="flex-1 flex flex-col overflow-y-auto">
+        <div className="p-10 flex flex-col flex-grow">
+          {/* Removed IFC Elemente Title */}
 
           {/* Info section - model info and alerts */}
-          <div className="mb-4">
-            {/* Active model info */}
+          <Box
+            display="flex"
+            flexDirection={{ xs: "column", md: "row" }}
+            justifyContent="space-between"
+            alignItems={{ xs: "flex-start", md: "center" }}
+            mb={4}
+            className="flex flex-col md:flex-row w-full"
+          >
+            {/* Left side: Active model info */}
             {selectedFile && (
-              <div className="font-medium mb-2">
-                Aktives Modell: <strong>{selectedFile.filename}</strong>
+              <div className="font-medium flex items-center mb-2 md:mb-0 max-w-full">
+                <span className="whitespace-nowrap mr-1">Aktives Modell:</span>
+                <span className="truncate max-w-[200px] md:max-w-[300px] font-bold">
+                  {selectedFile.filename}
+                </span>
+                <Tooltip
+                  title={
+                    <>
+                      <div>
+                        Hochgeladen:{" "}
+                        {new Date(selectedFile.created_at).toLocaleString(
+                          "de-CH"
+                        )}
+                      </div>
+                      <div>Elemente: {ifcElements.length}</div>
+                    </>
+                  }
+                  arrow
+                >
+                  <IconButton size="small" sx={{ ml: 0.5 }}>
+                    <InfoIcon fontSize="inherit" color="action" />
+                  </IconButton>
+                </Tooltip>
               </div>
             )}
+            {/* Placeholder if no file selected to maintain layout */}
+            {!selectedFile && <div />}
 
-            {/* Message when no IFC file is loaded */}
-            {!ifcLoading && ifcElements.length === 0 && !ifcError && (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                Bitte laden Sie eine IFC-Datei hoch, um die Daten anzuzeigen.
-                Die IFC-Elemente werden mit ifcopenshell 0.8.1 verarbeitet.
-              </Alert>
-            )}
-
-            {/* Note about the filtering */}
-            {ifcElements.length > 0 && (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                Es werden nur die ausgewählten IFC-Elementtypen angezeigt.
-                Andere Elementtypen wie IfcSpace, IfcFurnishingElement, etc.
-                werden nicht berücksichtigt.
-              </Alert>
-            )}
-          </div>
-
-          {/* Action buttons */}
-          {selectedFile && (
-            <div className="flex gap-2 mb-4">
-              {/* Reload Button */}
-              <Button
-                variant="outlined"
-                color="primary"
-                onClick={() =>
-                  selectedFile.modelId && fetchIfcElements(selectedFile.modelId)
-                }
-                disabled={ifcLoading || !backendConnected}
-                className="text-primary border-primary"
-              >
-                {ifcLoading ? "Loading..." : "Reload Model"}
-              </Button>
-
-              {/* Send to Database Button (formerly Kafka) */}
-              {ifcElements.length > 0 && (
+            {/* Right side: Action buttons */}
+            {selectedFile && (
+              <div className="flex gap-2 self-start md:self-center mt-2 md:mt-0">
+                {/* Reload Button */}
                 <Button
-                  variant="contained"
+                  variant="outlined"
                   color="primary"
-                  startIcon={<SendIcon />}
-                  onClick={handleOpenConfirmDialog}
-                  disabled={kafkaSending || !backendConnected}
-                  className="bg-primary"
+                  onClick={() =>
+                    selectedFile.modelId &&
+                    fetchIfcElements(selectedFile.modelId)
+                  }
+                  disabled={ifcLoading || !backendConnected}
+                  className="text-primary border-primary whitespace-nowrap"
+                  size="small"
+                  sx={{ minWidth: "max-content" }}
                 >
-                  {kafkaSending ? "Sending..." : "Send to Database"}
+                  {ifcLoading ? "Lädt..." : "Modell neu laden"}
                 </Button>
-              )}
-            </div>
+
+                {/* Preview Button (formerly Send to Database) */}
+                {ifcElements.length > 0 && (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<SendIcon />}
+                    onClick={handleOpenPreviewDialog}
+                    disabled={
+                      kafkaSending || !backendConnected || !hasEbkpGroups
+                    }
+                    className="bg-primary whitespace-nowrap"
+                    size="small"
+                    sx={{ minWidth: "max-content" }}
+                  >
+                    {kafkaSending ? "Senden..." : "Vorschau anzeigen"}
+                  </Button>
+                )}
+              </div>
+            )}
+            {/* Placeholder if no file selected to maintain layout */}
+            {!selectedFile && <div />}
+          </Box>
+
+          {/* Message when no IFC file is loaded */}
+          {!ifcLoading && ifcElements.length === 0 && !ifcError && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Bitte laden Sie eine IFC-Datei hoch, um die Daten anzuzeigen. Die
+              IFC-Elemente werden mit ifcopenshell 0.8.1 verarbeitet.
+            </Alert>
           )}
 
           {/* Element list container - expanded to fill remaining space */}
-          <div className="border border-gray-200 rounded-md flex-grow flex flex-col min-h-0">
+          <div className="border border-gray-200 rounded-md flex-grow flex flex-col">
             <IfcElementsList
               elements={ifcElements}
               loading={ifcLoading}
@@ -854,6 +903,8 @@ const MainPage = () => {
               editedElementsCount={editedElementsCount}
               handleAreaChange={handleAreaChange}
               resetEdits={resetEdits}
+              // Pass callback to update EBKP status
+              onEbkpStatusChange={setHasEbkpGroups}
             />
           </div>
         </div>

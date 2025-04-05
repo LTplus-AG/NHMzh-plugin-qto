@@ -103,8 +103,6 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
               </Typography>
               <TableContainer
                 sx={{
-                  maxHeight: "50vh",
-                  overflow: "auto",
                   border: "1px solid rgba(224, 224, 224, 1)",
                   borderRadius: 1,
                 }}

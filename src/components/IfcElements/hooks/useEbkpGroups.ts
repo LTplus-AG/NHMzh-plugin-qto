@@ -100,5 +100,7 @@ export const useEbkpGroups = (
     );
   }, [elements, classificationFilter]);
 
-  return { ebkpGroups, uniqueClassifications };
+  const hasEbkpGroups = ebkpGroups.length > 0;
+
+  return { ebkpGroups, uniqueClassifications, hasEbkpGroups };
 };

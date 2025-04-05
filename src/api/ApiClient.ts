@@ -239,15 +239,14 @@ export class QTOApiClient {
       JSON.stringify(requestBody).substring(0, 100) + "..."
     ); // Log truncated body
 
+    const jsonBody = JSON.stringify(requestBody);
     const options: RequestInit = {
       method: "POST",
       headers: headers,
-      body: JSON.stringify(requestBody),
+      body: jsonBody,
     };
 
-    if (options.body) {
-      console.log("Request payload size:", options.body.length, "bytes");
-    }
+    console.log("Request payload size:", jsonBody.length, "bytes");
 
     try {
       const response = await fetch(url, options);

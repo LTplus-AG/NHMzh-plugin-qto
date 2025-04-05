@@ -34,6 +34,7 @@ interface IfcElementsListProps {
     newValue: string
   ) => void;
   resetEdits: () => void;
+  onEbkpStatusChange: (hasGroups: boolean) => void;
 }
 
 const IfcElementsList = ({
@@ -44,16 +45,22 @@ const IfcElementsList = ({
   editedElementsCount,
   handleAreaChange,
   resetEdits,
+  onEbkpStatusChange,
 }: IfcElementsListProps) => {
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
   const [classificationFilter, setClassificationFilter] = useState<string>("");
 
   // Use only the EBKP groups hook, not the element editing hook
-  const { ebkpGroups, uniqueClassifications } = useEbkpGroups(
+  const { ebkpGroups, uniqueClassifications, hasEbkpGroups } = useEbkpGroups(
     elements,
     classificationFilter
   );
+
+  // Call the callback when hasEbkpGroups changes
+  useEffect(() => {
+    onEbkpStatusChange(hasEbkpGroups);
+  }, [hasEbkpGroups, onEbkpStatusChange]);
 
   // Debug logging
   useEffect(() => {
@@ -138,10 +145,8 @@ const IfcElementsList = ({
   return (
     <div
       style={{
-        height: "100%",
         display: "flex",
         flexDirection: "column",
-        overflow: "hidden",
       }}
     >
       <ElementsHeader
@@ -158,14 +163,13 @@ const IfcElementsList = ({
         component={Paper}
         elevation={2}
         style={{
+          width: "100%",
           flexGrow: 1,
-          height: "calc(100% - 40px)",
-          maxHeight: "calc(100vh - 180px)",
           overflow: "auto",
           paddingTop: "12px",
         }}
       >
-        <Table stickyHeader>
+        <Table stickyHeader style={{ width: "100%", tableLayout: "fixed" }}>
           <TableHead>
             <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.08)" }}>
               <TableCell width="50px" />

@@ -40,7 +40,7 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
     >
       <div className="flex items-center">
         <Typography variant="h5" className="mr-2">
-          QTO Elemente ({totalFilteredElements})
+          IFC Elemente ({totalFilteredElements})
         </Typography>
         {targetIfcClasses && targetIfcClasses.length > 0 && (
           <Tooltip
