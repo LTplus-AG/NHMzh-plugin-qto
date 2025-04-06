@@ -63,13 +63,25 @@ const ElementRow: React.FC<ElementRowProps> = ({
     return num.toFixed(3);
   };
 
+  // Format value for display in the TextField while preserving the actual value
+  const getDisplayValue = () => {
+    if (isEdited) {
+      return editedArea === null ? "" : formatNumber(editedArea);
+    } else {
+      if (element.area === null || element.area === undefined) return "";
+      return formatNumber(element.area);
+    }
+  };
+
   return (
     <React.Fragment>
       <TableRow
+        id={`element-row-${element.id}`}
         sx={{
           "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.02)" },
           cursor: "pointer",
           backgroundColor: isEdited ? "rgba(255, 152, 0, 0.08)" : "inherit",
+          transition: "background-color 0.3s ease",
         }}
         onClick={() => toggleExpand(element.id)}
       >
@@ -117,18 +129,13 @@ const ElementRow: React.FC<ElementRowProps> = ({
               step: "0.001",
               style: { textAlign: "center" },
             }}
-            value={
-              isEdited
-                ? editedArea === null
-                  ? ""
-                  : editedArea
-                : element.area === null || element.area === undefined
-                ? ""
-                : element.area
-            }
+            // Format display to 3 decimal places but keep the actual value for onChange
+            value={getDisplayValue()}
             onChange={(e) =>
               handleAreaChange(element.id, element.area, e.target.value)
             }
+            // Add onFocus handler to select all text for easy editing
+            onFocus={(e) => e.target.select()}
             onClick={(e) => e.stopPropagation()}
             sx={{
               width: "100%",

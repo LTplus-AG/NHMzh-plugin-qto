@@ -1,14 +1,9 @@
-import React from "react";
-import {
-  Typography,
-  Badge,
-  Tooltip,
-  Chip,
-  FormControl,
-  Select,
-  MenuItem,
-} from "@mui/material";
+import React, { useEffect } from "react";
+import { Typography, Badge, Tooltip, Chip, Box } from "@mui/material";
 import InfoIcon from "@mui/icons-material/Info";
+import ClassificationFilter from "./ClassificationFilter";
+import BimObjectSearch from "./BimObjectSearch";
+import { IFCElement } from "../../types/types";
 
 interface ElementsHeaderProps {
   totalFilteredElements: number;
@@ -22,6 +17,8 @@ interface ElementsHeaderProps {
   }>;
   classificationFilter: string;
   setClassificationFilter: (value: string) => void;
+  elements?: IFCElement[]; // Use IFCElement type
+  onElementSelect?: (element: IFCElement | null) => void;
 }
 
 const ElementsHeader: React.FC<ElementsHeaderProps> = ({
@@ -32,38 +29,60 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
   uniqueClassifications,
   classificationFilter,
   setClassificationFilter,
+  elements = [],
+  onElementSelect = () => {},
 }) => {
-  return (
-    <div
-      className="flex items-center mb-3"
-      style={{ justifyContent: "space-between" }}
-    >
-      <div className="flex items-center">
-        <Typography variant="h5" className="mr-2">
-          IFC Elemente ({totalFilteredElements})
-        </Typography>
-        {targetIfcClasses && targetIfcClasses.length > 0 && (
-          <Tooltip
-            title={
-              <div>
-                <p>Nur folgende IFC-Klassen werden berücksichtigt:</p>
-                <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
-                  {targetIfcClasses.map((cls: string) => (
-                    <li key={cls}>{cls}</li>
-                  ))}
-                </ul>
-              </div>
-            }
-            arrow
-          >
-            <Badge color="info" variant="dot" sx={{ cursor: "pointer" }}>
-              <InfoIcon fontSize="small" color="action" />
-            </Badge>
-          </Tooltip>
-        )}
-      </div>
+  // Debug log when elements change
+  useEffect(() => {
+    console.log(`ElementsHeader: received ${elements?.length || 0} elements`);
+    if (elements?.length > 0) {
+      console.log("First element in ElementsHeader:", elements[0]);
 
-      <div className="flex items-center" style={{ gap: "16px" }}>
+      // Check if level property exists
+      const levelsExist = elements.some((elem) => elem.level);
+      console.log(`Level property exists in elements: ${levelsExist}`);
+
+      // Extract unique levels for diagnostics
+      if (levelsExist) {
+        const levels = [
+          ...new Set(elements.map((elem) => elem.level).filter(Boolean)),
+        ];
+        console.log(
+          `Available levels (${levels.length}):`,
+          levels.slice(0, 10)
+        );
+      }
+    }
+  }, [elements]);
+
+  return (
+    <div className="flex flex-col mb-3">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center">
+          <Typography variant="h5" className="mr-2">
+            IFC Elemente ({totalFilteredElements})
+          </Typography>
+          {targetIfcClasses && targetIfcClasses.length > 0 && (
+            <Tooltip
+              title={
+                <div>
+                  <p>Nur folgende IFC-Klassen werden berücksichtigt:</p>
+                  <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
+                    {targetIfcClasses.map((cls: string) => (
+                      <li key={cls}>{cls}</li>
+                    ))}
+                  </ul>
+                </div>
+              }
+              arrow
+            >
+              <Badge color="info" variant="dot" sx={{ cursor: "pointer" }}>
+                <InfoIcon fontSize="small" color="action" />
+              </Badge>
+            </Tooltip>
+          )}
+        </div>
+
         {editedElementsCount > 0 && (
           <Tooltip title="Änderungen zurücksetzen">
             <Chip
@@ -75,46 +94,41 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
             />
           </Tooltip>
         )}
+      </div>
+
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 2,
+          mb: 2,
+        }}
+      >
+        {/* Add a counter of available elements for search */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <BimObjectSearch
+            elements={elements}
+            onElementSelect={onElementSelect}
+            width={400}
+          />
+          <Chip
+            label={`${elements?.length || 0} Elemente`}
+            size="small"
+            color="default"
+            variant="outlined"
+          />
+        </Box>
 
         {uniqueClassifications.length > 0 && (
-          <div className="flex items-center">
-            <Typography variant="body2" className="mr-2">
-              Filter nach Klassifikation:
-            </Typography>
-            <FormControl size="small" sx={{ minWidth: 240 }}>
-              <Select
-                value={classificationFilter}
-                onChange={(e) =>
-                  setClassificationFilter(e.target.value as string)
-                }
-                displayEmpty
-              >
-                <MenuItem value="">
-                  <em>Alle anzeigen</em>
-                </MenuItem>
-                {uniqueClassifications.map((cls, index) => {
-                  const displayValue = cls.id
-                    ? `${cls.system} ${cls.id} - ${
-                        cls.name?.substring(0, 30) || ""
-                      }`
-                    : `${cls.system} ${cls.name?.substring(0, 40) || ""}`;
-                  const filterValue = cls.id
-                    ? `${cls.system}-${cls.id}`
-                    : `${cls.system}-${cls.name}`;
-                  return (
-                    <MenuItem
-                      key={`cls-${index}-${filterValue}`}
-                      value={filterValue}
-                    >
-                      {displayValue}
-                    </MenuItem>
-                  );
-                })}
-              </Select>
-            </FormControl>
-          </div>
+          <ClassificationFilter
+            uniqueClassifications={uniqueClassifications}
+            classificationFilter={classificationFilter}
+            setClassificationFilter={setClassificationFilter}
+          />
         )}
-      </div>
+      </Box>
     </div>
   );
 };

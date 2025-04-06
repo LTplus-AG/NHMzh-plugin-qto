@@ -50,6 +50,9 @@ const IfcElementsList = ({
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
   const [classificationFilter, setClassificationFilter] = useState<string>("");
+  const [selectedElement, setSelectedElement] = useState<IFCElement | null>(
+    null
+  );
 
   // Use only the EBKP groups hook, not the element editing hook
   const { ebkpGroups, uniqueClassifications, hasEbkpGroups } = useEbkpGroups(
@@ -84,6 +87,47 @@ const IfcElementsList = ({
       console.log("Available levels:", levelsFound);
     }
   }, [elements, ebkpGroups]);
+
+  // Handle element selection from search
+  const handleElementSelect = (element: IFCElement | null) => {
+    setSelectedElement(element);
+
+    if (element) {
+      console.log("Selected element:", element);
+
+      // Find the EBKP code for the selected element
+      const ebkpGroup = ebkpGroups.find((group) =>
+        group.elements.some((e) => e.id === element.id)
+      );
+
+      if (ebkpGroup) {
+        // Expand the EBKP group if not already expanded
+        if (!expandedEbkp.includes(ebkpGroup.code)) {
+          setExpandedEbkp((prev) => [...prev, ebkpGroup.code]);
+        }
+
+        // Expand the element if not already expanded
+        if (!expandedElements.includes(element.id)) {
+          setExpandedElements((prev) => [...prev, element.id]);
+        }
+
+        // Scroll to the element
+        setTimeout(() => {
+          const elementRow = document.getElementById(
+            `element-row-${element.id}`
+          );
+          if (elementRow) {
+            elementRow.scrollIntoView({ behavior: "smooth", block: "center" });
+            // Highlight the element briefly
+            elementRow.style.backgroundColor = "rgba(25, 118, 210, 0.1)";
+            setTimeout(() => {
+              elementRow.style.backgroundColor = "";
+            }, 2000);
+          }
+        }, 100);
+      }
+    }
+  };
 
   const toggleExpandEbkp = (code: string) => {
     setExpandedEbkp((prev) => {
@@ -157,6 +201,8 @@ const IfcElementsList = ({
         uniqueClassifications={uniqueClassifications}
         classificationFilter={classificationFilter}
         setClassificationFilter={setClassificationFilter}
+        elements={elements}
+        onElementSelect={handleElementSelect}
       />
 
       <TableContainer
