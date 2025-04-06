@@ -15,7 +15,7 @@ import { IFCElement } from "../types/types";
 import EbkpGroupRow from "./IfcElements/EbkpGroupRow";
 import ElementsHeader from "./IfcElements/ElementsHeader";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
-import { EditedArea } from "./IfcElements/types";
+import { EditedQuantity } from "./IfcElements/types";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -26,11 +26,12 @@ interface IfcElementsListProps {
   elements: IFCElement[];
   loading: boolean;
   error: string | null;
-  editedElements: Record<string, EditedArea>;
+  editedElements: Record<string, EditedQuantity>;
   editedElementsCount: number;
-  handleAreaChange: (
+  handleQuantityChange: (
     elementId: string,
-    originalArea: number | null | undefined,
+    quantityKey: "area" | "length",
+    originalValue: number | null | undefined,
     newValue: string
   ) => void;
   resetEdits: () => void;
@@ -43,7 +44,7 @@ const IfcElementsList = ({
   error,
   editedElements,
   editedElementsCount,
-  handleAreaChange,
+  handleQuantityChange,
   resetEdits,
   onEbkpStatusChange,
 }: IfcElementsListProps) => {
@@ -234,7 +235,7 @@ const IfcElementsList = ({
                 expandedElements={expandedElements}
                 toggleExpandElement={toggleExpandElement}
                 editedElements={editedElements}
-                handleAreaChange={handleAreaChange}
+                handleQuantityChange={handleQuantityChange}
               />
             ))}
 
@@ -253,3 +254,18 @@ const IfcElementsList = ({
 };
 
 export default IfcElementsList;
+
+export const ElementDetailHeader = () => (
+  <TableHead>
+    <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.04)" }}>
+      <TableCell width="50px" />
+      <TableCell>ID / GlobalID</TableCell>
+      <TableCell>Kategorie</TableCell>
+      <TableCell>Geschoss</TableCell>
+      <TableCell width="150px" align="center">
+        Menge
+      </TableCell>
+      <TableCell>Eigenschaften</TableCell>
+    </TableRow>
+  </TableHead>
+);

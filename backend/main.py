@@ -15,6 +15,8 @@ import sys
 from functools import lru_cache
 from qto_producer import QTOKafkaProducer, format_ifc_elements_for_qto, MongoDBHelper
 import re
+# Import the new configuration
+from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -99,14 +101,12 @@ class IFCElement(BaseModel):
     classification_id: Optional[str] = None
     classification_name: Optional[str] = None
     classification_system: Optional[str] = None
-    # Additional fields for QTO data
+    # Additional fields for QTO data including new quantities
     area: Optional[float] = None
+    volume: Optional[float] = None
+    length: Optional[float] = None
     original_area: Optional[float] = None
     category: Optional[str] = None
-    is_structural: Optional[bool] = None
-    is_external: Optional[bool] = None
-    ebkph: Optional[str] = None
-    materials: Optional[List[Dict[str, Any]]] = None
 
 class QTOResponse(BaseModel):
     """Response model for QTO operation"""
@@ -224,16 +224,11 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
     fractions = {}
     constituent_widths = {}
     
-    logger.debug(f"Computing fractions for material set type: {constituent_set.is_a()}")
-    
     # Handle IfcMaterialConstituentSet
     if constituent_set.is_a('IfcMaterialConstituentSet'):
         constituents = constituent_set.MaterialConstituents or []
         if not constituents:
-            logger.debug("No constituents found in IfcMaterialConstituentSet")
             return {}, {}
-        
-        logger.debug(f"Found {len(constituents)} constituents in IfcMaterialConstituentSet")
         
         # Collect all quantities associated with the elements
         quantities = []
@@ -266,16 +261,14 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
                     fraction = float(constituent.Fraction)
                     fractions[constituent] = fraction
                     has_explicit_fractions = True
-                    logger.debug(f"Using explicit fraction {fraction} for {constituent_name}")
                 except (ValueError, TypeError):
-                    logger.debug(f"Failed to convert fraction value for {constituent_name}")
+                    pass
         
         # If any explicit fractions were found, normalize and return them
         if has_explicit_fractions:
             total = sum(fractions.values())
             if total > 0:
                 fractions = {constituent: fraction / total for constituent, fraction in fractions.items()}
-                logger.debug(f"Normalized explicit fractions, total: {total}")
             
             # For constituents without explicit fractions, distribute remaining equally
             constituents_without_fractions = [c for c in constituents if c not in fractions]
@@ -284,7 +277,6 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
                 equal_fraction = remaining / len(constituents_without_fractions)
                 for constituent in constituents_without_fractions:
                     fractions[constituent] = equal_fraction
-                    logger.debug(f"Assigned remaining fraction {equal_fraction} to {constituent.Name}")
             
             # Set widths to 0 since we don't need them
             constituent_widths = {constituent: 0.0 for constituent in constituents}
@@ -308,10 +300,9 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
                         try:
                             raw_length_value = getattr(sub_q, 'LengthValue', 0.0)
                             width_mm = raw_length_value * unit_scale_to_mm
-                            logger.debug(f"Found width {width_mm}mm for {constituent_name} from complex quantity")
                             break
                         except (ValueError, TypeError):
-                            logger.debug(f"Failed to convert width value for {constituent_name}")
+                            pass
             
             # If no width found in complex quantities, try standard quantities
             if width_mm == 0.0:
@@ -321,7 +312,6 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
                             quantity_name = (quantity.Name or '').strip().lower()
                             if quantity_name == constituent_name or constituent_name in quantity_name:
                                 width_mm = float(quantity.LengthValue) * unit_scale_to_mm
-                                logger.debug(f"Found width {width_mm}mm for {constituent_name} from standard quantity")
                                 break
                         except (ValueError, TypeError):
                             continue
@@ -334,11 +324,9 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
             for constituent, width_mm in constituent_widths.items():
                 if constituent not in fractions:  # Skip if fraction already set
                     fractions[constituent] = width_mm / total_width_mm
-                    logger.debug(f"Calculated fraction {width_mm / total_width_mm} based on width for {getattr(constituent, 'Name', 'Unnamed')}")
         
         # If no width info available, distribute equally
         if not fractions or sum(fractions.values()) < 0.0001:
-            logger.debug(f"No valid width info found, distributing equally among {len(constituents)} constituents")
             fractions = {constituent: 1.0 / len(constituents) for constituent in constituents}
     
     # Handle IfcMaterialLayerSet or IfcMaterialLayerSetUsage
@@ -346,13 +334,10 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
         layer_set = constituent_set if constituent_set.is_a('IfcMaterialLayerSet') else constituent_set.ForLayerSet
         
         if not layer_set or not layer_set.MaterialLayers:
-            logger.debug("No layers found in layer set")
             return {}, {}
         
         total_thickness = 0.0
         layers = layer_set.MaterialLayers
-        
-        logger.debug(f"Found {len(layers)} layers in material layer set")
         
         # Find any layers with non-zero thickness
         has_nonzero_thickness = False
@@ -369,16 +354,10 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
         # If all layers have zero thickness, assign default thickness of 1.0
         default_thickness = 1.0
         if not has_nonzero_thickness:
-            logger.debug("All layers have zero thickness, using default equal distribution")
             for layer in layers:
                 constituent_widths[layer] = default_thickness
                 total_thickness += default_thickness
                 
-                # Get material name for better logging
-                material_name = "Unknown"
-                if hasattr(layer, 'Material') and layer.Material:
-                    material_name = layer.Material.Name
-                logger.debug(f"Assigned default thickness {default_thickness} to layer with material {material_name}")
         else:
             # Calculate total thickness from actual values
             for layer in layers:
@@ -386,12 +365,7 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
                     try:
                         thickness = float(layer.LayerThickness or 0) * unit_scale_to_mm
                         
-                        # Get material name for better logging
-                        material_name = "Unknown"
-                        if hasattr(layer, 'Material') and layer.Material:
-                            material_name = layer.Material.Name
-                            
-                        logger.debug(f"Layer material {material_name} has thickness {thickness}mm")
+                        logger.debug(f"Layer material {layer.Material.Name if hasattr(layer, 'Material') and layer.Material else 'Unknown'} has thickness {thickness}mm")
                         constituent_widths[layer] = thickness
                         total_thickness += thickness
                     except (ValueError, TypeError):
@@ -405,33 +379,15 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
             for layer in layers:
                 thickness = constituent_widths.get(layer, 0)
                 fraction = thickness / total_thickness
-                
-                # Get material name for better logging
-                material_name = "Unknown"
-                if hasattr(layer, 'Material') and layer.Material:
-                    material_name = layer.Material.Name
-                    
-                logger.debug(f"Layer material {material_name}: thickness={thickness}mm, fraction={fraction}")
                 fractions[layer] = fraction
         else:
             # Equal distribution if no thickness info
-            logger.debug(f"No valid thickness info found, distributing equally among {len(layers)} layers")
             fractions = {layer: 1.0 / len(layers) for layer in layers}
     
     # Normalize fractions to ensure sum is 1.0
     total = sum(fractions.values())
     if total > 0:
         fractions = {constituent: fraction / total for constituent, fraction in fractions.items()}
-        
-        # Log the final fractions for debugging
-        logger.debug("Final normalized fractions:")
-        for constituent, fraction in fractions.items():
-            name = "Unknown"
-            if hasattr(constituent, 'Material') and constituent.Material:
-                name = constituent.Material.Name
-            elif hasattr(constituent, 'Name'):
-                name = constituent.Name
-            logger.debug(f"  {name}: {fraction}")
     
     return fractions, constituent_widths
 
@@ -457,7 +413,6 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
     if not layers_string:
         return {}
     
-    logger.debug(f"Extracting materials from string: {layers_string}")
     material_volumes = {}
     
     # Split the string by pipe character
@@ -498,7 +453,6 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
                 material_volumes[name] = {
                     "fraction": _round_value(fraction, 5)
                 }
-        logger.debug(f"No valid thicknesses found, using equal distribution for {len(materials_with_thickness)} materials")
     else:
         # Calculate fractions based on thickness
         for name, thickness in materials_with_thickness:
@@ -509,7 +463,6 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
                 }
                 if thickness > 0:
                     material_volumes[name]["width"] = _round_value(thickness, 5)
-        logger.debug(f"Calculated fractions based on thickness for {len(materials_with_thickness)} materials")
     
     return material_volumes
 
@@ -711,7 +664,9 @@ def get_ifc_elements(model_id: str):
                         "classification_id": None,
                         "classification_name": None,
                         "classification_system": None,
-                        "area": None  # Initialize area as None
+                        "area": None,  # Initialize quantities as None
+                        "volume": None,
+                        "length": None
                     }
                     
                     # Add building storey information
@@ -746,6 +701,62 @@ def get_ifc_elements(model_id: str):
                                 # Handle quantity sets
                                 elif property_set.is_a('IfcElementQuantity'):
                                     qset_name = property_set.Name or "QuantitySet"
+                                    element_type = element_data["type"]
+
+                                    # --- Find Target Quantities ---
+                                    found_area = False
+                                    found_length = False
+                                    
+                                    if element_type in TARGET_QUANTITIES:
+                                        target_config = TARGET_QUANTITIES[element_type]
+                                        target_qset_name = target_config.get("qset")
+                                        target_area_name = target_config.get("area")
+                                        target_length_name = target_config.get("length")
+
+                                        # 1. Check if the current qset matches the target qset name from config
+                                        if qset_name == target_qset_name:
+                                            for quantity in property_set.Quantities:
+                                                # Extract area based on TARGET_QUANTITIES config
+                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
+                                                    try:
+                                                        element_data["area"] = float(quantity.AreaValue)
+                                                        logger.debug(f"Found target area '{target_area_name}' in '{qset_name}' with value {element_data['area']} for {element_type}")
+                                                        found_area = True
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' for {element_type}")
+                                                
+                                                # Extract length based on TARGET_QUANTITIES config
+                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
+                                                    try:
+                                                        element_data["length"] = float(quantity.LengthValue)
+                                                        logger.debug(f"Found target length '{target_length_name}' in '{qset_name}' with value {element_data['length']} for {element_type}")
+                                                        found_length = True
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' for {element_type}")
+                                                        
+                                        # 2. Fallback: Check if the current qset is exactly "BaseQuantities"
+                                        elif qset_name == "BaseQuantities" and (not found_area or not found_length):
+                                            for quantity in property_set.Quantities:
+                                                # Extract area based on TARGET_QUANTITIES config (if not already found)
+                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
+                                                    try:
+                                                        element_data["area"] = float(quantity.AreaValue)
+                                                        logger.debug(f"Found target area '{target_area_name}' in '{qset_name}' (fallback) with value {element_data['area']} for {element_type}")
+                                                        found_area = True
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
+                                                
+                                                # Extract length based on TARGET_QUANTITIES config (if not already found)
+                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
+                                                    try:
+                                                        raw_value = quantity.LengthValue
+                                                        element_data["length"] = float(raw_value)
+                                                        logger.debug(f"Found target length '{target_length_name}' in '{qset_name}' (fallback) with value {element_data['length']} for {element_type}")
+                                                        found_length = True
+                                                    except (ValueError, TypeError) as e:
+                                                        logger.warning(f"Could not convert length value '{quantity.Name}' ('{raw_value}') in '{qset_name}' (fallback) for {element_type}. Error: {e}")
+
+                                    # --- Process All Quantities for Properties (Independent of target finding) ---
                                     for quantity in property_set.Quantities:
                                         if quantity.is_a('IfcQuantityLength'):
                                             prop_name = f"{qset_name}.{quantity.Name}"
@@ -756,26 +767,12 @@ def get_ifc_elements(model_id: str):
                                             prop_name = f"{qset_name}.{quantity.Name}"
                                             prop_value = f"{quantity.AreaValue:.3f}"
                                             element_data["properties"][prop_name] = prop_value
-                                            
-                                            # Also extract area values to the top level for easier access
-                                            if element_data["area"] is None:
-                                                # Prioritize NetArea, NetSideArea or GrossArea if available
-                                                area_name = quantity.Name.lower() if quantity.Name else ""
-                                                if (
-                                                    "netarea" in area_name.replace(" ", "") or 
-                                                    "netsidearea" in area_name.replace(" ", "") or
-                                                    "area" in area_name.replace(" ", "")
-                                                ):
-                                                    try:
-                                                        element_data["area"] = float(quantity.AreaValue)
-                                                    except (ValueError, TypeError):
-                                                        pass
+                                            # NO FALLBACK FOR AREA assignment here - Only use TARGET_QUANTITIES logic above
                                         
-                                        elif quantity.is_a('IfcQuantityVolume'):
+                                        elif quantity.is_a('IfcQuantityVolume'): # Keep volume processing as is
                                             prop_name = f"{qset_name}.{quantity.Name}"
                                             prop_value = f"{quantity.VolumeValue:.3f}"
                                             element_data["properties"][prop_name] = prop_value
-                                        
                     
                     # Extract classification information
                     if hasattr(element, "HasAssociations"):
@@ -818,19 +815,21 @@ def get_ifc_elements(model_id: str):
                                 break
                     
                     # Get volume information for the element
-                    element_volume = get_volume_from_properties(element)
-                    if element_volume:
-                        element_data["volume"] = element_volume
+                    element_volume_dict = get_volume_from_properties(element)
+                    element_volume_value = None # Initialize volume value
+                    if element_volume_dict:
+                        # Prefer net volume, fall back to gross volume
+                        element_volume_value = element_volume_dict.get("net")
+                        if element_volume_value is None:
+                            element_volume_value = element_volume_dict.get("gross")
+                    
+                    # Assign the extracted float value to element_data["volume"]
+                    element_data["volume"] = element_volume_value
                     
                     # Calculate material volumes
                     element_data["material_volumes"] = {}
                     
-                    # Get element volume for calculations (prefer net over gross)
-                    element_volume_value = None
-                    if element_volume:
-                        element_volume_value = element_volume.get("net") or element_volume.get("gross")
-                                        
-                    # Process material associations
+                    # Process material associations (uses element_volume_value which is now correctly a float or None)
                     if hasattr(element, "HasAssociations"):
                         for association in element.HasAssociations:
                             if association.is_a("IfcRelAssociatesMaterial"):
@@ -941,9 +940,11 @@ def get_ifc_elements(model_id: str):
                     if not element_data["material_volumes"]:
                         element_data.pop("material_volumes")
                                             
-                    # Set area to 0 if no area was found, to avoid null values
+                    # Set area and length to 0 if they weren't found
                     if element_data["area"] is None:
                         element_data["area"] = 0
+                    if element_data["length"] is None:
+                        element_data["length"] = 0
                     
                     elements.append(IFCElement(**element_data))
                 except Exception as prop_error:
@@ -1123,7 +1124,24 @@ async def send_qto(
             logger.info("Using original elements from IFC model")
 
         # Convert elements to dictionaries
-        element_dicts = [element.model_dump() for element in elements]
+        element_dicts = []
+        for element in elements:
+            # --- Add logging BEFORE model_dump() for IfcBeam ---
+            if element.type == "IfcBeam":
+                logger.info(f"--- QTO Endpoint Debug BEFORE dump (Beam ID: {element.id}) ---")
+                logger.info(f"Pydantic model length: {getattr(element, 'length', 'Not Set')}")
+                logger.info(f"--- End QTO Endpoint Debug BEFORE dump ---")
+                
+            element_dict = element.model_dump()
+            
+            # --- Add logging AFTER model_dump() for IfcBeam ---
+            if element.type == "IfcBeam":
+                logger.info(f"--- QTO Endpoint Debug AFTER dump (Beam ID: {element.id}) ---")
+                logger.info(f"Dict keys after dump: {list(element_dict.keys())}")
+                logger.info(f"Dict length value after dump: {element_dict.get('length', 'Not Found')}")
+                logger.info(f"--- End QTO Endpoint Debug AFTER dump ---")
+                
+            element_dicts.append(element_dict)
         
         # Get project info
         filename = ifc_models[model_id]["filename"]
@@ -1203,33 +1221,26 @@ def get_qto_elements(model_id: str):
         raise HTTPException(status_code=404, detail="IFC model not found")
     
     try:
-        # Get elements using existing function that already applies filtering
         elements = get_ifc_elements(model_id)
         
-        # Log area values to diagnose issues
-        elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
-        logger.info(f"Found {len(elements_with_area)}/{len(elements)} elements with non-zero area values")
-        if elements_with_area:
-            for i, element in enumerate(elements_with_area[:3]):  # Log first 3 elements with area
-                logger.info(f"Element {element.id} has area: {element.area}, type: {type(element.area).__name__}")
-        
-        # Log material volumes information
-        elements_with_materials = [e for e in elements if hasattr(e, "material_volumes") and e.material_volumes]
-        logger.info(f"Found {len(elements_with_materials)}/{len(elements)} elements with material volumes")
-        if elements_with_materials:
-            for i, element in enumerate(elements_with_materials[:3]):  # Log first 3 elements with materials
-                logger.info(f"Element {element.id} has {len(element.material_volumes)} materials")
-                # Log first material as sample
-                if element.material_volumes:
-                    first_material = list(element.material_volumes.items())[0] if element.material_volumes else None
-                    logger.info(f"Sample material: {first_material}")
-        
-        # Convert IFCElement model instances to dictionaries
-        element_dicts = [element.model_dump() for element in elements]
-        
-        # Log area values after conversion to dictionaries
-        dicts_with_area = [e for e in element_dicts if "area" in e and e["area"] and e["area"] > 0]
-        logger.info(f"After conversion, found {len(dicts_with_area)}/{len(element_dicts)} dictionaries with non-zero area values")
+        element_dicts = []
+        for element in elements:
+            # --- Add logging BEFORE model_dump() for IfcBeam ---
+            if element.type == "IfcBeam":
+                logger.info(f"--- QTO Endpoint Debug BEFORE dump (Beam ID: {element.id}) ---")
+                logger.info(f"Pydantic model length: {getattr(element, 'length', 'Not Set')}")
+                logger.info(f"--- End QTO Endpoint Debug BEFORE dump ---")
+                
+            element_dict = element.model_dump()
+            
+            # --- Add logging AFTER model_dump() for IfcBeam ---
+            if element.type == "IfcBeam":
+                logger.info(f"--- QTO Endpoint Debug AFTER dump (Beam ID: {element.id}) ---")
+                logger.info(f"Dict keys after dump: {list(element_dict.keys())}")
+                logger.info(f"Dict length value after dump: {element_dict.get('length', 'Not Found')}")
+                logger.info(f"--- End QTO Endpoint Debug AFTER dump ---")
+                
+            element_dicts.append(element_dict)
         
         # Get project info
         filename = ifc_models[model_id]["filename"]
@@ -1243,14 +1254,6 @@ def get_qto_elements(model_id: str):
             elements=element_dicts
         )
         
-        # Log area values in formatted QTO data
-        qto_elements_with_area = [e for e in qto_data["elements"] if "area" in e and e["area"] and e["area"] > 0]
-        logger.info(f"After QTO formatting, found {len(qto_elements_with_area)}/{len(qto_data['elements'])} elements with non-zero area values")
-        if qto_elements_with_area:
-            for i, element in enumerate(qto_elements_with_area[:3]):  # Log first 3 elements with area
-                logger.info(f"QTO element {element['id']} has area: {element['area']}")
-        
-        # Return just the elements part of the QTO data
         return qto_data["elements"]
     
     except Exception as e:

@@ -1,26 +1,29 @@
 import { useState } from "react";
-import { EditedArea } from "../types";
+import { EditedQuantity } from "../types";
 
 export const useElementEditing = () => {
   const [editedElements, setEditedElements] = useState<
-    Record<string, EditedArea>
+    Record<string, EditedQuantity>
   >({});
 
   // Get count of edited elements
   const editedElementsCount = Object.keys(editedElements).length;
 
-  // Handle area edit
-  const handleAreaChange = (
+  // Handle quantity changes (works for both area and length)
+  const handleQuantityChange = (
     elementId: string,
-    originalArea: number | null | undefined,
+    quantityKey: "area" | "length",
+    originalValue: number | null | undefined,
     newValue: string
   ) => {
-    const newArea = newValue === "" ? null : parseFloat(newValue);
-    console.log(`Editing element ${elementId}: ${originalArea} -> ${newArea}`);
+    const numericValue = newValue === "" ? null : parseFloat(newValue);
+    console.log(
+      `Editing element ${elementId} ${quantityKey}: ${originalValue} -> ${numericValue}`
+    );
 
     setEditedElements((prev) => {
       // If the new value is the same as original, remove from edited elements
-      if (newArea === originalArea) {
+      if (numericValue === originalValue) {
         const newEdited = { ...prev };
         delete newEdited[elementId];
         console.log(
@@ -29,16 +32,39 @@ export const useElementEditing = () => {
         return newEdited;
       }
 
-      // Otherwise update with new value
-      console.log(`Updated element ${elementId} with new area: ${newArea}`);
+      // Otherwise update with new value based on quantity key
+      const updatedElement: EditedQuantity = {
+        ...prev[elementId], // Keep other edited properties if any
+      };
+
+      // Set the appropriate fields based on quantity type
+      if (quantityKey === "area") {
+        updatedElement.originalArea = originalValue;
+        updatedElement.newArea = numericValue;
+      } else if (quantityKey === "length") {
+        updatedElement.originalLength = originalValue;
+        updatedElement.newLength = numericValue;
+      }
+
+      console.log(
+        `Updated element ${elementId} with new ${quantityKey}: ${numericValue}`
+      );
+
       return {
         ...prev,
-        [elementId]: {
-          originalArea,
-          newArea,
-        },
+        [elementId]: updatedElement,
       };
     });
+  };
+
+  // For backward compatibility - old method that only handles area
+  const handleAreaChange = (
+    elementId: string,
+    originalArea: number | null | undefined,
+    newValue: string
+  ) => {
+    // Call the new method with 'area' as the quantityKey
+    handleQuantityChange(elementId, "area", originalArea, newValue);
   };
 
   // Reset all edits
@@ -49,7 +75,8 @@ export const useElementEditing = () => {
   return {
     editedElements,
     editedElementsCount,
-    handleAreaChange,
+    handleQuantityChange, // Expose the new method
+    handleAreaChange, // Keep the old method for compatibility
     resetEdits,
   };
 };

@@ -31,9 +31,10 @@ interface EbkpGroupRowProps {
   expandedElements: string[];
   toggleExpandElement: (id: string) => void;
   editedElements: Record<string, EditedArea>;
-  handleAreaChange: (
+  handleQuantityChange: (
     elementId: string,
-    originalArea: number | null | undefined,
+    quantityKey: "area" | "length",
+    originalValue: number | null | undefined,
     newValue: string
   ) => void;
 }
@@ -45,7 +46,7 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
   expandedElements,
   toggleExpandElement,
   editedElements,
-  handleAreaChange,
+  handleQuantityChange,
 }) => {
   // Check if any element in the group has been edited
   const hasEditedElements = group.elements.some((el) => editedElements[el.id]);
@@ -114,7 +115,9 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                       <TableCell>ID</TableCell>
                       <TableCell>Kategorie</TableCell>
                       <TableCell>Ebene</TableCell>
-                      <TableCell>Fläche (m²)</TableCell>
+                      <TableCell width="150px" align="center">
+                        Menge
+                      </TableCell>
                       <TableCell>Eigenschaften</TableCell>
                     </TableRow>
                   </TableHead>
@@ -130,7 +133,7 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                         isExpanded={expandedElements.includes(element.id)}
                         toggleExpand={toggleExpandElement}
                         editedElement={editedElements[element.id]}
-                        handleAreaChange={handleAreaChange}
+                        handleQuantityChange={handleQuantityChange}
                       />
                     ))}
                   </TableBody>

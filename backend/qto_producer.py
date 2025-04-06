@@ -404,36 +404,54 @@ class QTOKafkaProducer:
         elements_to_save = []
         for element in elements:
             try:
-                # Get area and original_area values
-                area = element.get("area", 0)
+                # Keep this IfcBeam debug log
+                if element.get("type") == "IfcBeam":
+                    logger.info(f"--- QTO Formatter Debug (Beam ID: {element.get('id')}) ---")
+                    logger.info(f"Incoming element dict keys: {list(element.keys())}")
+                    logger.info(f"Incoming length value: {element.get('length')}")
+                    logger.info(f"--- End QTO Formatter Debug ---")
+                # --- End Debug ---
+
+                # Get element type
+                element_type = element.get("type", "").lower()
+                
+                # Check if element is structural based on type
+                is_structural = any(s in element_type for s in ["wall", "column", "beam", "slab", "footing"])
+                
+                # Check if element is external based on common property
+                is_external = False
+                if "properties" in element:
+                    # Check for IsExternal property (variations of capitalization)
+                    for prop_name, prop_value in element["properties"].items():
+                        if prop_name.lower() == "isexternal" and str(prop_value).lower() in ["true", "1", "yes"]:
+                            is_external = True
+                            break
+                
+                # Get the original area - may be stored directly or in properties
                 original_area = element.get("original_area")
+                if original_area is None and "properties" in element and "original_area" in element["properties"]:
+                    original_area = element["properties"]["original_area"]
                 
-                # If original_area is None, try to get it from properties
-                if original_area is None and "properties" in element:
-                    original_area = element["properties"].get("original_area")
+                # Get area value
+                area_value = element.get("area", 0)
                 
-                # If still None, use the current area as original_area
-                if original_area is None:
-                    original_area = area
-                    logger.info(f"Using current area {area} as original_area for element {element.get('id')}")
-                
-                # Format element data for saving
-                element_to_save = {
+                # Format element for QTO
+                formatted_element = {
                     "project_id": project_id,
-                    "element_type": element.get("category"),
-                    "quantity": area,
+                    "element_type": element.get("type", "Unknown"),
+                    "quantity": area_value,
                     "original_area": original_area,
                     "properties": {
                         "level": element.get("level"),
-                        "is_structural": element.get("is_structural"),
-                        "is_external": element.get("is_external"),
-                        "ebkph": element.get("ebkph"),
+                        "is_structural": is_structural,
+                        "is_external": is_external,
+                        "ebkph": element.get("classification_id", ""),
                         "classification": element.get("classification", {})
                     },
                     "materials": element.get("materials", []),
                     "status": "active"
                 }
-                elements_to_save.append(element_to_save)
+                elements_to_save.append(formatted_element)
             except Exception as e:
                 logger.error(f"Error formatting element for saving: {e}")
         
@@ -521,9 +539,14 @@ def format_ifc_elements_for_qto(project_name: str,
     }
     
     for element in elements:
-        # Log raw element data to diagnose issue
-        logger.info(f"Processing element {element.get('id')}: raw area = {element.get('area')}, raw original_area = {element.get('original_area')}")
-        
+        # Keep this IfcBeam debug log
+        if element.get("type") == "IfcBeam":
+            logger.info(f"--- QTO Formatter Debug (Beam ID: {element.get('id')}) ---")
+            logger.info(f"Incoming element dict keys: {list(element.keys())}")
+            logger.info(f"Incoming length value: {element.get('length')}")
+            logger.info(f"--- End QTO Formatter Debug ---")
+        # --- End Debug ---
+
         # Get element type
         element_type = element.get("type", "").lower()
         
@@ -543,14 +566,17 @@ def format_ifc_elements_for_qto(project_name: str,
         original_area = element.get("original_area")
         if original_area is None and "properties" in element and "original_area" in element["properties"]:
             original_area = element["properties"]["original_area"]
-            logger.info(f"Found original_area in properties: {original_area}")
+        
+        # Get area value
+        area_value = element.get("area", 0)
         
         # Format element for QTO
         formatted_element = {
             "id": element.get("id", ""),
             "category": element.get("type", "Unknown"),
             "level": element.get("level", ""),
-            "area": element.get("area", 0),  # Get area directly from top-level property
+            "area": area_value,  # Area extracted in main.py based on TARGET_QUANTITIES
+            "length": element.get("length", 0),  # Include length from TARGET_QUANTITIES
             "original_area": original_area,  # Include original_area in output
             "is_structural": is_structural,
             "is_external": is_external,
@@ -563,45 +589,15 @@ def format_ifc_elements_for_qto(project_name: str,
             }
         }
         
-        # Log the area value to diagnose issues
-        area_value = formatted_element["area"]
-        if area_value != 0:
-            logger.info(f"Non-zero area found for element {formatted_element['id']}: {area_value}")
-        
         # Ensure area value is numeric (in case it was stored as string)
-        if isinstance(area_value, str):
+        if isinstance(formatted_element["area"], str):
             try:
-                formatted_element["area"] = float(area_value)
+                formatted_element["area"] = float(formatted_element["area"])
             except (ValueError, TypeError):
                 formatted_element["area"] = 0
         
-        # If area is still None or null, try to get it from properties
-        if not formatted_element["area"]:
-            # Look for area in properties
-            if "properties" in element:
-                props = element.get("properties", {})
-                for prop_name, prop_value in props.items():
-                    if "area" in prop_name.lower():
-                        try:
-                            if isinstance(prop_value, str):
-                                # Remove any units and convert to float
-                                clean_value = prop_value.replace("m²", "").replace("m2", "").strip()
-                                area_val = float(clean_value)
-                                formatted_element["area"] = area_val
-                                logger.info(f"Extracted area {area_val} from property {prop_name} for element {formatted_element['id']}")
-                                break
-                            elif isinstance(prop_value, (int, float)):
-                                formatted_element["area"] = float(prop_value)
-                                logger.info(f"Using numeric area {prop_value} from property {prop_name} for element {formatted_element['id']}")
-                                break
-                        except (ValueError, TypeError):
-                            pass
-        
         # Extract materials 
         if "material_volumes" in element and element["material_volumes"]:
-            # Log the materials found in the element
-            logger.info(f"Materials found for element {element.get('id')}: {len(element['material_volumes'])} materials")
-            
             for material_name, material_data in element["material_volumes"].items():
                 material_entry = {
                     "name": material_name,
@@ -620,8 +616,6 @@ def format_ifc_elements_for_qto(project_name: str,
         
         # If no materials were found from material_volumes, check for materials array
         if not formatted_element["materials"] and "materials" in element and element["materials"]:
-            # This handles the case where materials come directly as an array
-            logger.info(f"Using direct materials array for element {element.get('id')}: {len(element['materials'])} materials")
             formatted_element["materials"] = element["materials"]
         
         qto_data["elements"].append(formatted_element)

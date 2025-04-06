@@ -33,7 +33,7 @@ const MainPage = () => {
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
 
   // IFC elements state
-  const [ifcElements, setIfcElements] = useState<IFCElement[]>([]);
+  const [ifcElements, setIfcElements] = useState<any[]>([]);
   const [ifcLoading, setIfcLoading] = useState(false);
   const [ifcError, setIfcError] = useState<string | null>(null);
 
@@ -54,8 +54,13 @@ const MainPage = () => {
   const [previewDialogOpen, setPreviewDialogOpen] = useState<boolean>(false);
 
   // Use the element editing hook at the MainPage level so state is shared
-  const { editedElements, editedElementsCount, handleAreaChange, resetEdits } =
-    useElementEditing();
+  const {
+    editedElements,
+    editedElementsCount,
+    handleQuantityChange,
+    handleAreaChange,
+    resetEdits,
+  } = useElementEditing();
 
   // Add state to track if EBKP groups exist
   const [hasEbkpGroups, setHasEbkpGroups] = useState<boolean>(true); // Assume true initially
@@ -312,6 +317,7 @@ const MainPage = () => {
           category: string;
           level: string;
           area: number;
+          length?: number;
           is_structural: boolean;
           is_external: boolean;
           ebkph: string;
@@ -388,7 +394,7 @@ const MainPage = () => {
 
           return {
             id: el.id,
-            global_id: el.id, // Use id as global_id for compatibility
+            global_id: el.id,
             type: el.category,
             name: el.category,
             description: null,
@@ -401,6 +407,7 @@ const MainPage = () => {
             category: el.category,
             level: el.level,
             area: el.area,
+            length: el.length,
             is_structural: el.is_structural,
             is_external: el.is_external,
             ebkph: el.ebkph,
@@ -446,7 +453,7 @@ const MainPage = () => {
           }
         }
 
-        setIfcElements(mappedElements);
+        setIfcElements(mappedElements as any);
         setIfcLoading(false);
         return;
       } catch (qtoError) {
@@ -901,7 +908,7 @@ const MainPage = () => {
               error={ifcError}
               editedElements={editedElements}
               editedElementsCount={editedElementsCount}
-              handleAreaChange={handleAreaChange}
+              handleQuantityChange={handleQuantityChange}
               resetEdits={resetEdits}
               // Pass callback to update EBKP status
               onEbkpStatusChange={setHasEbkpGroups}

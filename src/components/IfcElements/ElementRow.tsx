@@ -14,7 +14,30 @@ import {
 import React from "react";
 import { IFCElement } from "../../types/types";
 import MaterialsTable from "./MaterialsTable";
-import { EditedArea } from "./types";
+import { EditedQuantity } from "./types";
+
+// Simple configuration based on TARGET_QUANTITIES from Python
+// Maps IFC type to its primary quantity key and unit
+const quantityConfig: {
+  [key: string]: { key: "area" | "length"; unit: string };
+} = {
+  IfcWall: { key: "area", unit: "m²" },
+  IfcWallStandardCase: { key: "area", unit: "m²" },
+  IfcSlab: { key: "area", unit: "m²" },
+  IfcCovering: { key: "area", unit: "m²" },
+  IfcRoof: { key: "area", unit: "m²" },
+  IfcPlate: { key: "area", unit: "m²" },
+  IfcCurtainWall: { key: "area", unit: "m²" },
+  IfcWindow: { key: "area", unit: "m²" },
+  IfcDoor: { key: "area", unit: "m²" },
+  IfcBeam: { key: "length", unit: "m" },
+  IfcBeamStandardCase: { key: "length", unit: "m" },
+  IfcColumn: { key: "length", unit: "m" },
+  IfcColumnStandardCase: { key: "length", unit: "m" },
+  IfcRailing: { key: "length", unit: "m" },
+  IfcReinforcingBar: { key: "length", unit: "m" },
+  // Add other types as needed, default to area if not specified
+};
 
 interface ElementRowProps {
   element: IFCElement;
@@ -22,10 +45,11 @@ interface ElementRowProps {
   elementIndex: number;
   isExpanded: boolean;
   toggleExpand: (id: string) => void;
-  editedElement?: EditedArea;
-  handleAreaChange: (
+  editedElement?: EditedQuantity; // Updated to use EditedQuantity type
+  handleQuantityChange: (
     elementId: string,
-    originalArea: number | null | undefined,
+    quantityKey: "area" | "length", // Identify which quantity is changing
+    originalValue: number | null | undefined,
     newValue: string
   ) => void;
 }
@@ -37,7 +61,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
   isExpanded,
   toggleExpand,
   editedElement,
-  handleAreaChange,
+  handleQuantityChange,
 }) => {
   const category = element.category || element.type;
   const level = element.level || "unbekannt";
@@ -46,31 +70,66 @@ const ElementRow: React.FC<ElementRowProps> = ({
     8
   )}`;
 
-  // Check if this element has been edited
-  const isEdited = editedElement !== undefined;
-  const editedArea = isEdited ? editedElement.newArea : null;
+  // Determine the primary quantity key and unit based on IFC type
+  const config = quantityConfig[element.type] || { key: "area", unit: "m²" }; // Default to area
+  const primaryQuantityKey = config.key;
+  const unit = config.unit;
 
-  // Debug original vs edited area values
+  // --- Add Debug Logging ---
+  if (element.type.toLowerCase().includes("ifcbeam")) {
+    console.log(`ElementRow Debug (Beam ID: ${element.id}):`);
+    console.log(`  Element Type: ${element.type}`);
+    console.log(`  Config Key: ${primaryQuantityKey}`);
+    console.log(`  Unit: ${unit}`);
+    console.log(
+      `  Original Quantity (${primaryQuantityKey}):`,
+      element[primaryQuantityKey]
+    );
+  }
+  // --- End Debug Logging ---
+
+  // Get the quantity value from the element data
+  const originalQuantity = element[primaryQuantityKey];
+
+  // Check if this element has been edited (focusing on the primary quantity)
+  const isEdited = editedElement !== undefined;
+
+  // Get edited and original values based on the quantity key (area or length)
+  const editedQuantityValue = isEdited
+    ? primaryQuantityKey === "area"
+      ? editedElement.newArea
+      : editedElement.newLength
+    : null;
+
+  const originalQuantityValue = isEdited
+    ? primaryQuantityKey === "area"
+      ? editedElement.originalArea
+      : editedElement.originalLength
+    : originalQuantity;
+
+  // Debug original vs edited values
   if (isEdited) {
     console.log(
-      `Element ${element.id} edited: original=${editedElement.originalArea}, new=${editedElement.newArea}, current=${element.area}`
+      `Element ${element.id} (${primaryQuantityKey}) edited: original=${originalQuantityValue}, new=${editedQuantityValue}, current=${originalQuantity}`
     );
   }
 
-  // Format decimal number to display with 3 decimal places
+  // Format decimal number - don't show trailing zeros
   const formatNumber = (num: number | null | undefined) => {
     if (num === null || num === undefined) return "-";
-    return num.toFixed(3);
+
+    // Convert to string with 3 decimal places first
+    const formatted = num.toFixed(3);
+
+    // Remove trailing zeros and decimal point if needed
+    return formatted.replace(/\.?0+$/, "");
   };
 
-  // Format value for display in the TextField while preserving the actual value
+  // Format value for display in the TextField
   const getDisplayValue = () => {
-    if (isEdited) {
-      return editedArea === null ? "" : formatNumber(editedArea);
-    } else {
-      if (element.area === null || element.area === undefined) return "";
-      return formatNumber(element.area);
-    }
+    const valueToFormat = isEdited ? editedQuantityValue : originalQuantity;
+    if (valueToFormat === null || valueToFormat === undefined) return "";
+    return formatNumber(valueToFormat);
   };
 
   return (
@@ -112,6 +171,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
         </TableCell>
         <TableCell>{category}</TableCell>
         <TableCell>{level}</TableCell>
+        {/* Quantity Cell */}
         <TableCell
           sx={{
             position: "relative",
@@ -121,45 +181,55 @@ const ElementRow: React.FC<ElementRowProps> = ({
             }),
           }}
         >
-          <TextField
-            variant="standard"
-            size="small"
-            type="number"
-            inputProps={{
-              step: "0.001",
-              style: { textAlign: "center" },
-            }}
-            // Format display to 3 decimal places but keep the actual value for onChange
-            value={getDisplayValue()}
-            onChange={(e) =>
-              handleAreaChange(element.id, element.area, e.target.value)
-            }
-            // Add onFocus handler to select all text for easy editing
-            onFocus={(e) => e.target.select()}
-            onClick={(e) => e.stopPropagation()}
-            sx={{
-              width: "100%",
-              "& .MuiInput-root": {
-                "&:before, &:after": {
-                  borderBottom: isEdited ? "2px solid orange" : undefined,
+          <Box sx={{ display: "flex", alignItems: "center" }}>
+            <TextField
+              variant="standard"
+              size="small"
+              type="number"
+              inputProps={{
+                step: "0.001",
+                style: { textAlign: "right" }, // Align text right
+              }}
+              value={getDisplayValue()} // Display formatted value
+              onChange={(e) =>
+                handleQuantityChange(
+                  element.id,
+                  primaryQuantityKey,
+                  originalQuantityValue, // Pass the determined original value
+                  e.target.value
+                )
+              }
+              onFocus={(e) => e.target.select()}
+              onClick={(e) => e.stopPropagation()}
+              sx={{
+                flexGrow: 1, // Take available space
+                mr: 1, // Margin right for spacing
+                "& .MuiInput-root": {
+                  "&:before, &:after": {
+                    borderBottom: isEdited ? "2px solid orange" : undefined,
+                  },
                 },
-              },
-            }}
-          />
+              }}
+            />
+            <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
+              {unit}
+            </Typography>
+          </Box>
           {isEdited && (
             <Typography
               variant="caption"
               sx={{
                 display: "block",
                 color: "text.secondary",
-                textAlign: "center",
+                textAlign: "right", // Align original value text right
                 fontSize: "0.7rem",
               }}
             >
-              (Original: {formatNumber(editedElement.originalArea)})
+              (Original: {formatNumber(originalQuantityValue)} {unit})
             </Typography>
           )}
         </TableCell>
+        {/* End Quantity Cell */}
         <TableCell>
           {element.is_structural && (
             <Chip

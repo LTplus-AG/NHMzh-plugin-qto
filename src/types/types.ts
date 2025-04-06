@@ -18,36 +18,32 @@ export interface IFCElement {
   global_id: string;
   type: string;
   name: string;
-  description?: string | null;
-  properties: Record<string, any>;
-  material_volumes?: Record<
-    string,
-    {
-      fraction?: number;
-      volume?: number;
-      width?: number;
-    }
-  > | null;
-  volume?: {
-    net: number | null;
-    gross: number | null;
-  };
-  level?: string | null;
-  classification_id?: string | null;
-  classification_name?: string | null;
-  classification_system?: string | null;
-  // Additional properties for QTO formatted elements
-  area?: number | null;
+  description?: string;
+  properties: { [key: string]: any };
+  material_volumes?: { [key: string]: { [key: string]: any } };
+  level?: string;
+  classification_id?: string;
+  classification_name?: string;
+  classification_system?: string;
+  area?: number;
+  volume?: number;
+  length?: number;
+  original_area?: number;
   category?: string;
   is_structural?: boolean;
   is_external?: boolean;
   ebkph?: string;
   materials?: Array<{
     name: string;
-    volume?: number;
     unit?: string;
+    volume?: number;
     fraction?: number;
   }>;
+  classification?: {
+    id?: string;
+    name?: string;
+    system?: string;
+  };
 }
 
 export interface EBKPItem {
