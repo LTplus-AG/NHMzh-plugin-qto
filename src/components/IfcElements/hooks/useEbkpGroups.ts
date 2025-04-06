@@ -48,10 +48,6 @@ export const useEbkpGroups = (
         el.classification_system === "EBKP"
     );
 
-    console.log(
-      `Filtered to ${elementsWithValidClassification.length} elements with complete EBKP classification data`
-    );
-
     // Then apply any user-selected filter
     const filteredElements = !classificationFilter
       ? elementsWithValidClassification

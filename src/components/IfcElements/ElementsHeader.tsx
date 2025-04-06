@@ -32,28 +32,6 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
   elements = [],
   onElementSelect = () => {},
 }) => {
-  // Debug log when elements change
-  useEffect(() => {
-    console.log(`ElementsHeader: received ${elements?.length || 0} elements`);
-    if (elements?.length > 0) {
-      console.log("First element in ElementsHeader:", elements[0]);
-
-      // Check if level property exists
-      const levelsExist = elements.some((elem) => elem.level);
-      console.log(`Level property exists in elements: ${levelsExist}`);
-
-      // Extract unique levels for diagnostics
-      if (levelsExist) {
-        const levels = [
-          ...new Set(elements.map((elem) => elem.level).filter(Boolean)),
-        ];
-        console.log(
-          `Available levels (${levels.length}):`,
-          levels.slice(0, 10)
-        );
-      }
-    }
-  }, [elements]);
 
   return (
     <div className="flex flex-col mb-3">

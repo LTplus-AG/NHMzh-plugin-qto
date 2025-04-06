@@ -96,7 +96,6 @@ export class QTOApiClient {
    */
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl || getApiBaseUrl();
-    console.log(`API Client initialized with base URL: ${this.baseUrl}`);
   }
 
   /**
@@ -197,75 +196,17 @@ export class QTOApiClient {
     updatedElements?: IFCElement[],
     projectName?: string
   ): Promise<QTOResponse> {
-    // Create URL with model_id parameter
     const url = `${this.baseUrl}/send-qto/?model_id=${modelId}`;
 
-    // Log if we're sending updated elements
-    if (updatedElements && updatedElements.length > 0) {
-      console.log(
-        `Sending ${updatedElements.length} elements with updates to the backend`
-      );
-
-      // Check for elements with significant quantitative properties
-      const elementsWithQuantities = updatedElements.filter(
-        (el) =>
-          // Include elements with non-zero areas
-          (el.area !== 0 && el.area !== null && el.area !== undefined) ||
-          // OR include elements with length values (beams, columns)
-          (el.length !== 0 && el.length !== null && el.length !== undefined)
-      );
-
-      if (elementsWithQuantities.length > 0) {
-        console.log(
-          `Found ${elementsWithQuantities.length} elements with quantities (area or length)`
-        );
-        // Log some sample elements
-        const beamSample = elementsWithQuantities.find(
-          (el) => el.type === "IfcBeam"
-        );
-        const wallSample = elementsWithQuantities.find((el) =>
-          el.type.includes("Wall")
-        );
-
-        if (beamSample) {
-          console.log("Sample beam element:", {
-            id: beamSample.id,
-            type: beamSample.type,
-            length: beamSample.length,
-          });
-        }
-
-        if (wallSample) {
-          console.log("Sample wall element:", {
-            id: wallSample.id,
-            type: wallSample.type,
-            area: wallSample.area,
-          });
-        }
-      }
-    }
-
-    // Log if we're using a specific project name
-    if (projectName) {
-      console.log(`Using project name from sidebar: ${projectName}`);
-    }
-
-    // Create request configuration
     const headers = {
       "Content-Type": "application/json",
       Accept: "application/json",
     };
 
-    // Include project name in the request if provided
     const requestBody = {
       ...(updatedElements ? { elements: updatedElements } : {}),
       ...(projectName ? { project: projectName } : {}),
     };
-
-    console.log(
-      "Request body:",
-      JSON.stringify(requestBody).substring(0, 100) + "..."
-    ); // Log truncated body
 
     const jsonBody = JSON.stringify(requestBody);
     const options: RequestInit = {
@@ -274,20 +215,18 @@ export class QTOApiClient {
       body: jsonBody,
     };
 
-    console.log("Request payload size:", jsonBody.length, "bytes");
-
     try {
       const response = await fetch(url, options);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Error response:", errorText);
-        throw new Error(`Failed to send QTO data: ${response.statusText}`);
+        throw new Error(
+          `Failed to send QTO data: ${response.statusText} - ${errorText}`
+        );
       }
 
       return await response.json();
     } catch (error) {
-      console.error("Network error:", error);
       throw error;
     }
   }

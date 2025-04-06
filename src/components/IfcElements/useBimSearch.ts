@@ -15,11 +15,8 @@ export function useBimSearch(elements: IFCElement[]) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Log when elements change to help with debugging
   useEffect(() => {
-    console.log(`useBimSearch: ${elements?.length || 0} elements available`);
     if (elements?.length > 0) {
-      console.log("Sample element structure:", elements[0]);
     }
   }, [elements]);
 
@@ -27,7 +24,6 @@ export function useBimSearch(elements: IFCElement[]) {
   const filteredOptions = useMemo(() => {
     // Guard against null or undefined elements
     if (!elements || elements.length === 0) {
-      console.log("No elements to filter");
       return [];
     }
 
@@ -89,7 +85,6 @@ export function useBimSearch(elements: IFCElement[]) {
         })
         .slice(0, 100);
 
-      console.log(`Search "${filterValue}": Found ${filtered.length} matches`);
       return filtered;
     } catch (error) {
       console.error("Error filtering options:", error);

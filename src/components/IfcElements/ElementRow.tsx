@@ -99,19 +99,6 @@ const ElementRow: React.FC<ElementRowProps> = ({
   const primaryQuantityKey = config.key;
   const unit = config.unit;
 
-  // --- Add Debug Logging ---
-  if (element.type.toLowerCase().includes("ifcbeam")) {
-    console.log(`ElementRow Debug (Beam ID: ${element.id}):`);
-    console.log(`  Element Type: ${element.type}`);
-    console.log(`  Config Key: ${primaryQuantityKey}`);
-    console.log(`  Unit: ${unit}`);
-    console.log(
-      `  Original Quantity (${primaryQuantityKey}):`,
-      element[primaryQuantityKey]
-    );
-  }
-  // --- End Debug Logging ---
-
   // Get the quantity value using our utility function
   const originalQuantity = getQuantityValue(element, primaryQuantityKey);
 
@@ -148,13 +135,6 @@ const ElementRow: React.FC<ElementRowProps> = ({
   };
 
   const originalQuantityValue = getOriginalQuantityValue();
-
-  // Debug original vs edited values
-  if (isEdited) {
-    console.log(
-      `Element ${element.id} (${primaryQuantityKey}) edited: original=${originalQuantityValue}, current=${originalQuantity}`
-    );
-  }
 
   // Format decimal number - don't show trailing zeros
   const formatNumber = (num: number | null | undefined) => {

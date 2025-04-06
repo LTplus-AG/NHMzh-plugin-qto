@@ -66,36 +66,11 @@ const IfcElementsList = ({
     onEbkpStatusChange(hasEbkpGroups);
   }, [hasEbkpGroups, onEbkpStatusChange]);
 
-  // Debug logging
-  useEffect(() => {
-    console.log(`Loaded ${elements.length} IFC elements`);
-    console.log("Target IFC classes:", TARGET_IFC_CLASSES);
-    console.log(`Grouped into ${ebkpGroups.length} EBKP classifications`);
-
-    // Debug specific element data to check for level information
-    if (elements.length > 0) {
-      console.log("First element sample:", elements[0]);
-      console.log(
-        "Level available in elements:",
-        elements.some((e) => e.level !== undefined)
-      );
-
-      // Check if any elements have level information
-      const levelsFound = elements
-        .map((e) => e.level)
-        .filter((level) => level && level !== "unbekannt");
-
-      console.log("Available levels:", levelsFound);
-    }
-  }, [elements, ebkpGroups]);
-
   // Handle element selection from search
   const handleElementSelect = (element: IFCElement | null) => {
     setSelectedElement(element);
 
     if (element) {
-      console.log("Selected element:", element);
-
       // Find the EBKP code for the selected element
       const ebkpGroup = ebkpGroups.find((group) =>
         group.elements.some((e) => e.id === element.id)

@@ -39,7 +39,6 @@ const FileUpload: React.FC<FileUploadProps> = ({
       try {
         // Directly use apiClient.uploadIFC which now also fetches elements
         const response = await apiClient.uploadIFC(file);
-        console.log("File uploaded successfully, response:", response);
 
         // Create the UploadedFile object
         const newFile: UploadedFile = {
