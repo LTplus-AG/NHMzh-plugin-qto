@@ -8,7 +8,7 @@ import ifcopenshell
 import tempfile
 import logging
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uuid
 import traceback
 import sys
@@ -142,10 +142,43 @@ class ModelInfo(BaseModel):
     element_count: int
     entity_counts: Dict[str, int]
 
-# Add a model for the request body
+# Define the specific input model for elements in the /send-qto request
+class ElementInputData(BaseModel):
+    id: str
+    global_id: Optional[str] = None
+    type: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    material_volumes: Optional[Dict[str, Dict[str, Any]]] = None # Keep if sent from older parsers
+    materials: Optional[List[Dict[str, Any]]] = Field(default_factory=list) # Primary way materials might be sent
+    level: Optional[str] = None
+    # Classification fields
+    classification_id: Optional[str] = None
+    classification_name: Optional[str] = None
+    classification_system: Optional[str] = None
+    ebkph: Optional[str] = None # Send ebkph as potential fallback for classification_id
+    # Legacy Quantity fields (frontend might still send these)
+    area: Optional[float] = None
+    length: Optional[float] = None
+    volume: Optional[float] = None
+    original_area: Optional[float] = None
+    original_length: Optional[float] = None # Include if frontend might send it
+    # New Quantity schema (frontend might send this directly)
+    quantity: Optional[Dict[str, Any]] = None
+    original_quantity: Optional[Dict[str, Any]] = None
+    # Other fields
+    category: Optional[str] = None
+    is_structural: Optional[bool] = None
+    is_external: Optional[bool] = None
+
+    class Config:
+        extra = 'ignore' # Ignore any extra fields frontend might send unexpectedly
+
+# Update QTORequestBody to use the new ElementInputData model
 class QTORequestBody(BaseModel):
-    elements: Optional[List[Dict[str, Any]]] = None
-    project: Optional[str] = None  # Add project field for the project name from sidebar
+    elements: Optional[List[ElementInputData]] = None
+    project: Optional[str] = None
 
 # Custom OpenAPI schema
 @app.get("/openapi.json", include_in_schema=False)
@@ -224,11 +257,14 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
     fractions = {}
     constituent_widths = {}
     
+   
     # Handle IfcMaterialConstituentSet
     if constituent_set.is_a('IfcMaterialConstituentSet'):
         constituents = constituent_set.MaterialConstituents or []
         if not constituents:
+            logger.debug("No constituents found in IfcMaterialConstituentSet")
             return {}, {}
+        
         
         # Collect all quantities associated with the elements
         quantities = []
@@ -262,7 +298,7 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
                     fractions[constituent] = fraction
                     has_explicit_fractions = True
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug(f"Failed to convert fraction value for {constituent_name}")
         
         # If any explicit fractions were found, normalize and return them
         if has_explicit_fractions:
@@ -302,7 +338,7 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
                             width_mm = raw_length_value * unit_scale_to_mm
                             break
                         except (ValueError, TypeError):
-                            pass
+                            logger.debug(f"Failed to convert width value for {constituent_name}")
             
             # If no width found in complex quantities, try standard quantities
             if width_mm == 0.0:
@@ -327,6 +363,7 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
         
         # If no width info available, distribute equally
         if not fractions or sum(fractions.values()) < 0.0001:
+            logger.debug(f"No valid width info found, distributing equally among {len(constituents)} constituents")
             fractions = {constituent: 1.0 / len(constituents) for constituent in constituents}
     
     # Handle IfcMaterialLayerSet or IfcMaterialLayerSetUsage
@@ -334,10 +371,12 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
         layer_set = constituent_set if constituent_set.is_a('IfcMaterialLayerSet') else constituent_set.ForLayerSet
         
         if not layer_set or not layer_set.MaterialLayers:
+            logger.debug("No layers found in layer set")
             return {}, {}
         
         total_thickness = 0.0
         layers = layer_set.MaterialLayers
+        
         
         # Find any layers with non-zero thickness
         has_nonzero_thickness = False
@@ -354,18 +393,23 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
         # If all layers have zero thickness, assign default thickness of 1.0
         default_thickness = 1.0
         if not has_nonzero_thickness:
+            logger.debug("All layers have zero thickness, using default equal distribution")
             for layer in layers:
                 constituent_widths[layer] = default_thickness
                 total_thickness += default_thickness
                 
+                # Get material name for better logging
+                material_name = "Unknown"
+                if hasattr(layer, 'Material') and layer.Material:
+                    material_name = layer.Material.Name
         else:
             # Calculate total thickness from actual values
             for layer in layers:
                 if hasattr(layer, 'LayerThickness'):
                     try:
                         thickness = float(layer.LayerThickness or 0) * unit_scale_to_mm
-                        
-                        logger.debug(f"Layer material {layer.Material.Name if hasattr(layer, 'Material') and layer.Material else 'Unknown'} has thickness {thickness}mm")
+                     
+                            
                         constituent_widths[layer] = thickness
                         total_thickness += thickness
                     except (ValueError, TypeError):
@@ -379,15 +423,30 @@ def compute_constituent_fractions(ifc_file, constituent_set, associated_elements
             for layer in layers:
                 thickness = constituent_widths.get(layer, 0)
                 fraction = thickness / total_thickness
+                
+                # Get material name for better logging
+                material_name = "Unknown"
+                if hasattr(layer, 'Material') and layer.Material:
+                    material_name = layer.Material.Name
+                    
                 fractions[layer] = fraction
         else:
             # Equal distribution if no thickness info
+            logger.debug(f"No valid thickness info found, distributing equally among {len(layers)} layers")
             fractions = {layer: 1.0 / len(layers) for layer in layers}
     
     # Normalize fractions to ensure sum is 1.0
     total = sum(fractions.values())
     if total > 0:
         fractions = {constituent: fraction / total for constituent, fraction in fractions.items()}
+        
+        # Log the final fractions for debugging
+        for constituent, fraction in fractions.items():
+            name = "Unknown"
+            if hasattr(constituent, 'Material') and constituent.Material:
+                name = constituent.Material.Name
+            elif hasattr(constituent, 'Name'):
+                name = constituent.Name
     
     return fractions, constituent_widths
 
@@ -453,6 +512,7 @@ def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[st
                 material_volumes[name] = {
                     "fraction": _round_value(fraction, 5)
                 }
+        logger.debug(f"No valid thicknesses found, using equal distribution for {len(materials_with_thickness)} materials")
     else:
         # Calculate fractions based on thickness
         for name, thickness in materials_with_thickness:
@@ -703,7 +763,7 @@ def get_ifc_elements(model_id: str):
                                     qset_name = property_set.Name or "QuantitySet"
                                     element_type = element_data["type"]
 
-                                    # --- Find Target Quantities ---
+                                    # --- Find Target Quantities --- 
                                     found_area = False
                                     found_length = False
                                     
@@ -715,12 +775,12 @@ def get_ifc_elements(model_id: str):
 
                                         # 1. Check if the current qset matches the target qset name from config
                                         if qset_name == target_qset_name:
+                                            logger.debug(f"Checking specific qset '{qset_name}' for {element_type}")
                                             for quantity in property_set.Quantities:
                                                 # Extract area based on TARGET_QUANTITIES config
                                                 if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
                                                     try:
                                                         element_data["area"] = float(quantity.AreaValue)
-                                                        logger.debug(f"Found target area '{target_area_name}' in '{qset_name}' with value {element_data['area']} for {element_type}")
                                                         found_area = True
                                                     except (ValueError, TypeError):
                                                         logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' for {element_type}")
@@ -729,19 +789,18 @@ def get_ifc_elements(model_id: str):
                                                 if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
                                                     try:
                                                         element_data["length"] = float(quantity.LengthValue)
-                                                        logger.debug(f"Found target length '{target_length_name}' in '{qset_name}' with value {element_data['length']} for {element_type}")
                                                         found_length = True
                                                     except (ValueError, TypeError):
                                                         logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' for {element_type}")
                                                         
                                         # 2. Fallback: Check if the current qset is exactly "BaseQuantities"
+                                        # Only check if the target quantity wasn't found in the specific qset
                                         elif qset_name == "BaseQuantities" and (not found_area or not found_length):
                                             for quantity in property_set.Quantities:
                                                 # Extract area based on TARGET_QUANTITIES config (if not already found)
                                                 if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
                                                     try:
                                                         element_data["area"] = float(quantity.AreaValue)
-                                                        logger.debug(f"Found target area '{target_area_name}' in '{qset_name}' (fallback) with value {element_data['area']} for {element_type}")
                                                         found_area = True
                                                     except (ValueError, TypeError):
                                                         logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
@@ -749,12 +808,10 @@ def get_ifc_elements(model_id: str):
                                                 # Extract length based on TARGET_QUANTITIES config (if not already found)
                                                 if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
                                                     try:
-                                                        raw_value = quantity.LengthValue
-                                                        element_data["length"] = float(raw_value)
-                                                        logger.debug(f"Found target length '{target_length_name}' in '{qset_name}' (fallback) with value {element_data['length']} for {element_type}")
+                                                        element_data["length"] = float(quantity.LengthValue)
                                                         found_length = True
-                                                    except (ValueError, TypeError) as e:
-                                                        logger.warning(f"Could not convert length value '{quantity.Name}' ('{raw_value}') in '{qset_name}' (fallback) for {element_type}. Error: {e}")
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
 
                                     # --- Process All Quantities for Properties (Independent of target finding) ---
                                     for quantity in property_set.Quantities:
@@ -1099,49 +1156,37 @@ async def send_qto(
         # Check if we have updated elements in the request body
         if body and body.elements:
             logger.info(f"Processing {len(body.elements)} updated elements")
-            elements = []
-            for elem_dict in body.elements:
-                try:
-                    cleaned_elem = {k: v for k, v in elem_dict.items() if v is not None}
-                    element = IFCElement(**cleaned_elem)
-                    elements.append(element)
-                except Exception as e:
-                    logger.error(f"Error converting element {elem_dict.get('id')}: {str(e)}")
-                    element = IFCElement(
-                        id=elem_dict.get('id', ''),
-                        global_id=elem_dict.get('global_id', ''),
-                        type=elem_dict.get('type', ''),
-                        name=elem_dict.get('name', ''),
-                        properties=elem_dict.get('properties', {})
-                    )
-                    if 'area' in elem_dict:
-                        element.area = elem_dict['area']
-                    if 'original_area' in elem_dict:
-                        element.original_area = elem_dict['original_area']
-                    elements.append(element)
+            # Ensure elements from the body (ElementInputData) are processed correctly
+            elements_input = body.elements
         else:
-            elements = get_ifc_elements(model_id)
+            # Get original elements (these are IFCElement Pydantic models)
             logger.info("Using original elements from IFC model")
+            elements_input = get_ifc_elements(model_id)
 
-        # Convert elements to dictionaries
+        # --- Convert elements to dictionaries consistently --- 
         element_dicts = []
-        for element in elements:
-            # --- Add logging BEFORE model_dump() for IfcBeam ---
-            if element.type == "IfcBeam":
-                logger.info(f"--- QTO Endpoint Debug BEFORE dump (Beam ID: {element.id}) ---")
-                logger.info(f"Pydantic model length: {getattr(element, 'length', 'Not Set')}")
-                logger.info(f"--- End QTO Endpoint Debug BEFORE dump ---")
-                
-            element_dict = element.model_dump()
-            
-            # --- Add logging AFTER model_dump() for IfcBeam ---
-            if element.type == "IfcBeam":
-                logger.info(f"--- QTO Endpoint Debug AFTER dump (Beam ID: {element.id}) ---")
-                logger.info(f"Dict keys after dump: {list(element_dict.keys())}")
-                logger.info(f"Dict length value after dump: {element_dict.get('length', 'Not Found')}")
-                logger.info(f"--- End QTO Endpoint Debug AFTER dump ---")
-                
+        for element_model in elements_input: # Process either ElementInputData or IFCElement
+            if not element_model:
+                continue # Skip if element_model is None for some reason
+            try:
+                # Use .model_dump() for Pydantic v2+ models
+                # exclude_none=True cleans up the dict for downstream processing
+                element_dict = element_model.model_dump(exclude_none=True) 
+            except AttributeError:
+                # Fallback to .dict() for older Pydantic versions
+                try:
+                    element_dict = element_model.dict(exclude_none=True)
+                except AttributeError:
+                    logger.error(f"Could not convert element model to dict: {type(element_model)}")
+                    element_dict = {} # Use empty dict as fallback
+            except Exception as dump_error:
+                 logger.error(f"Error dumping element model to dict: {dump_error}")
+                 element_dict = {} # Use empty dict as fallback
+                 
             element_dicts.append(element_dict)
+        # --- End conversion block ---
+        
+        # Now element_dicts is guaranteed to be List[Dict]
         
         # Get project info
         filename = ifc_models[model_id]["filename"]
@@ -1187,16 +1232,16 @@ async def send_qto(
             return {
                 "message": "QTO data processed but not sent to Kafka (service unavailable)",
                 "model_id": model_id,
-                "element_count": len(elements),
+                "element_count": len(elements_input),
                 "kafka_status": "unavailable"
             }
         
-        logger.info(f"Successfully sent QTO data for {len(elements)} elements")
+        logger.info(f"Successfully sent QTO data for {len(elements_input)} elements")
         
         return {
             "message": "QTO data sent to Kafka successfully",
             "model_id": model_id,
-            "element_count": len(elements),
+            "element_count": len(elements_input),
             "kafka_status": "connected"
         }
     
@@ -1221,25 +1266,16 @@ def get_qto_elements(model_id: str):
         raise HTTPException(status_code=404, detail="IFC model not found")
     
     try:
+        # Get elements using existing function that already applies filtering
         elements = get_ifc_elements(model_id)
         
+        # Remove verbose area logging
+        elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
+        
+        # Convert IFCElement model instances to dictionaries
         element_dicts = []
         for element in elements:
-            # --- Add logging BEFORE model_dump() for IfcBeam ---
-            if element.type == "IfcBeam":
-                logger.info(f"--- QTO Endpoint Debug BEFORE dump (Beam ID: {element.id}) ---")
-                logger.info(f"Pydantic model length: {getattr(element, 'length', 'Not Set')}")
-                logger.info(f"--- End QTO Endpoint Debug BEFORE dump ---")
-                
             element_dict = element.model_dump()
-            
-            # --- Add logging AFTER model_dump() for IfcBeam ---
-            if element.type == "IfcBeam":
-                logger.info(f"--- QTO Endpoint Debug AFTER dump (Beam ID: {element.id}) ---")
-                logger.info(f"Dict keys after dump: {list(element_dict.keys())}")
-                logger.info(f"Dict length value after dump: {element_dict.get('length', 'Not Found')}")
-                logger.info(f"--- End QTO Endpoint Debug AFTER dump ---")
-                
             element_dicts.append(element_dict)
         
         # Get project info
@@ -1254,6 +1290,7 @@ def get_qto_elements(model_id: str):
             elements=element_dicts
         )
         
+        # Return just the elements part of the QTO data
         return qto_data["elements"]
     
     except Exception as e:

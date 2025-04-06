@@ -1,10 +1,19 @@
 import { IFCElement } from "../../types/types";
 
 export interface EditedQuantity {
-  originalArea?: number | null | undefined;
-  newArea?: number | null | undefined;
-  originalLength?: number | null | undefined;
-  newLength?: number | null | undefined;
+  originalArea?: number | null;
+  newArea?: number | null;
+  originalLength?: number | null;
+  newLength?: number | null;
+
+  originalQuantity?: {
+    value: number | null;
+    type: "area" | "length";
+  } | null;
+  newQuantity?: {
+    value: number | null;
+    type: "area" | "length";
+  } | null;
 }
 
 export interface EbkpGroup {

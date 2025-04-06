@@ -38,6 +38,7 @@ export interface IFCElement {
     volume?: number;
     unit?: string;
   }>;
+  length?: number | null;
 }
 
 export interface ModelUploadResponse {
@@ -205,15 +206,42 @@ export class QTOApiClient {
         `Sending ${updatedElements.length} elements with updates to the backend`
       );
 
-      // Check for any edited elements (look for non-zero areas)
-      const editedElements = updatedElements.filter(
-        (el) => el.area !== 0 && el.area !== null && el.area !== undefined
+      // Check for elements with significant quantitative properties
+      const elementsWithQuantities = updatedElements.filter(
+        (el) =>
+          // Include elements with non-zero areas
+          (el.area !== 0 && el.area !== null && el.area !== undefined) ||
+          // OR include elements with length values (beams, columns)
+          (el.length !== 0 && el.length !== null && el.length !== undefined)
       );
-      if (editedElements.length > 0) {
+
+      if (elementsWithQuantities.length > 0) {
         console.log(
-          `Found ${editedElements.length} elements with non-zero areas`
+          `Found ${elementsWithQuantities.length} elements with quantities (area or length)`
         );
-        console.log("Sample element with non-zero area:", editedElements[0]);
+        // Log some sample elements
+        const beamSample = elementsWithQuantities.find(
+          (el) => el.type === "IfcBeam"
+        );
+        const wallSample = elementsWithQuantities.find((el) =>
+          el.type.includes("Wall")
+        );
+
+        if (beamSample) {
+          console.log("Sample beam element:", {
+            id: beamSample.id,
+            type: beamSample.type,
+            length: beamSample.length,
+          });
+        }
+
+        if (wallSample) {
+          console.log("Sample wall element:", {
+            id: wallSample.id,
+            type: wallSample.type,
+            area: wallSample.area,
+          });
+        }
       }
     }
 

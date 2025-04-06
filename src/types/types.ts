@@ -15,29 +15,38 @@ export interface CostItem {
 
 export interface IFCElement {
   id: string;
-  global_id: string;
+  global_id?: string;
   type: string;
   name: string;
   description?: string;
-  properties: { [key: string]: any };
-  material_volumes?: { [key: string]: { [key: string]: any } };
+  properties: Record<string, any>;
+  material_volumes?: Record<string, any>;
   level?: string;
   classification_id?: string;
   classification_name?: string;
   classification_system?: string;
   area?: number;
-  volume?: number;
   length?: number;
+  volume?: number;
   original_area?: number;
+  quantity?: {
+    value: number | null;
+    type: "area" | "length";
+    unit: string;
+  };
+  original_quantity?: {
+    value: number | null;
+    type: "area" | "length";
+  } | null;
   category?: string;
   is_structural?: boolean;
   is_external?: boolean;
   ebkph?: string;
   materials?: Array<{
     name: string;
-    unit?: string;
-    volume?: number;
     fraction?: number;
+    volume?: number;
+    unit?: string;
   }>;
   classification?: {
     id?: string;

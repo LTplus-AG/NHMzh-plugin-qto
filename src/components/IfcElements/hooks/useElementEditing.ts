@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { EditedQuantity } from "../types";
+import { IFCElement } from "../../types/types";
 
 export const useElementEditing = () => {
   const [editedElements, setEditedElements] = useState<
@@ -25,6 +26,7 @@ export const useElementEditing = () => {
       // If the new value is the same as original, remove from edited elements
       if (numericValue === originalValue) {
         const newEdited = { ...prev };
+        // Make sure to remove all potential fields
         delete newEdited[elementId];
         console.log(
           `Removed edit for element ${elementId} (back to original value)`
@@ -37,7 +39,7 @@ export const useElementEditing = () => {
         ...prev[elementId], // Keep other edited properties if any
       };
 
-      // Set the appropriate fields based on quantity type
+      // Set the legacy fields for compatibility
       if (quantityKey === "area") {
         updatedElement.originalArea = originalValue;
         updatedElement.newArea = numericValue;
@@ -45,6 +47,16 @@ export const useElementEditing = () => {
         updatedElement.originalLength = originalValue;
         updatedElement.newLength = numericValue;
       }
+
+      // Add fields for new schema
+      updatedElement.originalQuantity = {
+        value: originalValue ?? null, // Ensure null if undefined
+        type: quantityKey,
+      };
+      updatedElement.newQuantity = {
+        value: numericValue,
+        type: quantityKey,
+      };
 
       console.log(
         `Updated element ${elementId} with new ${quantityKey}: ${numericValue}`
@@ -75,8 +87,8 @@ export const useElementEditing = () => {
   return {
     editedElements,
     editedElementsCount,
-    handleQuantityChange, // Expose the new method
-    handleAreaChange, // Keep the old method for compatibility
+    handleQuantityChange, // Primary handler
+    handleAreaChange, // Keep for compatibility if necessary
     resetEdits,
   };
 };

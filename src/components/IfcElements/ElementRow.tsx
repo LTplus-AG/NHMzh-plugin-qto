@@ -54,6 +54,30 @@ interface ElementRowProps {
   ) => void;
 }
 
+const getQuantityValue = (
+  element: any,
+  quantityType: "area" | "length"
+): number | null | undefined => {
+  // First try the new schema: element.quantity.value
+  if (
+    element.quantity &&
+    typeof element.quantity === "object" &&
+    element.quantity.type === quantityType
+  ) {
+    return element.quantity.value;
+  }
+
+  // Fallback to the old schema: element.area or element.length
+  if (quantityType === "area" && element.area !== undefined) {
+    return element.area;
+  }
+  if (quantityType === "length" && element.length !== undefined) {
+    return element.length;
+  }
+
+  return undefined; // Or 0, depending on desired behavior
+};
+
 const ElementRow: React.FC<ElementRowProps> = ({
   element,
   groupCode,
@@ -88,29 +112,47 @@ const ElementRow: React.FC<ElementRowProps> = ({
   }
   // --- End Debug Logging ---
 
-  // Get the quantity value from the element data
-  const originalQuantity = element[primaryQuantityKey];
+  // Get the quantity value using our utility function
+  const originalQuantity = getQuantityValue(element, primaryQuantityKey);
 
   // Check if this element has been edited (focusing on the primary quantity)
   const isEdited = editedElement !== undefined;
 
-  // Get edited and original values based on the quantity key (area or length)
-  const editedQuantityValue = isEdited
-    ? primaryQuantityKey === "area"
-      ? editedElement.newArea
-      : editedElement.newLength
-    : null;
+  // Get the original quantity if it was edited
+  const getOriginalQuantityValue = (): number | null | undefined => {
+    if (isEdited) {
+      // Try new schema first
+      if (
+        editedElement.originalQuantity &&
+        typeof editedElement.originalQuantity === "object"
+      ) {
+        return editedElement.originalQuantity.value;
+      }
+      // Fallback to old schema fields
+      return primaryQuantityKey === "area"
+        ? editedElement.originalArea
+        : editedElement.originalLength;
+    }
 
-  const originalQuantityValue = isEdited
-    ? primaryQuantityKey === "area"
-      ? editedElement.originalArea
-      : editedElement.originalLength
-    : originalQuantity;
+    // Get from non-edited element (new schema)
+    if (
+      element.original_quantity &&
+      typeof element.original_quantity === "object"
+    ) {
+      return element.original_quantity.value;
+    }
+
+    // Fallback for non-edited (old schema)
+    // Note: original_area was the only field for this in the old schema
+    return element.original_area;
+  };
+
+  const originalQuantityValue = getOriginalQuantityValue();
 
   // Debug original vs edited values
   if (isEdited) {
     console.log(
-      `Element ${element.id} (${primaryQuantityKey}) edited: original=${originalQuantityValue}, new=${editedQuantityValue}, current=${originalQuantity}`
+      `Element ${element.id} (${primaryQuantityKey}) edited: original=${originalQuantityValue}, current=${originalQuantity}`
     );
   }
 
@@ -127,7 +169,9 @@ const ElementRow: React.FC<ElementRowProps> = ({
 
   // Format value for display in the TextField
   const getDisplayValue = () => {
-    const valueToFormat = isEdited ? editedQuantityValue : originalQuantity;
+    const valueToFormat = isEdited
+      ? editedElement.newQuantity?.value
+      : originalQuantity;
     if (valueToFormat === null || valueToFormat === undefined) return "";
     return formatNumber(valueToFormat);
   };

@@ -404,14 +404,6 @@ class QTOKafkaProducer:
         elements_to_save = []
         for element in elements:
             try:
-                # Keep this IfcBeam debug log
-                if element.get("type") == "IfcBeam":
-                    logger.info(f"--- QTO Formatter Debug (Beam ID: {element.get('id')}) ---")
-                    logger.info(f"Incoming element dict keys: {list(element.keys())}")
-                    logger.info(f"Incoming length value: {element.get('length')}")
-                    logger.info(f"--- End QTO Formatter Debug ---")
-                # --- End Debug ---
-
                 # Get element type
                 element_type = element.get("type", "").lower()
                 
@@ -434,22 +426,92 @@ class QTOKafkaProducer:
                 
                 # Get area value
                 area_value = element.get("area", 0)
+                length_value = element.get("length", 0) # Get length value too
+
+                # Ensure numeric types, default to 0 if conversion fails
+                try:
+                    area_value = float(area_value) if area_value is not None else 0
+                except (ValueError, TypeError):
+                    area_value = 0
+                try:
+                    length_value = float(length_value) if length_value is not None else 0
+                except (ValueError, TypeError):
+                    length_value = 0
+
+                # Determine primary quantity based on element type
+                if element_type in ["ifcwallstandardcase", "ifcslab", "ifcfooting"]:
+                    primary_quantity = area_value
+                    quantity_key = "area"
+                    quantity_unit = "m²"
+                elif element_type in ["ifcbeam", "ifccolumn"]:
+                    primary_quantity = length_value
+                    quantity_key = "length"
+                    quantity_unit = "m"
+                else:
+                    # Default fallback: prioritize area if available, otherwise length
+                    if area_value is not None and area_value != 0:
+                         primary_quantity = area_value
+                         quantity_key = "area"
+                         quantity_unit = "m²"
+                    elif length_value is not None and length_value != 0:
+                         primary_quantity = length_value
+                         quantity_key = "length"
+                         quantity_unit = "m"
+                    else: # If neither is available, default to area 0
+                        primary_quantity = 0 
+                        quantity_key = "area" 
+                        quantity_unit = "m²"
                 
-                # Format element for QTO
+                # Get classification details (assuming they are extracted earlier or set to default)
+                # Note: Ensure these are correctly populated if needed. Placeholder defaults used here.
+                classification_id = element.get("classification_id", element.get("ebkph", "")) # Use ebkph as fallback
+                classification_name = element.get("classification_name", "")
+                classification_system = element.get("classification_system", "")
+
+                # Determine original quantity value based on quantity_key
+                original_quantity_value = None
+                if quantity_key == "area":
+                    original_quantity_value = original_area # Already fetched
+                elif quantity_key == "length":
+                    # Need to fetch original_length if it exists
+                    original_quantity_value = element.get("original_length")
+                    if original_quantity_value is None and "properties" in element and "original_length" in element["properties"]:
+                         original_quantity_value = element["properties"]["original_length"]
+                
+                # Convert original quantity to float if possible
+                if original_quantity_value is not None:
+                    try:
+                        original_quantity_value = float(original_quantity_value)
+                    except (ValueError, TypeError):
+                        original_quantity_value = None # Set to None if conversion fails
+
+                # Format element for MongoDB saving (aligning with target schema)
                 formatted_element = {
                     "project_id": project_id,
-                    "element_type": element.get("type", "Unknown"),
-                    "quantity": area_value,
-                    "original_area": original_area,
-                    "properties": {
-                        "level": element.get("level"),
-                        "is_structural": is_structural,
-                        "is_external": is_external,
-                        "ebkph": element.get("classification_id", ""),
-                        "classification": element.get("classification", {})
+                    "ifc_id": element.get("id", ""), # Store original IFC ID
+                    "global_id": element.get("global_id", element.get("id", "")), # Store GlobalId
+                    "type": element.get("type", "Unknown"), # Use 'type' field
+                    "name": element.get("name", element.get("type", "Unknown")), # Add name field
+                    "level": element.get("level", ""), # Top-level field
+                    "quantity": {
+                        "value": primary_quantity,
+                        "type": quantity_key,
+                        "unit": quantity_unit
                     },
-                    "materials": element.get("materials", []),
-                    "status": "active"
+                    "original_quantity": {
+                        "value": original_quantity_value,
+                        "type": quantity_key
+                    } if original_quantity_value is not None else None, # Nested object
+                    "is_structural": is_structural, # Top-level field
+                    "is_external": is_external, # Top-level field
+                    "classification": { # Top-level object
+                        "id": classification_id,
+                        "name": classification_name,
+                        "system": classification_system
+                    },
+                    "materials": element.get("materials", []), # Keep materials as is
+                    "properties": element.get("properties", {}), # Store raw properties separately if needed
+                    "status": "active" # Keep status
                 }
                 elements_to_save.append(formatted_element)
             except Exception as e:
@@ -539,14 +601,6 @@ def format_ifc_elements_for_qto(project_name: str,
     }
     
     for element in elements:
-        # Keep this IfcBeam debug log
-        if element.get("type") == "IfcBeam":
-            logger.info(f"--- QTO Formatter Debug (Beam ID: {element.get('id')}) ---")
-            logger.info(f"Incoming element dict keys: {list(element.keys())}")
-            logger.info(f"Incoming length value: {element.get('length')}")
-            logger.info(f"--- End QTO Formatter Debug ---")
-        # --- End Debug ---
-
         # Get element type
         element_type = element.get("type", "").lower()
         
@@ -569,23 +623,64 @@ def format_ifc_elements_for_qto(project_name: str,
         
         # Get area value
         area_value = element.get("area", 0)
-        
+        length_value = element.get("length", 0) # Get length value too
+
+        # Ensure numeric types, default to 0 if conversion fails
+        try:
+            area_value = float(area_value) if area_value is not None else 0
+        except (ValueError, TypeError):
+            area_value = 0
+        try:
+            length_value = float(length_value) if length_value is not None else 0
+        except (ValueError, TypeError):
+            length_value = 0
+
+        # Determine primary quantity based on element type
+        if element_type in ["ifcwallstandardcase", "ifcslab", "ifcfooting"]:
+            primary_quantity = area_value
+            quantity_key = "area"
+            quantity_unit = "m²"
+        elif element_type in ["ifcbeam", "ifccolumn"]:
+            primary_quantity = length_value
+            quantity_key = "length"
+            quantity_unit = "m"
+        else:
+            # Default fallback: prioritize area if available, otherwise length
+            if area_value is not None and area_value != 0:
+                 primary_quantity = area_value
+                 quantity_key = "area"
+                 quantity_unit = "m²"
+            elif length_value is not None and length_value != 0:
+                 primary_quantity = length_value
+                 quantity_key = "length"
+                 quantity_unit = "m"
+            else: # If neither is available, default to area 0
+                primary_quantity = 0 
+                quantity_key = "area" 
+                quantity_unit = "m²"
+                
+        # Get classification details (assuming they are extracted earlier or set to default)
+        # Note: Ensure these are correctly populated if needed. Placeholder defaults used here.
+        classification_id = element.get("classification_id", element.get("ebkph", "")) # Use ebkph as fallback
+        classification_name = element.get("classification_name", "")
+        classification_system = element.get("classification_system", "")
+
         # Format element for QTO
         formatted_element = {
             "id": element.get("id", ""),
             "category": element.get("type", "Unknown"),
             "level": element.get("level", ""),
             "area": area_value,  # Area extracted in main.py based on TARGET_QUANTITIES
-            "length": element.get("length", 0),  # Include length from TARGET_QUANTITIES
+            "length": length_value,  # Include length from TARGET_QUANTITIES
             "original_area": original_area,  # Include original_area in output
             "is_structural": is_structural,
             "is_external": is_external,
-            "ebkph": element.get("classification_id", ""),
+            "ebkph": classification_id,
             "materials": [],
             "classification": {
-                "id": element.get("classification_id", ""),
-                "name": element.get("classification_name", ""),
-                "system": element.get("classification_system", "")
+                "id": classification_id,
+                "name": classification_name,
+                "system": classification_system
             }
         }
         
@@ -595,6 +690,10 @@ def format_ifc_elements_for_qto(project_name: str,
                 formatted_element["area"] = float(formatted_element["area"])
             except (ValueError, TypeError):
                 formatted_element["area"] = 0
+        
+        # If area is None, explicitly set to 0 to avoid null values
+        if formatted_element["area"] is None:
+            formatted_element["area"] = 0
         
         # Extract materials 
         if "material_volumes" in element and element["material_volumes"]:
