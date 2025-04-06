@@ -17,7 +17,6 @@ import {
   Snackbar,
   Tooltip,
   Typography,
-  Badge,
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import apiClient from "../api/ApiClient";
@@ -47,12 +46,12 @@ const MainPage = () => {
   const [previewDialogOpen, setPreviewDialogOpen] = useState<boolean>(false);
   const [hasEbkpGroups, setHasEbkpGroups] = useState<boolean>(true);
   const [selectedProject, setSelectedProject] = useState<string>("Projekt 1");
+  const [viewType, setViewType] = useState<string>("individual");
 
   const {
     editedElements,
     editedElementsCount,
     handleQuantityChange,
-    handleAreaChange,
     resetEdits,
   } = useElementEditing();
 
@@ -62,7 +61,7 @@ const MainPage = () => {
 
   const checkBackendConnectivity = async () => {
     try {
-      const healthData = await apiClient.getHealth();
+      await apiClient.getHealth();
       setBackendConnected(true);
     } catch (error) {
       setBackendConnected(false);
@@ -118,6 +117,7 @@ const MainPage = () => {
           is_structural: boolean;
           is_external: boolean;
           ebkph: string;
+          type_name?: string;
           materials: Array<{
             name: string;
             fraction?: number;
@@ -157,6 +157,7 @@ const MainPage = () => {
             global_id: el.id,
             type: el.category,
             name: el.category,
+            type_name: el.type_name,
             description: null,
             properties: el.properties || {},
             material_volumes:
@@ -178,6 +179,9 @@ const MainPage = () => {
         });
 
         setIfcElements(mappedElements as any);
+        console.log(
+          `Loaded ${mappedElements.length} elements from API, viewType: ${viewType}`
+        );
         setIfcLoading(false);
         return;
       } catch (qtoError) {
@@ -262,7 +266,7 @@ const MainPage = () => {
           ? "Amtshaus Walche"
           : "Gemeinschaftszentrum Wipkingen";
 
-      const response = await apiClient.sendQTO(
+      await apiClient.sendQTO(
         selectedFile.modelId,
         updatedElements,
         projectName
@@ -613,6 +617,8 @@ const MainPage = () => {
               // Pass callback to update EBKP status
               onEbkpStatusChange={setHasEbkpGroups}
               targetIfcClasses={TARGET_IFC_CLASSES}
+              viewType={viewType}
+              setViewType={setViewType}
             />
           </div>
         </div>

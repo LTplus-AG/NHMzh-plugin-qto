@@ -18,6 +18,7 @@ export interface IFCElement {
   global_id?: string;
   type: string;
   name: string;
+  type_name?: string;
   description?: string;
   properties: Record<string, any>;
   material_volumes?: Record<string, any>;
@@ -53,6 +54,9 @@ export interface IFCElement {
     name?: string;
     system?: string;
   };
+  groupedElements?: number;
+  originalElementIds?: string[];
+  hasPropertyDifferences?: boolean;
 }
 
 export interface EBKPItem {

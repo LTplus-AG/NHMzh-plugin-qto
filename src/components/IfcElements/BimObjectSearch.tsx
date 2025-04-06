@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   Autocomplete,
   TextField,
@@ -19,6 +19,8 @@ interface BimObjectSearchProps {
   onElementSelect: (element: IFCElement | null) => void;
   placeholder?: string;
   width?: number | string;
+  viewType?: string;
+  ebkpGroups?: any[];
 }
 
 const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
@@ -26,6 +28,8 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
   onElementSelect,
   placeholder = "Suche nach Namen, Eigenschaften, Ebene, Kategorie...",
   width = 300,
+  viewType,
+  ebkpGroups,
 }) => {
   const theme = useTheme();
 
@@ -38,12 +42,15 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
     loading,
     filteredOptions,
     getNoOptionsText,
-  } = useBimSearch(elements);
+  } = useBimSearch(elements, viewType, ebkpGroups);
 
   // Get option label for display - use name or fallback to type+id
   const getOptionLabel = (option: IFCElement) => {
     if (option.name && option.name !== option.type) {
       return option.name;
+    }
+    if (option.type_name) {
+      return option.type_name;
     }
     return `${option.type || "Element"} ${option.id}`;
   };
@@ -58,13 +65,39 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
     props: React.HTMLAttributes<HTMLLIElement>,
     option: IFCElement
   ) => {
+    // Extract key from props to avoid React warnings
+    const { key, ...otherProps } = props as any;
+
     return (
-      <li {...props}>
+      <li key={key} {...otherProps}>
         <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
           <Typography variant="body1" fontWeight={500}>
             {getOptionLabel(option)}
+            {option.groupedElements && option.groupedElements > 1 && (
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{
+                  ml: 1,
+                  color: "text.secondary",
+                  backgroundColor: "rgba(25, 118, 210, 0.05)",
+                  borderRadius: "4px",
+                  padding: "0 4px",
+                }}
+              >
+                {option.groupedElements} Elemente
+              </Typography>
+            )}
           </Typography>
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 0.5 }}>
+            {option.type_name && (
+              <Chip
+                label={`Type: ${option.type_name}`}
+                size="small"
+                variant="outlined"
+                sx={{ fontSize: "0.7rem" }}
+              />
+            )}
             {option.type && (
               <Chip
                 label={option.type.replace("Ifc", "")}
@@ -149,14 +182,27 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
     );
   };
 
+  // Ensure we don't have duplicate IDs in our options to avoid React key warning
+  const uniqueFilteredOptions = useMemo(() => {
+    const uniqueIds = new Set<string>();
+    return filteredOptions.filter((option) => {
+      if (uniqueIds.has(option.id)) {
+        return false;
+      }
+      uniqueIds.add(option.id);
+      return true;
+    });
+  }, [filteredOptions]);
+
   return (
     <Autocomplete
       id="bim-object-search"
       open={open}
       onOpen={() => setOpen(true)}
       onClose={() => setOpen(false)}
-      options={filteredOptions}
+      options={uniqueFilteredOptions}
       getOptionLabel={getOptionLabel}
+      getOptionKey={(option) => option.id}
       renderOption={renderOption}
       onChange={(_, newValue) => onElementSelect(newValue)}
       inputValue={inputValue}
@@ -165,13 +211,17 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
       loading={loading}
       loadingText="Suche..."
       PaperComponent={CustomPaper}
-      filterOptions={(options, _) => options} // We've already filtered in the hook
+      filterOptions={(options, _) => options}
       renderInput={(params) => (
         <TextField
           {...params}
           placeholder={placeholder}
           size="small"
           fullWidth
+          onFocus={() => {
+            // Open dropdown when search field is clicked
+            if (!open) setOpen(true);
+          }}
           InputProps={{
             ...params.InputProps,
             startAdornment: (

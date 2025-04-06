@@ -1,9 +1,8 @@
+import { Box, Chip, Tooltip } from "@mui/material";
 import React from "react";
-import { Typography, Badge, Tooltip, Chip, Box } from "@mui/material";
-import InfoIcon from "@mui/icons-material/Info";
-import ClassificationFilter from "./ClassificationFilter";
-import BimObjectSearch from "./BimObjectSearch";
 import { IFCElement } from "../../types/types";
+import BimObjectSearch from "./BimObjectSearch";
+import ClassificationFilter from "./ClassificationFilter";
 
 interface ElementsHeaderProps {
   totalFilteredElements: number;
@@ -19,11 +18,11 @@ interface ElementsHeaderProps {
   setClassificationFilter: (value: string) => void;
   elements?: IFCElement[];
   onElementSelect?: (element: IFCElement | null) => void;
+  viewType?: string;
+  ebkpGroups?: any[];
 }
 
 const ElementsHeader: React.FC<ElementsHeaderProps> = ({
-  totalFilteredElements,
-  targetIfcClasses,
   editedElementsCount,
   resetEdits,
   uniqueClassifications,
@@ -31,6 +30,8 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
   setClassificationFilter,
   elements = [],
   onElementSelect = () => {},
+  viewType,
+  ebkpGroups,
 }) => {
   return (
     <div className="flex flex-col mb-3">
@@ -65,6 +66,8 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
             elements={elements}
             onElementSelect={onElementSelect}
             width="100%"
+            viewType={viewType}
+            ebkpGroups={ebkpGroups}
           />
         </Box>
 

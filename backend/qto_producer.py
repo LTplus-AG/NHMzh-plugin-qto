@@ -40,10 +40,7 @@ class MongoDBHelper:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.client = None
-        self.db = None
-        
-        logger.info(f"MongoDB Helper initializing with database: {self.db_name}")
-        
+        self.db = None    
         # Initialize MongoDB connection with retries
         self._initialize_connection()
     
@@ -56,7 +53,6 @@ class MongoDBHelper:
                 self.client = MongoClient(self.uri)
                 # Test the connection by pinging the server
                 self.client.admin.command('ping')
-                
                 # Get database
                 self.db = self.client[self.db_name]
                 
@@ -69,7 +65,6 @@ class MongoDBHelper:
                 retries += 1
                 if retries <= self.max_retries:
                     logger.warning(f"Failed to connect to MongoDB (attempt {retries}/{self.max_retries}): {e}")
-                    logger.info(f"Retrying in {self.retry_delay} seconds...")
                     time.sleep(self.retry_delay)
                 else:
                     logger.error(f"Failed to connect to MongoDB after {self.max_retries} attempts: {e}")
@@ -82,13 +77,11 @@ class MongoDBHelper:
             
             # Projects collection
             if "projects" not in collection_names:
-                logger.info("Creating projects collection")
                 self.db.create_collection("projects")
                 self.db.projects.create_index("name")
             
             # Elements collection
             if "elements" not in collection_names:
-                logger.info("Creating elements collection")
                 self.db.create_collection("elements")
                 self.db.elements.create_index("project_id")
         except Exception as e:
@@ -160,7 +153,6 @@ class MongoDBHelper:
             
             # Insert element
             result = self.db.elements.insert_one(element_data)
-            logger.info(f"Inserted element: {result.inserted_id}")
             return result.inserted_id
         except Exception as e:
             logger.error(f"Error saving element to MongoDB: {e}")
@@ -280,10 +272,7 @@ class QTOKafkaProducer:
         self.topic = topic or os.getenv('KAFKA_QTO_TOPIC', 'qto-elements')
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.producer = None
-        
-        logger.info(f"QTO Kafka Producer initializing with bootstrap servers: {self.bootstrap_servers}")
-        
+        self.producer = None     
         # Initialize producer with retries
         self._initialize_producer()
     
@@ -296,7 +285,6 @@ class QTOKafkaProducer:
                 host = self.bootstrap_servers.split(':')[0]
                 try:
                     socket.gethostbyname(host)
-                    logger.info(f"Successfully resolved hostname: {host}")
                 except socket.gaierror:
                     logger.warning(f"Could not resolve hostname: {host}. Kafka connections may fail.")
                 
@@ -305,9 +293,7 @@ class QTOKafkaProducer:
                 
                 # Test the connection by listing topics (will raise exception if can't connect)
                 self.producer.list_topics(timeout=5)
-                
-                logger.info(f"QTO Kafka Producer initialized successfully")
-                logger.info(f"Publishing to topic: {self.topic}")
+
                 return
             except Exception as e:
                 retries += 1
@@ -341,26 +327,21 @@ class QTOKafkaProducer:
             return False
             
         try:
-            # Check if this data contains an elements array
+            # Check if this data contains an elements array (raw element dictionaries)
             if isinstance(qto_data.get('elements'), list) and len(qto_data.get('elements', [])) > 0:
+                # Pass the entire dictionary which includes metadata and raw elements
                 return self.send_project_update_notification(qto_data)
-            
-            # Otherwise proceed with single message sending
-            message = json.dumps(qto_data)
-            self.producer.produce(self.topic, message, callback=self.delivery_report)
-            self.producer.poll(0)  # Trigger any callbacks
-            logger.info(f"Sent QTO data for project {qto_data.get('project', 'unknown')}")
-            return True
         except Exception as e:
             logger.error(f"Error sending QTO data to Kafka: {e}")
             return False
     
-    def send_project_update_notification(self, qto_data: Dict[str, Any]):
-        """Send a simplified project update notification to Kafka topic.
-        Instead of sending all elements, just notify that the project has been updated.
+    def send_project_update_notification(self, project_update_data: Dict[str, Any]):
+        """Saves project/elements to MongoDB and sends a simplified project update 
+           notification to Kafka topic.
         
         Args:
-            qto_data: Dictionary containing QTO data with 'elements' list
+            project_update_data: Dictionary containing project metadata and the 
+                                   LIST OF RAW element dictionaries.
             
         Returns:
             Boolean indicating if the notification was sent successfully
@@ -369,18 +350,17 @@ class QTOKafkaProducer:
             logger.error("Kafka producer not initialized, cannot send notification")
             return False
             
-        # Extract elements and base metadata
-        elements = qto_data.get('elements', [])
+        # Extract elements (raw dicts) and metadata from the input dictionary
+        elements = project_update_data.get('elements', [])
         if not elements:
-            logger.warning("No elements found in QTO data, no notification sent")
+            logger.warning("No elements found in project update data, no notification sent")
             return False
             
-        # Extract metadata that will be common for all messages
         metadata = {
-            "project": qto_data.get("project"),
-            "filename": qto_data.get("filename"),
-            "timestamp": qto_data.get("timestamp"),
-            "file_id": qto_data.get("file_id")
+            "project": project_update_data.get("project"),
+            "filename": project_update_data.get("filename"),
+            "timestamp": project_update_data.get("timestamp"),
+            "file_id": project_update_data.get("file_id")
         }
         
         # Initialize MongoDB helper
@@ -404,6 +384,9 @@ class QTOKafkaProducer:
         elements_to_save = []
         for element in elements:
             try:
+                # Get element ID safely for logging and formatting
+                current_element_id = element.get("id", "UNKNOWN_ID") 
+                
                 # Get element type
                 element_type = element.get("type", "").lower()
                 
@@ -412,17 +395,19 @@ class QTOKafkaProducer:
                 
                 # Check if element is external based on common property
                 is_external = False
-                if "properties" in element:
+                # Use .get() for safer access to properties dictionary
+                properties = element.get("properties", {})
+                if properties:
                     # Check for IsExternal property (variations of capitalization)
-                    for prop_name, prop_value in element["properties"].items():
+                    for prop_name, prop_value in properties.items():
                         if prop_name.lower() == "isexternal" and str(prop_value).lower() in ["true", "1", "yes"]:
                             is_external = True
                             break
                 
                 # Get the original area - may be stored directly or in properties
                 original_area = element.get("original_area")
-                if original_area is None and "properties" in element and "original_area" in element["properties"]:
-                    original_area = element["properties"]["original_area"]
+                if original_area is None and "original_area" in properties:
+                    original_area = properties["original_area"]
                 
                 # Get area value
                 area_value = element.get("area", 0)
@@ -462,8 +447,6 @@ class QTOKafkaProducer:
                         quantity_key = "area" 
                         quantity_unit = "m²"
                 
-                # Get classification details (assuming they are extracted earlier or set to default)
-                # Note: Ensure these are correctly populated if needed. Placeholder defaults used here.
                 classification_id = element.get("classification_id", element.get("ebkph", "")) # Use ebkph as fallback
                 classification_name = element.get("classification_name", "")
                 classification_system = element.get("classification_system", "")
@@ -475,32 +458,69 @@ class QTOKafkaProducer:
                 elif quantity_key == "length":
                     # Need to fetch original_length if it exists
                     original_quantity_value = element.get("original_length")
-                    if original_quantity_value is None and "properties" in element and "original_length" in element["properties"]:
-                         original_quantity_value = element["properties"]["original_length"]
+                    if original_quantity_value is None and "original_length" in properties:
+                         original_quantity_value = properties["original_length"]
                 
                 # Convert original quantity to float if possible
                 if original_quantity_value is not None:
                     try:
                         original_quantity_value = float(original_quantity_value)
                     except (ValueError, TypeError):
-                        original_quantity_value = None # Set to None if conversion fails
+                        # Log conversion error, but keep None for the DB
+                        logger.warning(f"Could not convert original_quantity_value '{original_quantity_value}' to float for element {current_element_id}. Storing as null.")
+                        original_quantity_value = None 
 
                 # Format element for MongoDB saving (aligning with target schema)
+                assigned_global_id = element.get("global_id") # Use direct get, handle None later if necessary
+                assigned_ifc_class = element.get("type", "Unknown") 
+                assigned_name = element.get("name", "Unknown") # Default to Unknown if name is missing
+                assigned_type_name = element.get("type_name") # Get type_name
+                assigned_properties = element.get("properties", {}) # Get properties
+
+                # --- Process materials --- START ---
+                material_volumes_dict = element.get("material_volumes") # Get the dict from parser
+                materials_for_db = []
+                if isinstance(material_volumes_dict, dict):
+                    for mat_name, mat_data in material_volumes_dict.items():
+                        # Ensure mat_data is a dictionary before accessing keys
+                        if isinstance(mat_data, dict):
+                            mat_entry = {
+                                "name": mat_name,
+                                "unit": "m³" # Assuming m³ for volume-based materials
+                            }
+                            if "volume" in mat_data:
+                                mat_entry["volume"] = mat_data["volume"]
+                            if "fraction" in mat_data:
+                                mat_entry["fraction"] = mat_data["fraction"]
+                            # Optionally add width if present and needed
+                            # if "width" in mat_data:
+                            #     mat_entry["width"] = mat_data["width"]
+                            materials_for_db.append(mat_entry)
+                        else:
+                             # Log unexpected format for mat_data
+                             # Use the defined current_element_id
+                             logger.warning(f"Unexpected format for material data {mat_name} in element {current_element_id}: {mat_data}")
+                elif material_volumes_dict is not None: 
+                    # Log if material_volumes is not a dict but also not None
+                    # Use the defined current_element_id
+                    logger.warning(f"material_volumes for element {current_element_id} is not a dictionary: {material_volumes_dict}")
+                
                 formatted_element = {
                     "project_id": project_id,
-                    "ifc_id": element.get("id", ""), # Store original IFC ID
-                    "global_id": element.get("global_id", element.get("id", "")), # Store GlobalId
-                    "type": element.get("type", "Unknown"), # Use 'type' field
-                    "name": element.get("name", element.get("type", "Unknown")), # Add name field
+                    "ifc_id": current_element_id, # Use the defined current_element_id
+                    "global_id": assigned_global_id, # Use original GlobalId (fallback to id)
+                    "ifc_class": assigned_ifc_class, # Rename 'type' to 'ifc_class'
+                    "name": assigned_name, # Instance Name (fallback to type, then Unknown)
+                    "type_name": assigned_type_name, # Type Name (e.g., CW 200mm Concrete)
                     "level": element.get("level", ""), # Top-level field
                     "quantity": {
                         "value": primary_quantity,
                         "type": quantity_key,
                         "unit": quantity_unit
                     },
-                    "original_quantity": {
+                    "original_quantity": { 
                         "value": original_quantity_value,
-                        "type": quantity_key
+                        "type": quantity_key # Use the same type as the primary quantity
                     } if original_quantity_value is not None else None, # Nested object
                     "is_structural": is_structural, # Top-level field
                     "is_external": is_external, # Top-level field
@@ -509,13 +529,15 @@ class QTOKafkaProducer:
                         "name": classification_name,
                         "system": classification_system
                     },
-                    "materials": element.get("materials", []), # Keep materials as is
-                    "properties": element.get("properties", {}), # Store raw properties separately if needed
+                    "materials": materials_for_db, # Assign the processed list
+                    "properties": assigned_properties, # Assign parsed properties
                     "status": "active" # Keep status
                 }
                 elements_to_save.append(formatted_element)
             except Exception as e:
-                logger.error(f"Error formatting element for saving: {e}")
+                # Use current_element_id if available, otherwise use a placeholder
+                element_identifier = current_element_id if 'current_element_id' in locals() else 'UNKNOWN'
+                logger.error(f"Error formatting element {element_identifier} for saving: {e}")
         
         # Save all elements in a single batch
         if elements_to_save:
@@ -523,7 +545,6 @@ class QTOKafkaProducer:
             if not success:
                 logger.error("Failed to save elements to MongoDB")
                 return False
-            logger.info(f"Saved {len(elements_to_save)} elements to MongoDB for project {metadata['project']}")
         
         # Send a single project update notification
         try:
@@ -549,7 +570,6 @@ class QTOKafkaProducer:
             self.producer.poll(0)  # Trigger any callbacks
             self.producer.flush(timeout=5)  # Ensure message is delivered
             
-            logger.info(f"Sent project update notification for '{metadata['project']}' with {len(elements_to_save)} elements")
             return True
         except Exception as e:
             logger.error(f"Error sending project update notification to Kafka: {e}")
@@ -676,6 +696,7 @@ def format_ifc_elements_for_qto(project_name: str,
             "is_structural": is_structural,
             "is_external": is_external,
             "ebkph": classification_id,
+            "type_name": element.get("type_name"),  # Include type_name in the output
             "materials": [],
             "classification": {
                 "id": classification_id,
@@ -683,6 +704,14 @@ def format_ifc_elements_for_qto(project_name: str,
                 "system": classification_system
             }
         }
+        
+        # If type_name is still None, try to extract from name as fallback (many IFC exporters include type in name)
+        if not formatted_element["type_name"] and ":" in element.get("name", ""):
+            name_parts = element.get("name", "").split(":")
+            if len(name_parts) >= 2:
+                # Use everything before the last colon+number pattern as type name
+                type_part = ":".join(name_parts[:-1]) if name_parts[-1].strip().isdigit() else ":".join(name_parts)
+                formatted_element["type_name"] = type_part
         
         # Ensure area value is numeric (in case it was stored as string)
         if isinstance(formatted_element["area"], str):

@@ -9,6 +9,7 @@ import {
   TableCell,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import React from "react";
@@ -163,7 +164,11 @@ const ElementRow: React.FC<ElementRowProps> = ({
         sx={{
           "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.02)" },
           cursor: "pointer",
-          backgroundColor: isEdited ? "rgba(255, 152, 0, 0.08)" : "inherit",
+          backgroundColor: isEdited
+            ? "rgba(255, 152, 0, 0.08)"
+            : element.groupedElements && element.groupedElements > 1
+            ? "rgba(25, 118, 210, 0.05)"
+            : "inherit",
           transition: "background-color 0.3s ease",
         }}
         onClick={() => toggleExpand(element.id)}
@@ -181,7 +186,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
           </IconButton>
         </TableCell>
         <TableCell>
-          {element.global_id || element.id}
+          {element.type_name || element.name || element.type}
           {isEdited && (
             <EditIcon
               fontSize="small"
@@ -191,6 +196,35 @@ const ElementRow: React.FC<ElementRowProps> = ({
                 color: "warning.main",
               }}
             />
+          )}
+          {element.groupedElements && element.groupedElements > 1 && (
+            <Typography
+              variant="caption"
+              sx={{
+                ml: 1,
+                display: "inline-block",
+                color: "text.secondary",
+                backgroundColor: element.hasPropertyDifferences
+                  ? "rgba(255, 152, 0, 0.08)"
+                  : "rgba(25, 118, 210, 0.05)",
+                borderRadius: "4px",
+                padding: "0 4px",
+                fontWeight: "medium",
+              }}
+            >
+              {element.groupedElements} Elemente
+              {element.hasPropertyDifferences && (
+                <span
+                  style={{
+                    marginLeft: "4px",
+                    color: "orange",
+                  }}
+                  title="Diese Elemente haben unterschiedliche Eigenschaften"
+                >
+                  *
+                </span>
+              )}
+            </Typography>
           )}
         </TableCell>
         <TableCell>{category}</TableCell>
@@ -206,35 +240,79 @@ const ElementRow: React.FC<ElementRowProps> = ({
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center" }}>
-            <TextField
-              variant="standard"
-              size="small"
-              type="number"
-              inputProps={{
-                step: "0.001",
-                style: { textAlign: "right" }, // Align text right
-              }}
-              value={getDisplayValue()} // Display formatted value
-              onChange={(e) =>
-                handleQuantityChange(
-                  element.id,
-                  primaryQuantityKey,
-                  originalQuantityValue, // Pass the determined original value
-                  e.target.value
-                )
-              }
-              onFocus={(e) => e.target.select()}
-              onClick={(e) => e.stopPropagation()}
-              sx={{
-                flexGrow: 1, // Take available space
-                mr: 1, // Margin right for spacing
-                "& .MuiInput-root": {
-                  "&:before, &:after": {
-                    borderBottom: isEdited ? "2px solid orange" : undefined,
+            {element.groupedElements && element.groupedElements > 1 ? (
+              <Tooltip
+                title="Bearbeitung nicht möglich, da mehrere Elemente gruppiert angezeigt werden. Wechseln Sie zur Einzelansicht um Mengen zu bearbeiten."
+                placement="top"
+                arrow
+              >
+                <span style={{ width: "100%" }}>
+                  <TextField
+                    variant="standard"
+                    size="small"
+                    type="number"
+                    inputProps={{
+                      step: "0.001",
+                      style: { textAlign: "right" }, // Align text right
+                    }}
+                    value={getDisplayValue()} // Display formatted value
+                    disabled={true}
+                    onClick={(e) => e.stopPropagation()}
+                    sx={{
+                      flexGrow: 1, // Take available space
+                      mr: 1, // Margin right for spacing
+                      "& .MuiInput-root": {
+                        "&:before, &:after": {
+                          borderBottom: isEdited
+                            ? "2px solid orange"
+                            : undefined,
+                        },
+                      },
+                      // Style for disabled state
+                      "& .Mui-disabled": {
+                        WebkitTextFillColor: "rgba(0, 0, 0, 0.6) !important",
+                        cursor: "not-allowed",
+                      },
+                    }}
+                  />
+                </span>
+              </Tooltip>
+            ) : (
+              <TextField
+                variant="standard"
+                size="small"
+                type="number"
+                inputProps={{
+                  step: "0.001",
+                  style: { textAlign: "right" }, // Align text right
+                }}
+                value={getDisplayValue()} // Display formatted value
+                onChange={(e) => {
+                  // If this is a grouped element, don't allow direct editing
+                  if (element.groupedElements && element.groupedElements > 1) {
+                    return;
+                  }
+
+                  handleQuantityChange(
+                    element.id,
+                    primaryQuantityKey,
+                    originalQuantityValue, // Pass the determined original value
+                    e.target.value
+                  );
+                }}
+                onFocus={(e) => e.target.select()}
+                onClick={(e) => e.stopPropagation()}
+                sx={{
+                  flexGrow: 1, // Take available space
+                  mr: 1, // Margin right for spacing
+                  "& .MuiInput-root": {
+                    "&:before, &:after": {
+                      borderBottom: isEdited ? "2px solid orange" : undefined,
+                    },
                   },
-                },
-              }}
-            />
+                }}
+              />
+            )}
             <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
               {unit}
             </Typography>

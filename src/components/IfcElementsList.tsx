@@ -9,6 +9,7 @@ import {
   TableHead,
   TableRow,
   Typography,
+  Box,
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { IFCElement } from "../types/types";
@@ -16,6 +17,7 @@ import EbkpGroupRow from "./IfcElements/EbkpGroupRow";
 import ElementsHeader from "./IfcElements/ElementsHeader";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { EditedQuantity } from "./IfcElements/types";
+import ViewModeToggle from "./IfcElements/ViewModeToggle";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -37,6 +39,8 @@ interface IfcElementsListProps {
   resetEdits: () => void;
   onEbkpStatusChange: (hasGroups: boolean) => void;
   targetIfcClasses?: string[];
+  viewType?: string;
+  setViewType?: (viewType: string) => void;
 }
 
 const IfcElementsList = ({
@@ -49,18 +53,21 @@ const IfcElementsList = ({
   resetEdits,
   onEbkpStatusChange,
   targetIfcClasses = TARGET_IFC_CLASSES,
+  viewType,
+  setViewType,
 }: IfcElementsListProps) => {
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
   const [classificationFilter, setClassificationFilter] = useState<string>("");
-  const [selectedElement, setSelectedElement] = useState<IFCElement | null>(
+  const [_selectedElement, setSelectedElement] = useState<IFCElement | null>(
     null
   );
 
   // Use only the EBKP groups hook, not the element editing hook
   const { ebkpGroups, uniqueClassifications, hasEbkpGroups } = useEbkpGroups(
     elements,
-    classificationFilter
+    classificationFilter,
+    viewType
   );
 
   // Call the callback when hasEbkpGroups changes
@@ -181,6 +188,8 @@ const IfcElementsList = ({
         setClassificationFilter={setClassificationFilter}
         elements={elements}
         onElementSelect={handleElementSelect}
+        viewType={viewType}
+        ebkpGroups={ebkpGroups}
       />
 
       <TableContainer
@@ -193,6 +202,28 @@ const IfcElementsList = ({
           paddingTop: "12px",
         }}
       >
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            px: 2,
+            py: 1,
+            borderBottom: "1px solid rgba(0, 0, 0, 0.08)",
+          }}
+        >
+          <Typography variant="subtitle1" fontWeight="medium">
+            Elemente ({totalFilteredElements})
+          </Typography>
+
+          {setViewType && (
+            <ViewModeToggle
+              viewType={viewType || "individual"}
+              onChange={setViewType}
+            />
+          )}
+        </Box>
+
         <Table stickyHeader style={{ width: "100%", tableLayout: "fixed" }}>
           <TableHead>
             <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.08)" }}>
@@ -236,7 +267,7 @@ export const ElementDetailHeader = () => (
   <TableHead>
     <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.04)" }}>
       <TableCell width="50px" />
-      <TableCell>ID / GlobalID</TableCell>
+      <TableCell>Type</TableCell>
       <TableCell>Kategorie</TableCell>
       <TableCell>Geschoss</TableCell>
       <TableCell width="150px" align="center">

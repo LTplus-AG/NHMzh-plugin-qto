@@ -16,7 +16,7 @@ import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import EditIcon from "@mui/icons-material/Edit";
 import { IFCElement } from "../../types/types";
 import ElementRow from "./ElementRow";
-import { EditedArea } from "./types";
+import { EditedQuantity } from "./types";
 
 interface EbkpGroup {
   code: string;
@@ -30,7 +30,7 @@ interface EbkpGroupRowProps {
   toggleExpand: (code: string) => void;
   expandedElements: string[];
   toggleExpandElement: (id: string) => void;
-  editedElements: Record<string, EditedArea>;
+  editedElements: Record<string, EditedQuantity>;
   handleQuantityChange: (
     elementId: string,
     quantityKey: "area" | "length",
@@ -112,7 +112,7 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                   <TableHead>
                     <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.05)" }}>
                       <TableCell width="50px" />
-                      <TableCell>ID</TableCell>
+                      <TableCell>Type</TableCell>
                       <TableCell>Kategorie</TableCell>
                       <TableCell>Ebene</TableCell>
                       <TableCell width="150px" align="center">

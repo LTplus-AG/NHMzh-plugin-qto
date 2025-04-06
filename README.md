@@ -7,28 +7,94 @@
 [![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: AGPL](https://img.shields.io/badge/License-AGPL-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
 
-> Quantity Take-Off (QTO) application for NHMzh
+> A comprehensive Quantity Take-Off (QTO) application for BIM workflows that extracts, manipulates, and visualizes quantities from IFC models.
 
 ## ✨ Features
 
 - 📊 Interactive eBKP structure with expandable/collapsible rows
 - 📤 Drag-and-drop IFC model upload and smart parsing
-- 🔍 Intelligent IFC elements grouping by type
-- 📝 Comprehensive property extraction from IFC elements
+- 🔍 Intelligent IFC elements grouping by type and classification
+- 📐 Automatic quantity extraction based on element type (area, length, volume)
+- 🧮 Material volume calculation and analysis
+- 🔎 Advanced search with autocomplete for finding elements
+- ✏️ Quantity editing with change tracking and history
+- 📡 Integration with Kafka for event publishing
+- 💾 Data persistence with MongoDB
+- 🚦 Classification filtering (EBKP, etc.)
+- 🔄 Event-driven architecture for integration with other systems
 
 ## 🗂️ Project Structure
 
 ```
 plugin-qto/
   ├── src/              # Frontend React app
+  │   ├── components/   # React components
+  │   │   ├── IfcElements/  # Element-related components
+  │   ├── types/        # TypeScript type definitions
   ├── backend/          # Python FastAPI backend for IFC parsing
+  │   ├── main.py       # Main API application
+  │   ├── qto_producer.py  # Kafka producer for QTO data
+  │   ├── ifc_quantities_config.py  # Configuration for quantity extraction
+  ├── public/           # Public assets
   ├── data/             # Static data files
-  └── public/           # Public assets
+  └── dist/             # Build output
 ```
+
+## 🔧 Architecture
+
+### Backend
+
+- **FastAPI** application with endpoints for IFC processing
+- **IfcOpenShell** for parsing IFC files
+- **Kafka Producer** for publishing QTO events
+- **MongoDB** for storing element and project data
+
+### Frontend
+
+- **React/TypeScript** with Material-UI components
+- **MUI DataGrid** for efficient element display
+- **Component-based** architecture for maintainability
 
 ## 🚀 Quick Start
 
-### Frontend (React)
+### Prerequisites
+
+- Docker and Docker Compose
+- Python 3.8+
+- Node.js 16+
+
+### Using Docker
+
+1. Clone the repository:
+
+```bash
+git clone <repository-url>
+cd plugin-qto
+```
+
+2. Start with Docker Compose:
+
+```bash
+docker-compose up -d
+```
+
+This will start:
+
+- Kafka broker and UI
+- Backend API on port 8000
+- Frontend development server on port 3004
+
+3. For production deployment:
+
+```bash
+docker-compose up frontend
+```
+
+This will build and serve the frontend through Nginx on port 80.
+
+### Local Development
+
+#### Frontend (React)
 
 ```bash
 # Install dependencies
@@ -38,7 +104,7 @@ npm install
 npm run dev
 ```
 
-### Backend (Python)
+#### Backend (Python)
 
 ```bash
 # Navigate to backend directory
@@ -62,86 +128,238 @@ uvicorn main:app --reload
 
 ## 📖 Usage
 
-1. Open the application in your browser (default: http://localhost:3000)
+1. Open the application in your browser (default: http://localhost:3004)
 2. Drag and drop an IFC file in the upload area
 3. Explore the eBKP structure in the top table
 4. Analyze the extracted IFC elements grouped by type in the bottom section
+5. Use the search feature to find specific elements
+6. Edit quantities as needed
+7. Send QTO data to Dtabase for integration with other systems
 
 ## 🔌 API Endpoints
 
-| Endpoint                   | Method | Description                              |
-| -------------------------- | ------ | ---------------------------------------- |
-| `/`                        | GET    | Welcome message                          |
-| `/upload-ifc/`             | POST   | Upload an IFC file and get a model ID    |
-| `/ifc-elements/{model_id}` | GET    | Get all elements from a specific model   |
-| `/models`                  | GET    | List all uploaded models                 |
-| `/models/{model_id}`       | DELETE | Delete a model                           |
-| `/simulation/ifc-elements` | GET    | Get simulated IFC elements (for testing) |
+| Endpoint                   | Method | Description                            |
+| -------------------------- | ------ | -------------------------------------- |
+| `/`                        | GET    | Welcome message                        |
+| `/upload-ifc/`             | POST   | Upload an IFC file for processing      |
+| `/ifc-elements/{model_id}` | GET    | Retrieve elements from a model         |
+| `/send-qto/`               | POST   | Send QTO data to Kafka                 |
+| `/qto-elements/{model_id}` | GET    | Get elements formatted for QTO display |
+| `/models`                  | GET    | List all uploaded models               |
+| `/models/{model_id}`       | DELETE | Delete a model                         |
+| `/health`                  | GET    | Check service health                   |
 
-## 📝 Kafka Message Format
+## 🖥️ Frontend Components
+
+### Core Components
+
+- **ObjectSearch**: Advanced search for IFC objects with autocompletion
+- **ClassificationFilter**: Filter elements by classification system
+- **ElementsHeader**: Controls for searching and filtering elements
+- **EbkpGroupRow**: Displays groups of elements by classification
+- **ElementRow**: Shows individual element details with quantity editing
+- **MaterialsTable**: Displays material information for elements
+
+### Workflow
+
+1. Upload an IFC model to the backend
+2. View extracted elements organized by classification
+3. Search and filter elements as needed
+4. Edit quantities if necessary
+5. Send updated QTO data for integration with other systems
+
+## 🔍 IFC Element Processing
+
+The system processes IFC elements based on their class types and extracts quantities using the configuration in `ifc_quantities_config.py`. For example:
+
+- **Walls and Slabs**: Area (m²) from GrossSideArea or GrossArea
+- **Beams and Columns**: Length (m) from Length property
+- **Materials**: Volumes calculated from element volume and material proportions
+
+## ✏️ Quantity Editing
+
+When editing quantities:
+
+1. Original values are preserved
+2. Change tracking is enabled
+3. Edited values are highlighted
+4. Changes can be reset
+
+## 📝 Format
 
 When sending QTO data to Kafka, the following JSON format is used:
 
 ```json
 {
-  "project": "project_name",
-  "filename": "ifc_filename.ifc",
-  "timestamp": "2023-12-31T12:00:00Z",
-  "file_id": "ifc_filename_2023-12-31T12:00:00Z",
-  "elements": [
-    {
-      "id": "1HFUtCRj9D3RelhQMZCBu8",
-      "category": "ifcwall",
-      "level": "EG",
-      "area": 24.56,
-      "is_structural": true,
-      "is_external": false,
-      "ebkph": "C2.1",
-      "materials": [
-        {
-          "name": "Concrete",
-          "fraction": 0.78,
-          "volume": 2.45
-        },
-        {
-          "name": "Insulation",
-          "fraction": 0.22,
-          "volume": 0.65
-        }
-      ],
-      "classification": {
-        "id": "C2.1",
-        "name": "Innenwand",
-        "system": "EBKP"
-      }
-    }
-  ]
+  "eventType": "PROJECT_UPDATED",
+  "timestamp": "2023-01-01T12:00:00Z",
+  "producer": "plugin-qto",
+  "payload": {
+    "projectId": "67e39625158688f60bbd807a",
+    "projectName": "Project Name",
+    "elementCount": 100
+  },
+  "metadata": {
+    "version": "1.0",
+    "correlationId": "abc123"
+  }
 }
 ```
 
-### Message Fields Explanation
+### Element Data Format
 
-| Field       | Description                                                            |
-| ----------- | ---------------------------------------------------------------------- |
-| `project`   | Project name                                                           |
-| `filename`  | Original IFC filename                                                  |
-| `timestamp` | ISO 8601 timestamp when the data was sent                              |
-| `file_id`   | Unique identifier for the file (combination of filename and timestamp) |
-| `elements`  | Array of building elements extracted from the IFC file                 |
+When sending data to Kafka, a notification message is sent with project metadata and element count:
 
-#### Element Fields
+```json
+{
+  "eventType": "PROJECT_UPDATED",
+  "timestamp": "2023-01-01T12:00:00Z",
+  "producer": "plugin-qto",
+  "payload": {
+    "projectId": "67e39625158688f60bbd807a",
+    "projectName": "Project Name",
+    "elementCount": 100
+  },
+  "metadata": {
+    "version": "1.0",
+    "correlationId": "abc123"
+  }
+}
+```
 
-| Field            | Description                                     |
-| ---------------- | ----------------------------------------------- |
-| `id`             | Global unique ID of the element                 |
-| `category`       | Element type/category (e.g., ifcwall, ifcslab)  |
-| `level`          | Building level or story                         |
-| `area`           | Surface area in square meters                   |
-| `is_structural`  | Boolean indicating if the element is structural |
-| `is_external`    | Boolean indicating if the element is external   |
-| `ebkph`          | eBKP-H classification code                      |
-| `materials`      | Array of materials used in the element          |
-| `classification` | Classification information (optional)           |
+Each element in MongoDB is stored with the following structure:
+
+```json
+{
+  "_id": {
+    "$oid": "67f2d5c1e266a64f97f4c87c"
+  },
+  "project_id": {
+    "$oid": "67e39625158688f60bbd807a"
+  },
+  "ifc_id": "139",
+  "global_id": "3DqaUydM99ehywE4_2hm1u",
+  "ifc_class": "IfcWall",
+  "name": "Basic Wall:Holz Aussenwand_470mm:2270026",
+  "type_name": "Basic Wall:Holz Aussenwand_470mm",
+  "level": "U1.UG_RDOK",
+  "quantity": {
+    "value": 555,
+    "type": "area",
+    "unit": "m²"
+  },
+  "original_quantity": {
+    "value": 68.8941199200415,
+    "type": "area"
+  },
+  "is_structural": true,
+  "is_external": false,
+  "classification": {
+    "id": "C4",
+    "name": "Deckenkonstruktion, Dachkonstruktion",
+    "system": "EBKP"
+  },
+  "materials": [
+    {
+      "name": "_Holz_wg",
+      "unit": "m³",
+      "volume": 1.35783,
+      "fraction": 0.04255
+    },
+    {
+      "name": "_Staenderkonstruktion_ungedaemmt_wg",
+      "unit": "m³",
+      "volume": 1.69729,
+      "fraction": 0.05319
+    }
+  ],
+  "properties": {
+    "Pset_BuildingStoreyElevation": {
+      "Name": "U1.UG_RDOK"
+    },
+    "Qto_WallBaseQuantities.Height": "3.500",
+    "Qto_WallBaseQuantities.Length": "19.684",
+    "Qto_WallBaseQuantities.Width": "0.470",
+    "Qto_WallBaseQuantities.GrossSideArea": "68.894",
+    "Pset_WallCommon.IsExternal": "True",
+    "Pset_WallCommon.LoadBearing": "True"
+  },
+  "status": "active",
+  "created_at": {
+    "$date": "2025-04-06T19:28:01.209Z"
+  },
+  "updated_at": {
+    "$date": "2025-04-06T19:28:01.209Z"
+  }
+}
+```
+
+### Element Fields Explanation
+
+| Field               | Description                                               |
+| ------------------- | --------------------------------------------------------- |
+| `_id`               | MongoDB document identifier                               |
+| `project_id`        | Reference to the project this element belongs to          |
+| `ifc_id`            | ID from the original IFC file                             |
+| `global_id`         | IFC GlobalId (UUID format)                                |
+| `ifc_class`         | IFC entity type (e.g., IfcWall, IfcSlab)                  |
+| `name`              | Instance name from IFC                                    |
+| `type_name`         | Type/style name                                           |
+| `level`             | Building story/level name                                 |
+| `quantity`          | Current quantity with value, type (area/length), and unit |
+| `original_quantity` | Original extracted quantity from IFC                      |
+| `is_structural`     | Boolean indicating if element is load-bearing             |
+| `is_external`       | Boolean indicating if element is exterior                 |
+| `classification`    | Classification system details with id, name, and system   |
+| `materials`         | Array of materials with name, volume, fraction, and unit  |
+| `properties`        | Key-value store of all IFC property sets                  |
+| `status`            | Element status (active, deleted, etc.)                    |
+| `created_at`        | Timestamp of element creation                             |
+| `updated_at`        | Timestamp of last element update                          |
+
+## 💾 MongoDB Schema
+
+Elements are stored with the following structure:
+
+```javascript
+{
+  "project_id": ObjectId("..."),
+  "ifc_id": "123",
+  "global_id": "3Hu7R7nL9Epf72889UUqXF",
+  "ifc_class": "IfcWall",
+  "name": "Basic Wall:Interior - 165 Blockwork:123456",
+  "type_name": "Basic Wall:Interior - 165 Blockwork",
+  "level": "Level 1",
+  "quantity": {
+    "value": 10.5,
+    "type": "area",
+    "unit": "m²"
+  },
+  "original_quantity": {
+    "value": 10.5,
+    "type": "area"
+  },
+  "is_structural": true,
+  "is_external": false,
+  "classification": {
+    "id": "321.41",
+    "name": "Interior walls",
+    "system": "EBKP"
+  },
+  "materials": [
+    {
+      "name": "Concrete",
+      "volume": 2.3,
+      "fraction": 0.8,
+      "unit": "m³"
+    }
+  ],
+  "properties": {
+    "Pset_WallCommon.FireRating": "2H"
+  },
+  "status": "active"
+}
+```
 
 ## 🛠️ Tech Stack
 
@@ -156,86 +374,29 @@ When sending QTO data to Kafka, the following JSON format is used:
 - **Python** - Backend language
 - **FastAPI** - API framework
 - **IfcOpenShell** - IFC parsing library
+- **Kafka** - Message broker
+- **MongoDB** - Database for element storage
 
 ## 📝 Notes
 
 - The application features a resilient architecture - it can run with or without the backend, using simulated IFC data when needed.
-- For production deployment, update the API URL in `MainPage.tsx` and configure proper CORS settings in the backend.
+- For production deployment, update the API URL in configuration and set proper CORS settings in the backend.
+- The system is designed to work with a variety of IFC schemas and element types.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## 📄 License
 
 AGPL
 
-# QTO Plugin
+## 🙏 Acknowledgements
 
-This plugin provides Quantity Takeoff (QTO) functionality for IFC models.
-
-## Docker Setup
-
-### Prerequisites
-
-- Docker and Docker Compose installed
-- Git (to clone the repository)
-
-### Running the application
-
-1. Clone the repository:
-
-```bash
-git clone <repository-url>
-cd plugin-qto
-```
-
-2. Configure environment variables (optional):
-
-   - Copy `.env.example` to `.env` if needed and adjust settings
-
-3. Start the development environment:
-
-```bash
-docker-compose up
-```
-
-This will start:
-
-- Kafka broker and UI
-- Backend API on port 8000
-- Frontend development server on port 3004
-
-4. For production deployment:
-
-```bash
-docker-compose up frontend
-```
-
-This will build and serve the frontend through Nginx on port 80.
-
-### Architecture
-
-The system consists of three main components:
-
-1. **Backend**: A FastAPI application that processes IFC files using ifcopenshell and sends QTO data to Kafka
-2. **Frontend**: A React application that provides the user interface
-3. **Kafka**: A message broker for sending QTO data to other systems
-
-### Environment Variables
-
-| Variable           | Description                       | Default               |
-| ------------------ | --------------------------------- | --------------------- |
-| API_URL            | URL for the backend API           | http://localhost:8000 |
-| FRONTEND_PORT      | Port for the development frontend | 3004                  |
-| FRONTEND_PROD_PORT | Port for the production frontend  | 80                    |
-| BACKEND_PORT       | Port for the backend API          | 8000                  |
-| KAFKA_QTO_TOPIC    | Kafka topic for QTO data          | qto-elements          |
-
-See `.env` file for more configuration options.
-
-### Development
-
-The development environment mounts the source code as volumes, so changes to the code will be reflected immediately without rebuilding the containers.
-
-### Production Deployment
-
-For production, the frontend is built and served through Nginx, which also proxies API requests to the backend.
-
-Make sure to set proper environment variables for production deployment, especially the API_URL.
+- IfcOpenShell for IFC parsing
+- Material-UI for React components
+- FastAPI for the backend framework
