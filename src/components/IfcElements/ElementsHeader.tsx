@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Typography, Badge, Tooltip, Chip, Box } from "@mui/material";
 import InfoIcon from "@mui/icons-material/Info";
 import ClassificationFilter from "./ClassificationFilter";
@@ -17,7 +17,7 @@ interface ElementsHeaderProps {
   }>;
   classificationFilter: string;
   setClassificationFilter: (value: string) => void;
-  elements?: IFCElement[]; // Use IFCElement type
+  elements?: IFCElement[];
   onElementSelect?: (element: IFCElement | null) => void;
 }
 
@@ -32,36 +32,11 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
   elements = [],
   onElementSelect = () => {},
 }) => {
-
   return (
     <div className="flex flex-col mb-3">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center">
-          <Typography variant="h5" className="mr-2">
-            IFC Elemente ({totalFilteredElements})
-          </Typography>
-          {targetIfcClasses && targetIfcClasses.length > 0 && (
-            <Tooltip
-              title={
-                <div>
-                  <p>Nur folgende IFC-Klassen werden berücksichtigt:</p>
-                  <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
-                    {targetIfcClasses.map((cls: string) => (
-                      <li key={cls}>{cls}</li>
-                    ))}
-                  </ul>
-                </div>
-              }
-              arrow
-            >
-              <Badge color="info" variant="dot" sx={{ cursor: "pointer" }}>
-                <InfoIcon fontSize="small" color="action" />
-              </Badge>
-            </Tooltip>
-          )}
-        </div>
-
-        {editedElementsCount > 0 && (
+      {/* Display edited elements badge if needed */}
+      {editedElementsCount > 0 && (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
           <Tooltip title="Änderungen zurücksetzen">
             <Chip
               label={`${editedElementsCount} Element${
@@ -71,34 +46,29 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
               onDelete={resetEdits}
             />
           </Tooltip>
-        )}
-      </div>
+        </Box>
+      )}
 
+      {/* Search and filter in one row */}
       <Box
         sx={{
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
           flexWrap: "wrap",
           gap: 2,
           mb: 2,
         }}
       >
-        {/* Add a counter of available elements for search */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        {/* Search area */}
+        <Box sx={{ display: "flex", alignItems: "center", flex: 1 }}>
           <BimObjectSearch
             elements={elements}
             onElementSelect={onElementSelect}
-            width={400}
-          />
-          <Chip
-            label={`${elements?.length || 0} Elemente`}
-            size="small"
-            color="default"
-            variant="outlined"
+            width="100%"
           />
         </Box>
 
+        {/* Classification filter */}
         {uniqueClassifications.length > 0 && (
           <ClassificationFilter
             uniqueClassifications={uniqueClassifications}

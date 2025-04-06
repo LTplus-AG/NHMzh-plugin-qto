@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { EditedQuantity } from "../types";
-import { IFCElement } from "../../types/types";
 
 export const useElementEditing = () => {
   const [editedElements, setEditedElements] = useState<

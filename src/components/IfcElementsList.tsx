@@ -36,6 +36,7 @@ interface IfcElementsListProps {
   ) => void;
   resetEdits: () => void;
   onEbkpStatusChange: (hasGroups: boolean) => void;
+  targetIfcClasses?: string[];
 }
 
 const IfcElementsList = ({
@@ -47,6 +48,7 @@ const IfcElementsList = ({
   handleQuantityChange,
   resetEdits,
   onEbkpStatusChange,
+  targetIfcClasses = TARGET_IFC_CLASSES,
 }: IfcElementsListProps) => {
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
@@ -171,7 +173,7 @@ const IfcElementsList = ({
     >
       <ElementsHeader
         totalFilteredElements={totalFilteredElements}
-        targetIfcClasses={TARGET_IFC_CLASSES}
+        targetIfcClasses={targetIfcClasses}
         editedElementsCount={editedElementsCount}
         resetEdits={resetEdits}
         uniqueClassifications={uniqueClassifications}

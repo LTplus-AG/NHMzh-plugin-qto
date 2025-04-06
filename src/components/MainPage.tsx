@@ -17,13 +17,19 @@ import {
   Snackbar,
   Tooltip,
   Typography,
+  Badge,
 } from "@mui/material";
 import { useEffect, useState } from "react";
-import apiClient, { IFCElement } from "../api/ApiClient";
+import apiClient from "../api/ApiClient";
 import { UploadedFile } from "../types/types";
 import FileUpload from "./FileUpload";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 import IfcElementsList from "./IfcElementsList";
+
+// Get target IFC classes from environment variable
+const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
+  ? import.meta.env.VITE_TARGET_IFC_CLASSES.split(",")
+  : [];
 
 const MainPage = () => {
   const [_uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -90,7 +96,9 @@ const MainPage = () => {
 
   const fetchIfcElements = async (modelId: string) => {
     if (!backendConnected || !modelId) {
-      setIfcError("Backend is not connected. Please make sure the server is running.");
+      setIfcError(
+        "Backend is not connected. Please make sure the server is running."
+      );
       return;
     }
 
@@ -100,7 +108,7 @@ const MainPage = () => {
 
       try {
         const qtoData = await apiClient.getQTOElements(modelId);
-        
+
         interface QTOElement {
           id: string;
           category: string;
@@ -151,7 +159,10 @@ const MainPage = () => {
             name: el.category,
             description: null,
             properties: el.properties || {},
-            material_volumes: Object.keys(material_volumes).length > 0 ? material_volumes : null,
+            material_volumes:
+              Object.keys(material_volumes).length > 0
+                ? material_volumes
+                : null,
             category: el.category,
             level: el.level,
             area: el.area,
@@ -175,7 +186,9 @@ const MainPage = () => {
         setIfcElements(elements);
       }
     } catch (error) {
-      setIfcError("Could not load IFC elements from server. Please try uploading the file again.");
+      setIfcError(
+        "Could not load IFC elements from server. Please try uploading the file again."
+      );
     } finally {
       setIfcLoading(false);
     }
@@ -186,7 +199,9 @@ const MainPage = () => {
     if (file.modelId && backendConnected) {
       fetchIfcElements(file.modelId);
     } else {
-      setIfcError("No model ID associated with this file or backend not connected.");
+      setIfcError(
+        "No model ID associated with this file or backend not connected."
+      );
     }
   };
 
@@ -212,15 +227,24 @@ const MainPage = () => {
         await apiClient.getIFCElements(selectedFile.modelId);
       } catch (checkError) {
         await loadModelsList();
-        throw new Error("Model not found on server. It may have been deleted or the server was restarted.");
+        throw new Error(
+          "Model not found on server. It may have been deleted or the server was restarted."
+        );
       }
 
       const updatedElements = ifcElements.map((element) => {
         if (editedElements.hasOwnProperty(element.id)) {
           const edited = editedElements[element.id];
-          if (edited && edited.newArea !== null && edited.newArea !== undefined) {
+          if (
+            edited &&
+            edited.newArea !== null &&
+            edited.newArea !== undefined
+          ) {
             const updatedElement = JSON.parse(JSON.stringify(element));
-            const numericArea = typeof edited.newArea === "string" ? parseFloat(edited.newArea) : edited.newArea;
+            const numericArea =
+              typeof edited.newArea === "string"
+                ? parseFloat(edited.newArea)
+                : edited.newArea;
             updatedElement.original_area = edited.originalArea;
             updatedElement.area = numericArea;
             return updatedElement;
@@ -229,15 +253,27 @@ const MainPage = () => {
         return element;
       });
 
-      const projectName = selectedProject === "Projekt 1" ? "Recyclingzentrum Juch-Areal" :
-        selectedProject === "Projekt 2" ? "Gesamterneuerung Stadthausanlage" :
-        selectedProject === "Projekt 3" ? "Amtshaus Walche" :
-        "Gemeinschaftszentrum Wipkingen";
+      const projectName =
+        selectedProject === "Projekt 1"
+          ? "Recyclingzentrum Juch-Areal"
+          : selectedProject === "Projekt 2"
+          ? "Gesamterneuerung Stadthausanlage"
+          : selectedProject === "Projekt 3"
+          ? "Amtshaus Walche"
+          : "Gemeinschaftszentrum Wipkingen";
 
-      const response = await apiClient.sendQTO(selectedFile.modelId, updatedElements, projectName);
+      const response = await apiClient.sendQTO(
+        selectedFile.modelId,
+        updatedElements,
+        projectName
+      );
       setKafkaSuccess(true);
     } catch (error) {
-      setKafkaError(`Error sending QTO data: ${error instanceof Error ? error.message : String(error)}`);
+      setKafkaError(
+        `Error sending QTO data: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       setKafkaSuccess(false);
     } finally {
       setKafkaSending(false);
@@ -446,88 +482,115 @@ const MainPage = () => {
       {/* Main content area - IFC Elements */}
       <div className="flex-1 flex flex-col overflow-y-auto">
         <div className="p-10 flex flex-col flex-grow">
-          {/* Removed IFC Elemente Title */}
-
-          {/* Info section - model info and alerts */}
-          <Box
-            display="flex"
-            flexDirection={{ xs: "column", md: "row" }}
-            justifyContent="space-between"
-            alignItems={{ xs: "flex-start", md: "center" }}
-            mb={4}
-            className="flex flex-col md:flex-row w-full"
-          >
-            {/* Left side: Active model info */}
-            {selectedFile && (
-              <div className="font-medium flex items-center mb-2 md:mb-0 max-w-full">
-                <span className="whitespace-nowrap mr-1">Aktives Modell:</span>
-                <span className="truncate max-w-[200px] md:max-w-[300px] font-bold">
-                  {selectedFile.filename}
-                </span>
-                <Tooltip
-                  title={
-                    <>
-                      <div>
-                        Hochgeladen:{" "}
-                        {new Date(selectedFile.created_at).toLocaleString(
-                          "de-CH"
-                        )}
-                      </div>
-                      <div>Elemente: {ifcElements.length}</div>
-                    </>
-                  }
-                  arrow
-                >
-                  <IconButton size="small" sx={{ ml: 0.5 }}>
-                    <InfoIcon fontSize="inherit" color="action" />
-                  </IconButton>
-                </Tooltip>
-              </div>
-            )}
-            {/* Placeholder if no file selected to maintain layout */}
-            {!selectedFile && <div />}
-
-            {/* Right side: Action buttons */}
-            {selectedFile && (
-              <div className="flex gap-2 self-start md:self-center mt-2 md:mt-0">
-                {/* Reload Button */}
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  onClick={() =>
-                    selectedFile.modelId &&
-                    fetchIfcElements(selectedFile.modelId)
-                  }
-                  disabled={ifcLoading || !backendConnected}
-                  className="text-primary border-primary whitespace-nowrap"
-                  size="small"
-                  sx={{ minWidth: "max-content" }}
-                >
-                  {ifcLoading ? "Lädt..." : "Modell neu laden"}
-                </Button>
-
-                {/* Preview Button (formerly Send to Database) */}
-                {ifcElements.length > 0 && (
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    startIcon={<SendIcon />}
-                    onClick={handleOpenPreviewDialog}
-                    disabled={
-                      kafkaSending || !backendConnected || !hasEbkpGroups
-                    }
-                    className="bg-primary whitespace-nowrap"
-                    size="small"
-                    sx={{ minWidth: "max-content" }}
+          {/* Model information header */}
+          {selectedFile && (
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                mb: 3,
+                borderBottom: "1px solid rgba(0, 0, 0, 0.12)",
+                pb: 2,
+              }}
+            >
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  mb: 1,
+                }}
+              >
+                {/* Model title & stats */}
+                <Box sx={{ display: "flex", flexDirection: "column" }}>
+                  <Typography variant="h5" component="h1" fontWeight="bold">
+                    {selectedFile.filename}
+                  </Typography>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 2,
+                      mt: 1,
+                    }}
                   >
-                    {kafkaSending ? "Senden..." : "Vorschau anzeigen"}
+                    <Typography variant="body2" color="text.secondary">
+                      Hochgeladen:{" "}
+                      {new Date(selectedFile.created_at).toLocaleString(
+                        "de-CH"
+                      )}
+                    </Typography>
+                    <Box
+                      sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
+                    >
+                      <Typography variant="body2" color="text.secondary">
+                        {ifcElements.length} Elemente
+                      </Typography>
+
+                      {TARGET_IFC_CLASSES && TARGET_IFC_CLASSES.length > 0 && (
+                        <Tooltip
+                          title={
+                            <div>
+                              <p>
+                                Nur folgende IFC-Klassen werden berücksichtigt:
+                              </p>
+                              <ul
+                                style={{ margin: "8px 0", paddingLeft: "20px" }}
+                              >
+                                {TARGET_IFC_CLASSES.map((cls: string) => (
+                                  <li key={cls}>{cls}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          }
+                          arrow
+                        >
+                          <IconButton size="small" sx={{ p: 0 }}>
+                            <InfoIcon fontSize="small" color="action" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Box>
+                  </Box>
+                </Box>
+
+                {/* Action buttons */}
+                <Box sx={{ display: "flex", gap: 2 }}>
+                  {/* Reload Button */}
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    onClick={() =>
+                      selectedFile.modelId &&
+                      fetchIfcElements(selectedFile.modelId)
+                    }
+                    disabled={ifcLoading || !backendConnected}
+                    className="text-primary border-primary whitespace-nowrap"
+                    size="small"
+                  >
+                    {ifcLoading ? "Lädt..." : "Modell neu laden"}
                   </Button>
-                )}
-              </div>
-            )}
-            {/* Placeholder if no file selected to maintain layout */}
-            {!selectedFile && <div />}
-          </Box>
+
+                  {/* Preview Button (formerly Send to Database) */}
+                  {ifcElements.length > 0 && (
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      startIcon={<SendIcon />}
+                      onClick={handleOpenPreviewDialog}
+                      disabled={
+                        kafkaSending || !backendConnected || !hasEbkpGroups
+                      }
+                      className="bg-primary whitespace-nowrap"
+                      size="small"
+                    >
+                      {kafkaSending ? "Senden..." : "Vorschau anzeigen"}
+                    </Button>
+                  )}
+                </Box>
+              </Box>
+            </Box>
+          )}
 
           {/* Message when no IFC file is loaded */}
           {!ifcLoading && ifcElements.length === 0 && !ifcError && (
@@ -549,6 +612,7 @@ const MainPage = () => {
               resetEdits={resetEdits}
               // Pass callback to update EBKP status
               onEbkpStatusChange={setHasEbkpGroups}
+              targetIfcClasses={TARGET_IFC_CLASSES}
             />
           </div>
         </div>

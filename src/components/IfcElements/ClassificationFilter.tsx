@@ -1,5 +1,5 @@
 import React from "react";
-import { Typography, FormControl, Select, MenuItem } from "@mui/material";
+import { Typography, FormControl, Select, MenuItem, Box } from "@mui/material";
 
 interface ClassificationFilterProps {
   uniqueClassifications: Array<{
@@ -17,11 +17,14 @@ const ClassificationFilter: React.FC<ClassificationFilterProps> = ({
   setClassificationFilter,
 }) => {
   return (
-    <div className="flex items-center">
-      <Typography variant="body2" className="mr-2">
+    <Box sx={{ display: "flex", alignItems: "center", whiteSpace: "nowrap" }}>
+      <Typography
+        variant="body2"
+        sx={{ mr: 1, fontSize: "0.875rem", color: "text.secondary" }}
+      >
         Filter nach Klassifikation:
       </Typography>
-      <FormControl size="small" sx={{ minWidth: 240 }}>
+      <FormControl size="small" sx={{ minWidth: 220 }}>
         <Select
           value={classificationFilter}
           onChange={(e) => setClassificationFilter(e.target.value as string)}
@@ -45,7 +48,7 @@ const ClassificationFilter: React.FC<ClassificationFilterProps> = ({
           })}
         </Select>
       </FormControl>
-    </div>
+    </Box>
   );
 };
 
