@@ -25,21 +25,37 @@ def is_running_in_docker():
 
 class MongoDBHelper:
     """Helper class for MongoDB operations."""
-    def __init__(self, uri=None, db_name=None, max_retries=3, retry_delay=2):
-        """Initialize MongoDB connection.
+    def __init__(self, db_name=None, max_retries=5, retry_delay=3):
+        """Initialize MongoDB connection using service-specific credentials.
         
         Args:
-            uri: MongoDB connection string (defaults to environment variable)
-            db_name: Database name (defaults to environment variable)
+            db_name: Database name (defaults to MONGODB_QTO_DATABASE env var)
             max_retries: Maximum number of connection retries
             retry_delay: Delay between retries in seconds
         """
-        # Get configuration from environment variables
-        if not uri and not os.getenv('MONGODB_URI'):
-            raise ValueError("MongoDB URI is required - set MONGODB_URI environment variable")
+        # --- Get configuration from environment variables ---
+        self.host = os.getenv('MONGODB_HOST', 'mongodb') # Service name in Docker network
+        self.port = os.getenv('MONGODB_PORT', '27017')   # Default MongoDB port
+        self.user = os.getenv('MONGODB_QTO_USER')       # Specific user for this service
+        self.password = os.getenv('MONGODB_QTO_PASSWORD') # Specific password for this service
+        self.db_name = db_name or os.getenv('MONGODB_QTO_DATABASE', 'qto') # Specific DB for this service
         
-        self.uri = uri or os.getenv('MONGODB_URI')
-        self.db_name = db_name or os.getenv('MONGODB_DATABASE', 'qto')
+        # --- Validate required variables ---
+        if not self.user:
+            raise ValueError("MONGODB_QTO_USER environment variable is not set.")
+        if not self.password:
+            raise ValueError("MONGODB_QTO_PASSWORD environment variable is not set.")
+            
+        # --- Construct the MongoDB URI ---
+        # Format: mongodb://user:password@host:port/database?authSource=admin
+        self.uri = (
+            f"mongodb://{self.user}:{self.password}@{self.host}:{self.port}/"
+            f"{self.db_name}?authSource=admin"
+        )
+        
+        logger.info(f"Constructed MongoDB URI for user '{self.user}' (Password Hidden)") 
+        # --- End URI Construction ---
+
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.client = None
@@ -50,27 +66,38 @@ class MongoDBHelper:
     def _initialize_connection(self):
         """Initialize MongoDB connection with retry logic."""
         retries = 0
-        while retries <= self.max_retries:
+        while retries < self.max_retries:
             try:
+                logger.info(f"Attempting MongoDB connection (attempt {retries + 1}/{self.max_retries})...")
                 # Create the MongoDB client
-                self.client = MongoClient(self.uri)
-                # Test the connection by pinging the server
+                # Add serverSelectionTimeoutMS to handle network issues better
+                self.client = MongoClient(
+                    self.uri, 
+                    serverSelectionTimeoutMS=5000 # Timeout after 5 seconds
+                )
+                # Test the connection by pinging the server - this forces authentication
                 self.client.admin.command('ping')
                 # Get database
                 self.db = self.client[self.db_name]
                 
-                logger.info(f"MongoDB connection initialized successfully to database {self.db_name}")
+                logger.info(f"MongoDB connection established successfully to database '{self.db_name}'")
                 
-                # Ensure collections exist
-                self._ensure_collections()
+                # Ensure collections exist (optional, init script should handle this)
+                # self._ensure_collections() 
                 return
             except Exception as e:
                 retries += 1
-                if retries <= self.max_retries:
-                    logger.warning(f"Failed to connect to MongoDB (attempt {retries}/{self.max_retries}): {e}")
+                logger.warning(f"MongoDB connection failed (attempt {retries}/{self.max_retries}): {e}")
+                if retries < self.max_retries:
+                    logger.info(f"Retrying in {self.retry_delay} seconds...")
                     time.sleep(self.retry_delay)
                 else:
-                    logger.error(f"Failed to connect to MongoDB after {self.max_retries} attempts: {e}")
+                    logger.error(f"Failed to connect to MongoDB after {self.max_retries} attempts.")
+                    # Optionally raise the exception or handle it as needed
+                    # raise ConnectionFailure(f"Could not connect to MongoDB: {e}") from e
+                    # For now, just log and let db be None
+                    self.db = None 
+                    return # Exit loop after max retries
     
     def _ensure_collections(self):
         """Ensure required collections exist with proper indexes."""
