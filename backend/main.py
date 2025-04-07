@@ -832,6 +832,11 @@ def get_ifc_elements(model_id: str):
                                             element_data["properties"][prop_name] = prop_value
                     
                     # Extract classification information
+                    temp_classification_id = None
+                    temp_classification_name = None
+                    temp_classification_system = None
+                    found_association = False
+
                     if hasattr(element, "HasAssociations"):
                         for relation in element.HasAssociations:
                             if relation.is_a("IfcRelAssociatesClassification"):
@@ -840,37 +845,47 @@ def get_ifc_elements(model_id: str):
                                     # Handle IFC2X3 schema differences
                                     schema_version = ifc_file.schema
                                     if "2X3" in schema_version:
-                                        # IFC2X3 uses ItemReference instead of Identification
-                                        classification_id = classification_ref.ItemReference if hasattr(classification_ref, "ItemReference") else None
-                                        classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                        temp_classification_id = classification_ref.ItemReference if hasattr(classification_ref, "ItemReference") else None
+                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
                                     else:
-                                        # IFC4 and newer use Identification
-                                        classification_id = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
-                                        classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
-                                    
-                                    # Store the classification data
-                                    element_data["classification_id"] = classification_id
-                                    element_data["classification_name"] = classification_name
+                                        temp_classification_id = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
+                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
                                     
                                     # Get classification system name if available
                                     if hasattr(classification_ref, "ReferencedSource") and classification_ref.ReferencedSource:
                                         referenced_source = classification_ref.ReferencedSource
                                         if hasattr(referenced_source, "Name"):
-                                            element_data["classification_system"] = referenced_source.Name
+                                            temp_classification_system = referenced_source.Name
+                                    found_association = True
                                     
                                 # If directly using IfcClassification (less common)
                                 elif classification_ref.is_a("IfcClassification"):
-                                    element_data["classification_system"] = classification_ref.Name if hasattr(classification_ref, "Name") else None
-                                    element_data["classification_name"] = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
+                                    temp_classification_system = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    temp_classification_name = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
+                                    found_association = True
+
+                                # Break after finding the first valid association
+                                if found_association:
+                                    break
                     
-                    # If no classification was found, try looking in properties
-                    if not element_data["classification_id"]:
-                        for prop_name, prop_value in element_data["properties"].items():
-                            if isinstance(prop_value, str) and ("ebkp" in prop_name.lower() or "classification" in prop_name.lower()):
-                                element_data["classification_id"] = prop_value
-                                element_data["classification_system"] = "EBKP"
-                                break
-                    
+                    # Check properties for an overriding eBKP/Classification
+                    property_override_found = False
+                    for prop_name, prop_value in element_data["properties"].items():
+                        if isinstance(prop_value, str) and ("ebkp" in prop_name.lower() or "classification" in prop_name.lower()):
+                            # Override ID and System with property value
+                            element_data["classification_id"] = prop_value
+                            element_data["classification_system"] = "EBKP" # Explicitly set system based on property name convention
+                            # Keep the name found via association (if any)
+                            element_data["classification_name"] = temp_classification_name 
+                            property_override_found = True
+                            break # Stop searching properties once an override is found
+
+                    # If no property override was found, use the values from the association (if any)
+                    if not property_override_found:
+                        element_data["classification_id"] = temp_classification_id
+                        element_data["classification_name"] = temp_classification_name
+                        element_data["classification_system"] = temp_classification_system
+
                     # Get volume information for the element
                     element_volume_dict = get_volume_from_properties(element)
                     element_volume_value = None # Initialize volume value

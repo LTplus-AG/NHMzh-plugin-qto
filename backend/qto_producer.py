@@ -34,8 +34,11 @@ class MongoDBHelper:
             max_retries: Maximum number of connection retries
             retry_delay: Delay between retries in seconds
         """
-        # Get configuration from environment variables or use default values
-        self.uri = uri or os.getenv('MONGODB_URI', 'mongodb://admin:secure_password@mongodb:27017')
+        # Get configuration from environment variables
+        if not uri and not os.getenv('MONGODB_URI'):
+            raise ValueError("MongoDB URI is required - set MONGODB_URI environment variable")
+        
+        self.uri = uri or os.getenv('MONGODB_URI')
         self.db_name = db_name or os.getenv('MONGODB_DATABASE', 'qto')
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -451,25 +454,19 @@ class QTOKafkaProducer:
                 classification_name = element.get("classification_name", "")
                 classification_system = element.get("classification_system", "")
 
-                # Determine original quantity value based on quantity_key
-                original_quantity_value = None
-                if quantity_key == "area":
-                    original_quantity_value = original_area # Already fetched
-                elif quantity_key == "length":
-                    # Need to fetch original_length if it exists
-                    original_quantity_value = element.get("original_length")
-                    if original_quantity_value is None and "original_length" in properties:
-                         original_quantity_value = properties["original_length"]
+                # Create the original_quantity object with both value and type fields
+                original_quantity_obj = None
+                if original_area is not None:
+                    original_quantity_obj = {
+                        "value": original_area,
+                        "type": "area"
+                    }
+                elif element.get("original_length") is not None:
+                    original_quantity_obj = {
+                        "value": element.get("original_length"),
+                        "type": "length"
+                    }
                 
-                # Convert original quantity to float if possible
-                if original_quantity_value is not None:
-                    try:
-                        original_quantity_value = float(original_quantity_value)
-                    except (ValueError, TypeError):
-                        # Log conversion error, but keep None for the DB
-                        logger.warning(f"Could not convert original_quantity_value '{original_quantity_value}' to float for element {current_element_id}. Storing as null.")
-                        original_quantity_value = None 
-
                 # Format element for MongoDB saving (aligning with target schema)
                 assigned_global_id = element.get("global_id") # Use direct get, handle None later if necessary
                 assigned_ifc_class = element.get("type", "Unknown") 
@@ -518,10 +515,7 @@ class QTOKafkaProducer:
                         "type": quantity_key,
                         "unit": quantity_unit
                     },
-                    "original_quantity": { 
-                        "value": original_quantity_value,
-                        "type": quantity_key # Use the same type as the primary quantity
-                    } if original_quantity_value is not None else None, # Nested object
+                    "original_quantity": original_quantity_obj,  # Include properly formatted original_quantity
                     "is_structural": is_structural, # Top-level field
                     "is_external": is_external, # Top-level field
                     "classification": { # Top-level object
@@ -685,18 +679,33 @@ def format_ifc_elements_for_qto(project_name: str,
         classification_name = element.get("classification_name", "")
         classification_system = element.get("classification_system", "")
 
+        # Create the original_quantity object with both value and type fields
+        original_quantity_obj = None
+        if original_area is not None:
+            original_quantity_obj = {
+                "value": original_area,
+                "type": "area"
+            }
+        elif element.get("original_length") is not None:
+            original_quantity_obj = {
+                "value": element.get("original_length"),
+                "type": "length"
+            }
+        
         # Format element for QTO
         formatted_element = {
             "id": element.get("id", ""),
+            "name": element.get("name", ""), # Add instance name
+            "type_name": element.get("type_name"),  # Add type name
             "category": element.get("type", "Unknown"),
             "level": element.get("level", ""),
             "area": area_value,  # Area extracted in main.py based on TARGET_QUANTITIES
             "length": length_value,  # Include length from TARGET_QUANTITIES
             "original_area": original_area,  # Include original_area in output
+            "original_quantity": original_quantity_obj,  # Include properly formatted original_quantity
             "is_structural": is_structural,
             "is_external": is_external,
             "ebkph": classification_id,
-            "type_name": element.get("type_name"),  # Include type_name in the output
             "materials": [],
             "classification": {
                 "id": classification_id,
@@ -705,13 +714,10 @@ def format_ifc_elements_for_qto(project_name: str,
             }
         }
         
-        # If type_name is still None, try to extract from name as fallback (many IFC exporters include type in name)
-        if not formatted_element["type_name"] and ":" in element.get("name", ""):
-            name_parts = element.get("name", "").split(":")
-            if len(name_parts) >= 2:
-                # Use everything before the last colon+number pattern as type name
-                type_part = ":".join(name_parts[:-1]) if name_parts[-1].strip().isdigit() else ":".join(name_parts)
-                formatted_element["type_name"] = type_part
+        # Simple fallback: If type_name is missing, use the element's name
+        # This matches previous behavior before recent changes
+        if not formatted_element["type_name"] and formatted_element["name"]:
+            formatted_element["type_name"] = formatted_element["name"]
         
         # Ensure area value is numeric (in case it was stored as string)
         if isinstance(formatted_element["area"], str):
