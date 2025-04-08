@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -512,11 +512,20 @@ def read_root():
     return {"message": "IFC Parser API is running"}
 
 @app.post("/upload-ifc/", response_model=ModelUploadResponse)
-async def upload_ifc(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+async def upload_ifc(
+    file: UploadFile = File(...),
+    project: str = Form(...),
+    filename: str = Form(...),
+    timestamp: str = Form(...),
+    background_tasks: BackgroundTasks = None
+):
     """
     Upload an IFC file for processing
     
     - **file**: The IFC file to upload
+    - **project**: Project identifier
+    - **filename**: Filename of the IFC file
+    - **timestamp**: Timestamp of the upload
     
     Returns information about the uploaded model including a model_id for future reference.
     """
