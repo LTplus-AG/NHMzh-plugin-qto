@@ -307,7 +307,7 @@ const MainPage = () => {
   };
 
   return (
-    <div className="w-full flex h-full">
+    <div className="w-full flex h-full" style={{ width: "100%" }}>
       <Snackbar
         open={showConnectionError}
         autoHideDuration={6000}
@@ -484,7 +484,10 @@ const MainPage = () => {
       </div>
 
       {/* Main content area - IFC Elements */}
-      <div className="flex-1 flex flex-col overflow-y-auto">
+      <div
+        className="flex-1 flex flex-col overflow-y-auto"
+        style={{ width: "100%" }}
+      >
         <div className="p-10 flex flex-col flex-grow">
           {/* Model information header */}
           {selectedFile && (
@@ -507,7 +510,12 @@ const MainPage = () => {
               >
                 {/* Model title & stats */}
                 <Box sx={{ display: "flex", flexDirection: "column" }}>
-                  <Typography variant="h5" component="h1" fontWeight="bold">
+                  <Typography
+                    variant="h5"
+                    component="h1"
+                    fontWeight="bold"
+                    sx={{ color: "black" }}
+                  >
                     {selectedFile.filename}
                   </Typography>
                   <Box

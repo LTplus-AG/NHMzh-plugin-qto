@@ -141,7 +141,7 @@ const IfcElementsList = ({
     return (
       <div
         className="flex flex-col items-center justify-center py-10"
-        style={{ height: "100%" }}
+        style={{ height: "100%", width: "100%" }}
       >
         <CircularProgress />
         <Typography variant="body2" className="mt-4">
