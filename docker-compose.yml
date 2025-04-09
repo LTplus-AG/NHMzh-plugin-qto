@@ -92,6 +92,29 @@ services:
     depends_on:
       - qto-backend
 
+  qto-ifc-msg:
+    build:
+      context: ./qto_ifc-msg
+      dockerfile: Dockerfile
+    depends_on:
+      - qto-backend
+      - broker
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      KAFKA_BROKER: broker:29092
+      KAFKA_IFC_TOPIC: ${KAFKA_IFC_TOPIC:-ifc-files}
+      BACKEND_URL: http://qto-backend:8000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: false
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-ROOTUSER}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-CHANGEME123}
+      MINIO_IFC_BUCKET: ${MINIO_IFC_BUCKET:-ifc-files}
+    networks:
+      - ${NETWORK_NAME:-nhm-network}
+    restart: on-failure
+    
+
 volumes:
   backend-temp:
     name: ${BACKEND_TEMP_VOL:-qto-backend-temp}
