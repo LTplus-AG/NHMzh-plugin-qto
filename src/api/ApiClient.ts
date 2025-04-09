@@ -76,12 +76,16 @@ export interface HealthResponse {
 
 // Get API URL from environment or use default
 const getApiBaseUrl = () => {
-  // For Vite, environment variables must be prefixed with VITE_
-  if (import.meta.env?.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-  // Fallback to default
-  return "/api";
+  // Use production URL if building for production, otherwise use local URL
+  const baseUrl = import.meta.env.PROD
+    ? import.meta.env.VITE_API_URL_PROD
+    : import.meta.env.VITE_API_URL_LOCAL;
+
+  // Log the selected URL for debugging
+  console.log(`Using API Base URL: ${baseUrl}`);
+
+  // Return the selected URL or fallback if neither is defined
+  return baseUrl || "/api"; // Fallback if no env vars are set
 };
 
 /**

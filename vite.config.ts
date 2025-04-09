@@ -7,8 +7,12 @@ export default defineConfig(({ mode }) => {
   // Load environment variables
   const env = loadEnv(mode, process.cwd(), "");
 
+  console.log(`Running in ${mode} mode`);
+  console.log(`API URL: ${env.VITE_API_URL}`);
+  console.log(`WebSocket URL: ${env.VITE_WEBSOCKET_URL}`);
+
   // Default to localhost:8000 if API_URL is not defined
-  const apiUrl = env.API_URL || "http://localhost:8000";
+  const apiUrl = env.VITE_API_URL || "http://localhost:8000";
   console.log(`Using API URL: ${apiUrl}`);
 
   return {
@@ -26,10 +30,13 @@ export default defineConfig(({ mode }) => {
     define: {
       // Expose environment variables to the client
       "import.meta.env.VITE_API_URL": JSON.stringify(apiUrl),
+      "import.meta.env.VITE_WEBSOCKET_URL": JSON.stringify(
+        env.VITE_WEBSOCKET_URL
+      ),
     },
     build: {
       target: "esnext",
-      minify: false,
+      minify: mode === "production",
       rollupOptions: {
         output: {
           format: "esm",
@@ -40,13 +47,13 @@ export default defineConfig(({ mode }) => {
       },
     },
     preview: {
-      port: 3004,
+      port: parseInt(env.VITE_PORT || "3004"),
       strictPort: true,
     },
     server: {
-      port: 3004,
+      port: parseInt(env.VITE_PORT || "3004"),
       strictPort: true,
-      host: true,
+      host: env.VITE_HOST || "localhost",
       proxy: {
         "/api": {
           target: apiUrl,

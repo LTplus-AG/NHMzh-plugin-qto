@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "start": "npm run build && npm run preview",
-    "dev": "vite",
+    "dev": "vite --mode development",
     "build": "tsc -b && vite build --mode production",
     "build:dev": "tsc -b && vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview --mode production"
   },
   "dependencies": {
     "@emotion/react": "11.11.0",
