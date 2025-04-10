@@ -58,7 +58,9 @@ const IfcElementsList = ({
 }: IfcElementsListProps) => {
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
-  const [classificationFilter, setClassificationFilter] = useState<string>("");
+  const [classificationFilter, setClassificationFilter] = useState<string[]>(
+    []
+  );
   const [_selectedElement, setSelectedElement] = useState<IFCElement | null>(
     null
   );

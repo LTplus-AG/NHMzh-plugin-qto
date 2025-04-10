@@ -15,45 +15,64 @@ export interface CostItem {
 
 export interface IFCElement {
   id: string;
-  global_id?: string;
+  global_id?: string | null | undefined;
   type: string;
   name: string;
-  type_name?: string;
-  description?: string;
+  type_name?: string | null | undefined;
+  description?: string | null | undefined;
   properties: Record<string, any>;
-  material_volumes?: Record<string, any>;
-  level?: string;
-  classification_id?: string;
-  classification_name?: string;
-  classification_system?: string;
-  area?: number;
-  length?: number;
-  volume?: number;
-  original_area?: number;
-  quantity?: {
-    value: number | null;
-    type: "area" | "length";
-    unit: string;
-  };
-  original_quantity?: {
-    value: number | null;
-    type: "area" | "length";
-  } | null;
-  category?: string;
-  is_structural?: boolean;
-  is_external?: boolean;
-  ebkph?: string;
-  materials?: Array<{
-    name: string;
-    fraction?: number;
-    volume?: number;
-    unit?: string;
-  }>;
-  classification?: {
-    id?: string;
-    name?: string;
-    system?: string;
-  };
+  material_volumes?: Record<
+    string,
+    {
+      fraction?: number;
+      volume?: number;
+      width?: number;
+    }
+  > | null;
+  level?: string | null | undefined;
+  classification_id?: string | null | undefined;
+  classification_name?: string | null | undefined;
+  classification_system?: string | null | undefined;
+  area?: number | null | undefined;
+  length?: number | null | undefined;
+  volume?: number | null | undefined;
+  original_area?: number | null | undefined;
+  quantity?:
+    | {
+        value: number | null;
+        type: "area" | "length";
+        unit: string;
+      }
+    | null
+    | undefined;
+  original_quantity?:
+    | {
+        value: number | null;
+        type: "area" | "length";
+      }
+    | null
+    | undefined;
+  category?: string | null | undefined;
+  is_structural?: boolean | null | undefined;
+  is_external?: boolean | null | undefined;
+  ebkph?: string | null | undefined;
+  materials?:
+    | Array<{
+        name: string;
+        fraction?: number | null | undefined;
+        volume?: number | null | undefined;
+        unit?: string | null | undefined;
+      }>
+    | null
+    | undefined;
+  classification?:
+    | {
+        id?: string | null | undefined;
+        name?: string | null | undefined;
+        system?: string | null | undefined;
+      }
+    | null
+    | undefined;
   groupedElements?: number;
   originalElementIds?: string[];
   hasPropertyDifferences?: boolean;

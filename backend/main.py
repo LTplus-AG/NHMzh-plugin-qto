@@ -18,6 +18,7 @@ import re
 # Import the new configuration
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 from datetime import datetime
+from bson import ObjectId # Needed for fallback query
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -67,9 +68,6 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
-
-# Store uploaded IFC models in memory
-ifc_models = {}
 
 # Get the list of target IFC classes from environment variables
 TARGET_IFC_CLASSES = os.getenv("TARGET_IFC_CLASSES", "").split(",")
@@ -135,7 +133,6 @@ class HealthResponse(BaseModel):
     status: str
     kafka: str
     mongodb: str
-    models_in_memory: int
     ifcopenshell_version: str
 
 class ModelInfo(BaseModel):
@@ -432,72 +429,6 @@ def _round_value(value, digits=3):
     except (ValueError, TypeError):
         return value
 
-def extract_material_layers_from_string(layers_string: str) -> Dict[str, Dict[str, Any]]:
-    """
-    Extract material information from the Material.Layers string property.
-    This is a fallback for elements that don't have material associations but have this property.
-    
-    Format is typically: "Material1 (Xmm) | Material2 (Ymm) | ..."
-    
-    Returns:
-    - Dictionary mapping material names to their properties (fraction, etc)
-    """
-    if not layers_string:
-        return {}
-    
-    material_volumes = {}
-    
-    # Split the string by pipe character
-    layers = [layer.strip() for layer in layers_string.split('|')]
-    if not layers:
-        return {}
-    
-    # Extract material names and thickness (if available)
-    total_thickness = 0.0
-    materials_with_thickness = []
-    
-    for layer in layers:
-        # Try to extract material name and thickness
-        if '(' in layer and ')' in layer:
-            # Format: "Material (Xmm)"
-            name_part = layer[:layer.rfind('(')].strip()
-            thickness_part = layer[layer.rfind('(')+1:layer.rfind(')')].strip()
-            
-            # Try to extract the numeric thickness value
-            thickness = 0.0
-            if 'mm' in thickness_part:
-                try:
-                    thickness = float(thickness_part.replace('mm', '').strip())
-                except ValueError:
-                    thickness = 0.0
-            
-            materials_with_thickness.append((name_part, thickness))
-            total_thickness += thickness
-        else:
-            # Just a material name without thickness
-            materials_with_thickness.append((layer.strip(), 0.0))
-    
-    # If all thicknesses are zero, assign equal fractions
-    if total_thickness <= 0.0:
-        fraction = 1.0 / len(materials_with_thickness)
-        for name, _ in materials_with_thickness:
-            if name:  # Skip empty names
-                material_volumes[name] = {
-                    "fraction": _round_value(fraction, 5)
-                }
-    else:
-        # Calculate fractions based on thickness
-        for name, thickness in materials_with_thickness:
-            if name:  # Skip empty names
-                fraction = thickness / total_thickness if total_thickness > 0 else 0.0
-                material_volumes[name] = {
-                    "fraction": _round_value(fraction, 5)
-                }
-                if thickness > 0:
-                    material_volumes[name]["width"] = _round_value(thickness, 5)
-    
-    return material_volumes
-
 @app.on_event("startup")
 async def startup_event():
     """Run startup tasks"""
@@ -511,602 +442,330 @@ def read_root():
     logger.info("API root endpoint accessed")
     return {"message": "IFC Parser API is running"}
 
-@app.post("/upload-ifc/", response_model=ModelUploadResponse)
+# Keep upload_ifc but modify its logic
+# Change response model to a simple confirmation
+class ProcessResponse(BaseModel):
+    message: str
+    project: str
+    filename: str
+    element_count: int
+    kafka_status: Optional[str] = None # Keep Kafka status optional
+
+@app.post("/upload-ifc/", response_model=ProcessResponse)
 async def upload_ifc(
     file: UploadFile = File(...),
     project: str = Form(...),
     filename: str = Form(...),
     timestamp: str = Form(...),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None # Keep background tasks if needed later
 ):
     """
-    Upload an IFC file for processing
-    
-    - **file**: The IFC file to upload
-    - **project**: Project identifier
-    - **filename**: Filename of the IFC file
-    - **timestamp**: Timestamp of the upload
-    
-    Returns information about the uploaded model including a model_id for future reference.
+    Receives an IFC file (usually from qto_ifc-msg),
+    parses it, saves the parsed data to MongoDB,
+    and triggers a Kafka notification.
     """
+    logger.info(f"Received file upload request for project '{project}', filename '{filename}'")
    
     if not file.filename.endswith('.ifc'):
         raise HTTPException(status_code=400, detail="Only IFC files are supported")
     
+    temp_file_path = None # Initialize path
+    ifc_file = None
     try:
-        # Create temp directory if it doesn't exist
+        # --- Save Temp File --- (Similar to before)
         temp_dir = os.path.join(os.getcwd(), "temp")
         os.makedirs(temp_dir, exist_ok=True)
-        
-        # Ensure temp directory is writable
         if not os.access(temp_dir, os.W_OK):
-            raise HTTPException(status_code=500, detail="Server configuration error: Temp directory is not writable")
+            raise HTTPException(status_code=500, detail="Server configuration error: Temp directory not writable")
         
-        # Save uploaded file to a temporary location with readable name
+        # Use a more predictable temp name if needed, or keep UUID
         file_uuid = str(uuid.uuid4())
-        temp_file_path = os.path.join(temp_dir, f"{file_uuid}_{file.filename}")
+        # Ensure the original filename from the form is used for the temp file name part
+        temp_file_path = os.path.join(temp_dir, f"{file_uuid}_{filename}")
         
         contents = await file.read()
-        if len(contents) == 0:
-            logger.error("Uploaded file is empty")
+        if not contents:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
         
         with open(temp_file_path, 'wb') as f:
             f.write(contents)
         
-        # Verify file was written correctly
         if not os.path.exists(temp_file_path):
-            logger.error(f"Failed to write file to {temp_file_path}")
             raise HTTPException(status_code=500, detail="Failed to save uploaded file")
             
-        file_size = os.path.getsize(temp_file_path)
-        logger.info(f"File saved successfully. Size: {file_size} bytes")
+        logger.info(f"Temporary file saved: {temp_file_path}")
         
-        # Open the IFC file with ifcopenshell
+        # --- Open IFC File --- (Similar to before)
         try:
             ifc_file = ifcopenshell.open(temp_file_path)
             logger.info(f"IFC file opened successfully with schema: {ifc_file.schema}")
         except Exception as ifc_error:
-            error_traceback = traceback.format_exc()
-            logger.error(f"Traceback: {error_traceback}")
-            
-            # Check if file is actually an IFC file
+            logger.error(f"Error opening IFC file {temp_file_path}: {ifc_error}")
+            # Add more checks like before if needed
+            raise HTTPException(status_code=400, detail=f"Error processing IFC file: {str(ifc_error)}")
+
+        # --- Parse IFC Data using the new function --- << NEW
+        logger.info(f"Starting IFC parsing for {filename}...")
+        parsed_elements: List[IFCElement] = _parse_ifc_data(ifc_file)
+        logger.info(f"Finished parsing. Found {len(parsed_elements)} elements.")
+
+        if not parsed_elements:
+             logger.warning(f"Parsing completed, but no elements were extracted from {filename}. Check IFC structure and filters.")
+             # Decide if this is an error or just an empty file case
+             # For now, proceed but log warning.
+
+        # --- Convert Pydantic models to dicts for saving --- << NEW
+        element_dicts = []
+        for elem_model in parsed_elements:
             try:
-                with open(temp_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    first_line = f.readline()
-                    if not first_line.startswith('ISO-10303-21') and not 'HEADER' in first_line:
-                        logger.error("File does not appear to be a valid IFC file")
-                        raise HTTPException(status_code=400, 
-                                          detail="The uploaded file does not appear to be a valid IFC file")
-            except Exception as read_error:
-                logger.error(f"Error checking file format: {str(read_error)}")
-                
-            raise HTTPException(status_code=400, 
-                              detail=f"Error processing IFC file: {str(ifc_error)}")
-        
-        # Generate a unique ID for this IFC model
-        model_id = file_uuid
-        
-        # Store the IFC file in memory
-        ifc_models[model_id] = {
-            "filename": file.filename,
-            "ifc_file": ifc_file,
-            "temp_file_path": temp_file_path
-        }
-        
-        # Get basic statistics about the file
+                # Use model_dump for Pydantic v2
+                element_dicts.append(elem_model.model_dump(exclude_none=True))
+            except AttributeError:
+                # Fallback for older Pydantic
+                element_dicts.append(elem_model.dict(exclude_none=True))
+            except Exception as dump_error:
+                logger.error(f"Error converting element {getattr(elem_model, 'id', '?')} to dict: {dump_error}")
+                # Optionally skip this element or add placeholder
+
+        # --- Save Parsed Data to MongoDB --- << NEW
+        if mongodb is not None and mongodb.db is not None:
+            logger.info(f"Saving {len(element_dicts)} parsed elements to MongoDB for project '{project}', filename '{filename}'")
+            save_success = mongodb.save_parsed_data(project, filename, element_dicts)
+            if not save_success:
+                # Log error but potentially continue to Kafka if needed?
+                # Or raise exception? For now, log and continue.
+                logger.error("Failed to save parsed data to MongoDB.")
+                # Consider raising HTTPException(500, "Failed to save processing results")
+        else:
+            logger.warning("MongoDB not connected. Parsed data not saved.")
+            # Consider raising HTTPException(503, "Database unavailable, cannot save results")
+
+        # --- Send Project Update Notification to Kafka --- << MODIFIED
+        kafka_status = "unavailable"
         try:
-            element_count = len(ifc_file.by_type("IfcElement"))
-            entities_by_type = {}
-            for entity in ifc_file.by_type("IfcElement"):
-                entity_type = entity.is_a()
-                if entity_type not in entities_by_type:
-                    entities_by_type[entity_type] = 0
-                entities_by_type[entity_type] += 1
-            
-        except Exception as stat_error:
-            logger.error(f"Error getting file statistics: {str(stat_error)}")
-            element_count = 0
-            entities_by_type = {}
-        
-        return {
-            "message": "IFC file uploaded successfully",
-            "model_id": model_id,
-            "filename": file.filename,
-            "element_count": element_count,
-            "entity_types": entities_by_type
-        }
+            # Prepare data structure expected by send_project_update_notification
+            project_update_data = {
+                "project": project,
+                "filename": filename,
+                "file_id": f"{project}/{filename}", # Consistent file ID
+                "elements": element_dicts, # Pass the raw dicts
+                "timestamp": timestamp # Use the timestamp from the request
+            }
+
+            producer = QTOKafkaProducer()
+            if producer.producer: # Check if producer connected successfully
+                 send_success = producer.send_project_update_notification(project_update_data)
+                 # Flush is handled within send_project_update_notification now
+                 # flush_success = producer.flush()
+                 if send_success:
+                     kafka_status = "sent"
+                     logger.info(f"Kafka notification sent successfully for {filename}")
+                 else:
+                     kafka_status = "failed"
+                     logger.warning(f"Kafka notification failed for {filename}")
+            else:
+                logger.warning("Kafka producer not available, notification not sent.")
+
+        except Exception as kafka_error:
+            logger.error(f"Error sending Kafka notification: {kafka_error}")
+            kafka_status = "error"
+
+        # --- Return Success Response --- << MODIFIED
+        return ProcessResponse(
+            message="IFC file processed successfully",
+            project=project,
+            filename=filename,
+            element_count=len(parsed_elements),
+            kafka_status=kafka_status
+        )
     
     except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error processing IFC file: {str(e)}")
-        logger.error(traceback.format_exc())
-        
-        # Clean up temp file if it was created
-        if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+        # If an HTTPException was raised, clean up and re-raise
+        if temp_file_path and os.path.exists(temp_file_path):
             try:
                 os.unlink(temp_file_path)
             except Exception as cleanup_error:
-                logger.error(f"Error removing temp file: {str(cleanup_error)}")
-        
+                logger.error(f"Error removing temp file during HTTP exception: {str(cleanup_error)}")
+        raise
+    except Exception as e:
+        # General error handling
+        logger.error(f"Unexpected error processing IFC file {filename}: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Clean up temp file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logger.error(f"Error removing temp file during general exception: {str(cleanup_error)}")
         raise HTTPException(status_code=500, detail=f"Error processing IFC file: {str(e)}")
+    finally:
+        # --- Clean up --- (Ensure temp file is removed)
+        # The ifc_file object might hold a lock on the file on some systems
+        if 'ifc_file' in locals() and ifc_file is not None:
+            # Explicitly close or delete the ifc_file object if necessary
+            # Although ifcopenshell usually doesn't hold a persistent lock after opening
+            del ifc_file # Remove reference
 
-@app.get("/ifc-elements/{model_id}", response_model=List[IFCElement])
-def get_ifc_elements(model_id: str):
-    """
-    Retrieve IFC elements from a previously uploaded model
-    
-    - **model_id**: ID of the model to retrieve elements from
-    
-    Returns a list of IFC elements with their properties and classifications.
-    """
-   
-    if model_id not in ifc_models:
-        logger.warning(f"Model ID not found: {model_id}")
-        raise HTTPException(status_code=404, detail="IFC model not found")
-    
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+                logger.info(f"Cleaned up temporary file: {temp_file_path}")
+            except Exception as cleanup_error:
+                # Log error but don't crash the response if cleanup fails
+                logger.error(f"Error removing temp file during final cleanup: {str(cleanup_error)}")
+
+@app.get("/projects/", response_model=List[str])
+async def list_projects():
+    """Returns a list of available project names from the parsed data.""" # Docstring updated
+    if mongodb is None or mongodb.db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
     try:
-        ifc_file = ifc_models[model_id]["ifc_file"]
-        elements = []
+        # Use the new MongoDBHelper method
+        project_names = mongodb.list_distinct_projects()
+        return project_names
+    except Exception as e:
+        logger.error(f"Error listing projects from DB: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving project list")
+
+@app.get("/projects/{project_name}/elements/", response_model=List[IFCElement])
+async def get_project_elements(project_name: str):
+    """Retrieves element data for a given project name.
+    
+    Tries to fetch data from the parsed_ifc_data collection first.
+    If not found, falls back to querying the raw elements collection.
+    """
+    if mongodb is None or mongodb.db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    elements_data = None
+    source = "parsed_ifc_data" # Track the source of the data
+
+    try:
+        # 1. Attempt primary data fetch from parsed_ifc_data
+        logger.info(f"Attempting primary data fetch from parsed_ifc_data for '{project_name}'")
+        elements_data = mongodb.get_parsed_data_by_project(project_name)
         
-        # Create a mapping of elements to their building stories
-        element_to_storey = {}
-        building_storeys = list(ifc_file.by_type("IfcBuildingStorey"))
-        
-        # Process spatial containment relationship
-        for rel in ifc_file.by_type("IfcRelContainedInSpatialStructure"):
-            if rel.RelatingStructure and rel.RelatingStructure.is_a("IfcBuildingStorey"):
-                storey_name = rel.RelatingStructure.Name if hasattr(rel.RelatingStructure, "Name") and rel.RelatingStructure.Name else "Unknown Level"
-                for element in rel.RelatedElements:
-                    if element is not None:
-                        try:
-                            element_to_storey[element.id()] = storey_name
-                        except Exception as e:
-                            logger.warning(f"Error mapping element to storey: {e}")
-        
-        # Filter elements by TARGET_IFC_CLASSES
-        if TARGET_IFC_CLASSES:
-            all_elements = []
-            for element_type in TARGET_IFC_CLASSES:
-                if element_type and element_type.strip():
-                    try:
-                        type_elements = list(ifc_file.by_type(element_type.strip()))
-                        all_elements.extend(type_elements)
-                    except Exception as type_error:
-                        logger.warning(f"Error getting elements of type {element_type}: {str(type_error)}")
-            
-            logger.info(f"Filtered to {len(all_elements)} elements of targeted types")
+        if elements_data:
+            logger.info(f"Found {len(elements_data)} elements in parsed_ifc_data for '{project_name}'")
         else:
-            all_elements = list(ifc_file.by_type("IfcElement"))
-            logger.info(f"Processing all {len(all_elements)} elements")
-        
-        # Process elements in chunks
-        chunk_size = 100
-        for i in range(0, len(all_elements), chunk_size):
-            chunk = all_elements[i:i+chunk_size]
+            logger.info(f"No data found in parsed_ifc_data for '{project_name}'. Attempting fallback.")
+
+        # 2. Fallback: If primary fetch failed or returned empty, try raw elements collection
+        if not elements_data:
+            source = "elements_collection (fallback)"
+            logger.info(f"Attempting fallback fetch from elements collection for '{project_name}'")
             
-            for element in chunk:
-                try:
-                    # Extract basic properties
-                    element_id_str = str(element.id())
-                    element_global_id = element.GlobalId
-                    element_type_class = element.is_a()
-                    element_instance_name = element.Name if hasattr(element, "Name") and element.Name else "Unnamed"                 
-                    element_data = {
-                        "id": element_id_str,
-                        "global_id": element_global_id,
-                        "type": element_type_class,
-                        "name": element_instance_name,
-                        "type_name": None,
-                        "description": element.Description if hasattr(element, "Description") and element.Description else None,
-                        "properties": {},
-                        "classification_id": None,
-                        "classification_name": None,
-                        "classification_system": None,
-                        "area": 0.0,
-                        "volume": None,
-                        "length": 0.0,
-                        "original_area": 0.0,
-                        "original_volume": None,
-                        "original_length": 0.0
-                    }
-                    
-                    # Add building storey information
-                    if element.id() in element_to_storey:
-                        element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": element_to_storey[element.id()]}
-                        element_data["level"] = element_to_storey[element.id()]
-                    else:
-                        # If we couldn't find a storey, try to extract from any containment relationship
-                        for rel in element.ContainedInStructure or []:
-                            if hasattr(rel, "RelatingStructure") and rel.RelatingStructure.is_a("IfcBuildingStorey"):
-                                storey_name = rel.RelatingStructure.Name or "Unknown Level"
-                                element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": storey_name}
-                                element_data["level"] = storey_name
-                                break
-                    
-                    # --- Extract Type Name --- START ---
-                    type_object = None
-                    # Check IfcRelDefinesByType relationship via IsTypedBy inverse attribute
-                    if hasattr(element, "IsTypedBy") and element.IsTypedBy:
-                        for rel in element.IsTypedBy:
-                            if rel.is_a("IfcRelDefinesByType") and hasattr(rel, "RelatingType") and rel.RelatingType:
-                                type_object = rel.RelatingType
-                                break # Assume only one type definition relationship is primary
-                    
-                    # Alternative check via IsDefinedBy (less common for type but possible)
-                    if not type_object and hasattr(element, "IsDefinedBy"):
-                         for definition in element.IsDefinedBy:
-                             if definition.is_a("IfcRelDefinesByType") and hasattr(definition, "RelatingType") and definition.RelatingType:
-                                 type_object = definition.RelatingType
-                                 break
-                    
-                    # Get the name from the type object if found
-                    if type_object and hasattr(type_object, "Name") and type_object.Name:
-                        element_data["type_name"] = type_object.Name
-                                        
-                    # Extract Pset properties if available
-                    if hasattr(element, "IsDefinedBy"):
-                        for definition in element.IsDefinedBy:
-                            # Get property sets
-                            if definition.is_a('IfcRelDefinesByProperties'):
-                                property_set = definition.RelatingPropertyDefinition
-                                
-                                # Handle regular property sets
-                                if property_set.is_a('IfcPropertySet'):
-                                    pset_name = property_set.Name or "PropertySet"
-                                    for prop in property_set.HasProperties:
-                                        if prop.is_a('IfcPropertySingleValue') and prop.NominalValue:
-                                            prop_name = f"{pset_name}.{prop.Name}"
-                                            prop_value = str(prop.NominalValue.wrappedValue)
-                                            element_data["properties"][prop_name] = prop_value
-                                
-                                # Handle quantity sets
-                                elif property_set.is_a('IfcElementQuantity'):
-                                    qset_name = property_set.Name or "QuantitySet"
-                                    element_type = element_data["type"]
-
-                                    found_area = False
-                                    found_length = False
-                                    
-                                    if element_type in TARGET_QUANTITIES:
-                                        target_config = TARGET_QUANTITIES[element_type]
-                                        target_qset_name = target_config.get("qset")
-                                        target_area_name = target_config.get("area")
-                                        target_length_name = target_config.get("length")
-
-                                        # 1. Check if the current qset matches the target qset name from config
-                                        if qset_name == target_qset_name:
-                                            for quantity in property_set.Quantities:
-                                                # Extract area based on TARGET_QUANTITIES config
-                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
-                                                    try:
-                                                        parsed_area = float(quantity.AreaValue)
-                                                        element_data["area"] = parsed_area
-                                                        element_data["original_area"] = parsed_area # Store original
-                                                        found_area = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' for {element_type}")
-                                                
-                                                # Extract length based on TARGET_QUANTITIES config
-                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
-                                                    try:
-                                                        parsed_length = float(quantity.LengthValue)
-                                                        element_data["length"] = parsed_length
-                                                        element_data["original_length"] = parsed_length # Store original
-                                                        found_length = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' for {element_type}")
-                                                        
-                                        # 2. Fallback: Check if the current qset is exactly "BaseQuantities"
-                                        # Only check if the target quantity wasn't found in the specific qset
-                                        elif qset_name == "BaseQuantities" and (not found_area or not found_length):
-                                            for quantity in property_set.Quantities:
-                                                # Extract area based on TARGET_QUANTITIES config (if not already found)
-                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
-                                                    try:
-                                                        parsed_area = float(quantity.AreaValue)
-                                                        element_data["area"] = parsed_area
-                                                        element_data["original_area"] = parsed_area # Store original
-                                                        found_area = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
-                                                
-                                                # Extract length based on TARGET_QUANTITIES config (if not already found)
-                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
-                                                    try:
-                                                        parsed_length = float(quantity.LengthValue)
-                                                        element_data["length"] = parsed_length
-                                                        element_data["original_length"] = parsed_length # Store original
-                                                        found_length = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
-
-                                    # --- Process All Quantities for Properties (Independent of target finding) ---
-                                    for quantity in property_set.Quantities:
-                                        if quantity.is_a('IfcQuantityLength'):
-                                            prop_name = f"{qset_name}.{quantity.Name}"
-                                            prop_value = f"{quantity.LengthValue:.3f}"
-                                            element_data["properties"][prop_name] = prop_value
-                                        
-                                        elif quantity.is_a('IfcQuantityArea'):
-                                            prop_name = f"{qset_name}.{quantity.Name}"
-                                            prop_value = f"{quantity.AreaValue:.3f}"
-                                            element_data["properties"][prop_name] = prop_value
-                                            # NO FALLBACK FOR AREA assignment here - Only use TARGET_QUANTITIES logic above
-                                        
-                                        elif quantity.is_a('IfcQuantityVolume'): # Keep volume processing as is
-                                            prop_name = f"{qset_name}.{quantity.Name}"
-                                            prop_value = f"{quantity.VolumeValue:.3f}"
-                                            element_data["properties"][prop_name] = prop_value
-                    
-                    # Extract classification information
-                    temp_classification_id = None
-                    temp_classification_name = None
-                    temp_classification_system = None
-                    found_association = False
-
-                    if hasattr(element, "HasAssociations"):
-                        for relation in element.HasAssociations:
-                            if relation.is_a("IfcRelAssociatesClassification"):
-                                classification_ref = relation.RelatingClassification
-                                if classification_ref.is_a("IfcClassificationReference"):
-                                    # Handle IFC2X3 schema differences
-                                    schema_version = ifc_file.schema
-                                    if "2X3" in schema_version:
-                                        temp_classification_id = classification_ref.ItemReference if hasattr(classification_ref, "ItemReference") else None
-                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
-                                    else:
-                                        temp_classification_id = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
-                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
-                                    
-                                    # Get classification system name if available
-                                    if hasattr(classification_ref, "ReferencedSource") and classification_ref.ReferencedSource:
-                                        referenced_source = classification_ref.ReferencedSource
-                                        if hasattr(referenced_source, "Name"):
-                                            temp_classification_system = referenced_source.Name
-                                    found_association = True
-                                    
-                                # If directly using IfcClassification (less common)
-                                elif classification_ref.is_a("IfcClassification"):
-                                    temp_classification_system = classification_ref.Name if hasattr(classification_ref, "Name") else None
-                                    temp_classification_name = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
-                                    found_association = True
-
-                                # Break after finding the first valid association
-                                if found_association:
-                                    break
-                    
-                    # Check properties for an overriding eBKP/Classification
-                    property_override_found = False
-                    for prop_name, prop_value in element_data["properties"].items():
-                        if isinstance(prop_value, str) and ("ebkp" in prop_name.lower() or "classification" in prop_name.lower()):
-                            # Override ID and System with property value
-                            element_data["classification_id"] = prop_value
-                            element_data["classification_system"] = "EBKP" # Explicitly set system based on property name convention
-                            # Keep the name found via association (if any)
-                            element_data["classification_name"] = temp_classification_name 
-                            property_override_found = True
-                            break # Stop searching properties once an override is found
-
-                    # If no property override was found, use the values from the association (if any)
-                    if not property_override_found:
-                        element_data["classification_id"] = temp_classification_id
-                        element_data["classification_name"] = temp_classification_name
-                        element_data["classification_system"] = temp_classification_system
-
-                    # Get volume information for the element
-                    element_volume_dict = get_volume_from_properties(element)
-                    element_volume_value = None # Initialize volume value
-                    if element_volume_dict:
-                        # Prefer net volume, fall back to gross volume
-                        element_volume_value = element_volume_dict.get("net")
-                        if element_volume_value is None:
-                            element_volume_value = element_volume_dict.get("gross")
-                    
-                    # Assign the extracted float value to element_data["volume"]
-                    element_data["volume"] = element_volume_value
-                    element_data["original_volume"] = element_volume_value # Store original volume
-                    
-                    # Calculate material volumes
-                    element_data["material_volumes"] = {}
-                    
-                    # Process material associations (uses element_volume_value which is now correctly a float or None)
-                    if hasattr(element, "HasAssociations"):
-                        for association in element.HasAssociations:
-                            if association.is_a("IfcRelAssociatesMaterial"):
-                                relating_material = association.RelatingMaterial
-                                
-                                unit_scale = 1.0  # Default scale factor
-                                
-                                # Handle different material types
-                                if relating_material.is_a("IfcMaterial"):
-                                    # Single material case
-                                    material_name = relating_material.Name
-                                    element_data["material_volumes"][material_name] = {
-                                        "fraction": 1.0,
-                                        "volume": _round_value(element_volume_value, 5) if element_volume_value else None
-                                    }
-                                    
-                                elif relating_material.is_a("IfcMaterialList"):
-                                    # Material list case - distribute equally
-                                    materials = relating_material.Materials
-                                    if materials:
-                                        fraction = 1.0 / len(materials)
-                                        for material in materials:
-                                            material_name = material.Name
-                                            element_data["material_volumes"][material_name] = {
-                                                "fraction": _round_value(fraction, 5),
-                                                "volume": _round_value(element_volume_value * fraction, 5) if element_volume_value else None
-                                            }
-                                
-                                elif relating_material.is_a("IfcMaterialLayerSetUsage") or relating_material.is_a("IfcMaterialLayerSet"):
-                                    # Layer set case - calculate based on layer thickness
-                                    constituent_fractions, constituent_widths = compute_constituent_fractions(
-                                        ifc_file, 
-                                        relating_material,
-                                        [element],
-                                        unit_scale
-                                    )
-                                    
-                                    layer_set = relating_material if relating_material.is_a("IfcMaterialLayerSet") else relating_material.ForLayerSet
-                                    
-                                    if layer_set and layer_set.MaterialLayers:
-                                        total_fraction = 0.0
-                                        
-                                        for layer, fraction in constituent_fractions.items():
-                                            if hasattr(layer, "Material") and layer.Material:
-                                                material_name = layer.Material.Name
-                                                layer_volume = element_volume_value * fraction if element_volume_value else None
-                                                
-                                                # Handle duplicate material names
-                                                counter = 1
-                                                unique_name = material_name
-                                                while unique_name in element_data["material_volumes"]:
-                                                    unique_name = f"{material_name} ({counter})"
-                                                    counter += 1
-                                                
-                                                volume_data = {
-                                                    "fraction": _round_value(fraction, 5)
-                                                }
-                                                
-                                                if layer_volume is not None:
-                                                    volume_data["volume"] = _round_value(layer_volume, 5)
-                                                
-                                                # Add width/thickness if available
-                                                if layer in constituent_widths and constituent_widths[layer] > 0:
-                                                    volume_data["width"] = _round_value(constituent_widths[layer], 5)
-                                                
-                                                element_data["material_volumes"][unique_name] = volume_data
-                                                total_fraction += fraction
-                                
-                                elif relating_material.is_a("IfcMaterialConstituentSet"):
-                                    # Constituent set case
-                                    constituent_fractions, constituent_widths = compute_constituent_fractions(
-                                        ifc_file,
-                                        relating_material,
-                                        [element],
-                                        unit_scale
-                                    )
-                                    
-                                    if constituent_fractions:
-                                        total_fraction = 0.0
-                                        
-                                        for constituent, fraction in constituent_fractions.items():
-                                            if hasattr(constituent, "Material") and constituent.Material:
-                                                material_name = constituent.Material.Name
-                                                constituent_volume = element_volume_value * fraction if element_volume_value else None
-                                                
-                                                # Handle duplicate material names
-                                                counter = 1
-                                                unique_name = material_name
-                                                while unique_name in element_data["material_volumes"]:
-                                                    unique_name = f"{material_name} ({counter})"
-                                                    counter += 1
-                                                
-                                                volume_data = {
-                                                    "fraction": _round_value(fraction, 5)
-                                                }
-                                                
-                                                if constituent_volume is not None:
-                                                    volume_data["volume"] = _round_value(constituent_volume, 5)
-                                                
-                                                # Add width/thickness if available
-                                                if constituent in constituent_widths and constituent_widths[constituent] > 0:
-                                                    volume_data["width"] = _round_value(constituent_widths[constituent], 5)
-                                                
-                                                element_data["material_volumes"][unique_name] = volume_data
-                                                total_fraction += fraction
-                    
-                    # Remove material_volumes if empty
-                    if not element_data["material_volumes"]:
-                        element_data.pop("material_volumes")
-                                            
-                    elements.append(IFCElement(**element_data))
-                except Exception as prop_error:
-                    logger.error(f"Error extracting properties for element {element.id()}: {str(prop_error)}")
-                    logger.error(traceback.format_exc())
-        
-        logger.info(f"Successfully extracted {len(elements)} elements from model ID: {model_id}")
-        
-        # Log summary statistics
-        elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
-        elements_with_materials = [e for e in elements if hasattr(e, "material_volumes") and e.material_volumes]
-        logger.info(f"Summary: {len(elements_with_area)} elements with area, {len(elements_with_materials)} elements with materials")
-        
-        return elements
-    
-    except Exception as e:
-        logger.error(f"Error retrieving elements for model ID {model_id}: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error retrieving elements: {str(e)}")
-
-@app.get("/models", response_model=List[ModelInfo])
-def list_models():
-    """
-    List all uploaded models
-    
-    Returns information about all models uploaded to the server.
-    """
-    logger.info("Retrieving list of models")
-    
-    try:
-        result = []
-        for model_id, model_data in ifc_models.items():
-            ifc_file = model_data["ifc_file"]
+            # Find project ID (case-insensitive, partial match)
+            project = mongodb.db.projects.find_one({"name": {"$regex": re.escape(project_name), "$options": "i"}})
             
-            # Get entity counts by type
-            entity_counts = {}
-            for entity_type in set(e.is_a() for e in ifc_file.by_type("IfcElement")):
-                entity_counts[entity_type] = len(ifc_file.by_type(entity_type))
+            if not project:
+                logger.warning(f"Fallback failed: Project matching '{project_name}' not found in projects collection.")
+                raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
             
-            result.append({
-                "model_id": model_id,
-                "filename": model_data["filename"],
-                "element_count": len(ifc_file.by_type("IfcElement")),
-                "entity_counts": entity_counts
-            })
-        
-        logger.info(f"Successfully retrieved {len(result)} models")
-        return result
-    
-    except Exception as e:
-        logger.error(f"Error retrieving model list: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error retrieving model list: {str(e)}")
+            project_id = project["_id"]
+            logger.info(f"Fallback: Found project '{project.get('name')}' with ID: {project_id}")
+            
+            # Get raw elements
+            elements_data = list(mongodb.db.elements.find({"project_id": project_id}))
+            logger.info(f"Fallback: Found {len(elements_data)} raw elements for project ID {project_id}")
+            
+            # Adapt raw element structure to match IFCElement (if necessary)
+            adapted_elements = []
+            for elem in elements_data:
+                # Convert ObjectId to string
+                if "_id" in elem: elem["_id"] = str(elem["_id"])
+                if "project_id" in elem: elem["project_id"] = str(elem["project_id"])
+                
+                # Map potential field name differences
+                mapped_elem = {
+                    "id": elem.get("ifc_id", str(elem.get("_id"))), # Use ifc_id if present, else _id
+                    "global_id": elem.get("global_id"),
+                    "type": elem.get("ifc_class", "Unknown"), # Use ifc_class if present
+                    "name": elem.get("name", "Unnamed"),
+                    "type_name": elem.get("type_name"),
+                    "description": elem.get("description"),
+                    "properties": elem.get("properties", {}),
+                    "material_volumes": elem.get("material_volumes"),
+                    "level": elem.get("level"),
+                    "classification_id": None,
+                    "classification_name": None,
+                    "classification_system": None,
+                    "area": None,
+                    "volume": elem.get("volume"), # Direct mapping if available
+                    "length": None,
+                    # No original quantities in raw elements typically
+                    "original_area": None, 
+                    "original_volume": None,
+                    "original_length": None, 
+                    "category": elem.get("category")
+                }
 
-@app.delete("/models/{model_id}", response_model=ModelDeleteResponse)
-def delete_model(model_id: str):
-    """
-    Delete a previously uploaded model
-    
-    - **model_id**: ID of the model to delete
-    
-    Returns a confirmation message.
-    """
-    logger.info(f"Deleting model ID: {model_id}")
-    
-    if model_id not in ifc_models:
-        logger.warning(f"Model ID not found for deletion: {model_id}")
-        raise HTTPException(status_code=404, detail="IFC model not found")
-    
-    try:
-        # Delete temporary file
-        temp_file_path = ifc_models[model_id]["temp_file_path"]
-        if os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
-            logger.info(f"Temporary file {temp_file_path} removed")
+                # Handle nested classification
+                if "classification" in elem and isinstance(elem["classification"], dict):
+                    mapped_elem["classification_id"] = elem["classification"].get("id")
+                    mapped_elem["classification_name"] = elem["classification"].get("name")
+                    mapped_elem["classification_system"] = elem["classification"].get("system")
+                
+                # Handle nested quantity (assuming simple area/length)
+                if "quantity" in elem and isinstance(elem["quantity"], dict):
+                    q_type = elem["quantity"].get("type")
+                    q_value = elem["quantity"].get("value")
+                    if q_value is not None:
+                        try:
+                            if q_type == "area":
+                                mapped_elem["area"] = float(q_value)
+                            elif q_type == "length":
+                                mapped_elem["length"] = float(q_value)
+                        except (ValueError, TypeError):
+                             logger.warning(f"Could not convert fallback quantity value '{q_value}' for element {mapped_elem['id']}")
+                
+                adapted_elements.append(mapped_elem)
+            elements_data = adapted_elements # Use the adapted data for validation
+
+        # If still no data after fallback
+        if not elements_data:
+            logger.warning(f"No element data found for '{project_name}' from any source.")
+            raise HTTPException(status_code=404, detail=f"Element data not found for project '{project_name}'")
+
+        # 3. Validate and convert data (from either source) to IFCElement models
+        validated_elements = []
+        validation_errors = 0
+        logger.info(f"Starting validation/conversion for {len(elements_data)} elements from source: {source}")
         
-        # Remove from memory
-        del ifc_models[model_id]
-        logger.info(f"Model ID {model_id} successfully deleted")
+        for i, elem_data in enumerate(elements_data):
+            try:
+                # Ensure required fields have defaults if missing before validation
+                if not elem_data.get("id"):
+                    elem_data["id"] = f"missing-id-{i}"
+                if not elem_data.get("type"):
+                     elem_data["type"] = "Unknown"
+                if not elem_data.get("name"):
+                    elem_data["name"] = f"Unnamed-{i}"
+                if "properties" not in elem_data or elem_data["properties"] is None:
+                     elem_data["properties"] = {} # Ensure properties is a dict
+                
+                # Add other potential defaults if needed based on IFCElement definition
+
+                element_model = IFCElement(**elem_data)
+                validated_elements.append(element_model)
+            except Exception as validation_error:
+                validation_errors += 1
+                logger.warning(f"Skipping element {i+1} in project '{project_name}' (source: {source}) due to validation error: {validation_error}. Data snippet: {str(elem_data)[:200]}...")
+                # Optionally log full data for debugging first few errors
+                # if validation_errors <= 5:
+                #     logger.debug(f"Full problematic data: {elem_data}")
         
-        return {"message": "IFC model deleted successfully"}
-    
+        logger.info(f"Finished validation. Converted {len(validated_elements)} elements (skipped {validation_errors}) from {source} for project '{project_name}'.")
+        return validated_elements
+
+    except HTTPException as http_exc:
+        # Log specific HTTP errors like 404 before re-raising
+        logger.warning(f"HTTPException occurred for project '{project_name}': {http_exc.status_code} - {http_exc.detail}")
+        raise http_exc
     except Exception as e:
-        logger.error(f"Error deleting model ID {model_id}: {str(e)}")
+        logger.error(f"Unexpected error retrieving elements for project '{project_name}': {e}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error deleting model: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error retrieving project elements: {str(e)}")
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
@@ -1137,216 +796,13 @@ def health_check():
         logger.warning(f"MongoDB health check failed: {str(e)}")
         mongodb_status = "disconnected"
     
-    # Check models in memory
-    models_count = len(ifc_models)
-    
     # The service is healthy if at least Kafka or MongoDB is connected
-    # as the API can still process uploads and analyze IFC files
     return {
         "status": "healthy", 
         "kafka": kafka_status,
         "mongodb": mongodb_status,
-        "models_in_memory": models_count,
         "ifcopenshell_version": ifcopenshell.version
     }
-
-@app.post("/send-qto/", response_model=QTOResponse)
-async def send_qto(
-    model_id: str = Query(..., description="The ID of the model to send to Kafka"),
-    body: Optional[QTORequestBody] = None
-):
-    """
-    Send QTO data from an IFC model to Kafka
-    
-    - **model_id**: ID of the model to process and send
-    - **body**: Optional request body with updated elements and project name
-    
-    Returns confirmation of the data being sent to Kafka.
-    """
-    
-    if model_id not in ifc_models:
-        logger.warning(f"Model ID not found: {model_id}")
-        raise HTTPException(status_code=404, detail="IFC model not found")
-    
-    try:
-        # --- Always get fresh data from the IFC model for saving --- 
-        elements_input = get_ifc_elements(model_id) # Always use freshly parsed data
-        
-        # Log if body elements were provided but are being ignored for the base data
-        if body and body.elements:
-            pass
-
-        # --- Convert elements to dictionaries consistently --- 
-        element_dicts = []
-        for element_model in elements_input: # Process either ElementInputData or IFCElement
-            if not element_model:
-                continue # Skip if element_model is None for some reason
-            try:
-                # Use .model_dump() for Pydantic v2+ models
-                # exclude_none=True cleans up the dict for downstream processing
-                element_dict = element_model.model_dump(exclude_none=True) 
-            except AttributeError:
-                # Fallback to .dict() for older Pydantic versions
-                try:
-                    element_dict = element_model.dict(exclude_none=True)
-                except AttributeError:
-                    logger.error(f"Could not convert element model to dict: {type(element_model)}")
-                    element_dict = {} # Use empty dict as fallback
-            except Exception as dump_error:
-                 logger.error(f"Error dumping element model to dict: {dump_error}")
-                 element_dict = {} # Use empty dict as fallback
-                 
-            element_dicts.append(element_dict)
-        
-        if body and body.elements:
-            # Create a lookup map from the input ElementInputData models
-            edited_elements_map = {el.id: el.model_dump(exclude_none=True) for el in body.elements if el and el.id}
-            
-            updated_count = 0
-            # Define fields that can be updated from the request
-            # ONLY allow quantity fields to be updated for now
-            EDITABLE_FIELDS = ["area", "length", "volume"]
-
-            # Iterate through the original dictionaries
-            for i in range(len(element_dicts)):
-                parsed_dict = element_dicts[i]
-                element_id = parsed_dict.get("id")
-                if element_id and element_id in edited_elements_map:
-                    edited_dict = edited_elements_map[element_id]
-                    updated = False
-                    # Only update allowed fields if they exist in the edited data
-                    for field in EDITABLE_FIELDS:
-                        if field in edited_dict and edited_dict[field] is not None:
-                            # Special check for quantities to avoid overwriting with 0 if not intended?
-                            # Or just trust frontend sends valid numbers?
-                            # For now, directly update:
-                            parsed_dict[field] = edited_dict[field]
-                            updated = True
-                            
-                    # Handle potential nested quantity update if frontend sends it
-                    if 'quantity' in edited_dict and isinstance(edited_dict['quantity'], dict):
-                        # Decide how to merge/update nested quantity
-                        # Simplest: overwrite if present
-                        parsed_dict['quantity'] = edited_dict['quantity'] 
-                        updated = True
-                        
-                    if updated:
-                        updated_count += 1
-            
-            if updated_count > 0:
-                logger.info(f"Updated {updated_count} elements with data from the request body.")
-
-        # Get project info
-        filename = ifc_models[model_id]["filename"]
-        
-        # Use the project name from the request if available, otherwise use filename
-        if body and body.project:
-            project_name = body.project
-        else:
-            project_name = filename.split('.')[0]
-            
-        file_id = f"{project_name}/{filename}"
-        
-        # --- Prepare data for the producer ---
-        # Pass raw elements and metadata directly
-        project_update_data = {
-            "project": project_name,
-            "filename": filename,
-            "file_id": file_id,
-            "elements": element_dicts,
-            "timestamp": datetime.utcnow().isoformat() + "Z" # Add timestamp here
-        }
-        # Remove the call to format_ifc_elements_for_qto as it's no longer needed here
-        # qto_data = format_ifc_elements_for_qto( ... )
-
-        # Save to MongoDB if available (Consider moving this inside the producer logic if needed)
-        # This part might be redundant if the producer handles project saving
-        if mongodb is not None and mongodb.db is not None:
-            project_id = mongodb.save_project({
-                "name": project_name,
-                "description": f"Project for {filename}",
-                "metadata": {
-                    "file_id": file_id,
-                    "filename": filename
-                }
-            })
-            if project_id:
-                # Add project_id to the data payload if needed downstream
-                project_update_data["project_id_mongodb"] = str(project_id)
-
-        # Send data to Kafka
-        producer = QTOKafkaProducer()
-        # Pass the new structure containing raw elements
-        send_success = producer.send_qto_message(project_update_data)
-        flush_success = producer.flush()
-
-        if not send_success or not flush_success:
-            logger.warning("Data was processed but could not be sent to Kafka")
-            return {
-                "message": "QTO data processed but not sent to Kafka (service unavailable)",
-                "model_id": model_id,
-                "element_count": len(elements_input),
-                "kafka_status": "unavailable"
-            }
-        
-       
-        return {
-            "message": "QTO data sent to Kafka successfully",
-            "model_id": model_id,
-            "element_count": len(elements_input),
-            "kafka_status": "connected"
-        }
-    
-    except Exception as e:
-        logger.error(f"Error sending QTO data: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error sending QTO data: {str(e)}")
-
-@app.get("/qto-elements/{model_id}")
-def get_qto_elements(model_id: str):
-    """
-    Get elements in QTO format for display in the frontend
-    
-    - **model_id**: ID of the model to retrieve QTO elements from
-    
-    Returns elements formatted for QTO visualization.
-    """
-   
-    if model_id not in ifc_models:
-        logger.warning(f"Model ID not found: {model_id}")
-        raise HTTPException(status_code=404, detail="IFC model not found")
-    
-    try:
-        # Get elements using existing function that already applies filtering
-        elements = get_ifc_elements(model_id)
-        
-        elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
-        
-        # Convert IFCElement model instances to dictionaries
-        element_dicts = []
-        for element in elements:
-            element_dict = element.model_dump()
-            element_dicts.append(element_dict)
-        
-        # Get project info
-        filename = ifc_models[model_id]["filename"]
-        project_name = filename.split('.')[0]  # Use filename without extension as project name
-        
-        # Format the data for QTO
-        qto_data = format_ifc_elements_for_qto(
-            project_name=project_name,
-            filename=filename,
-            file_id=f"{project_name}/{filename}",
-            elements=element_dicts
-        )
-        
-        # Return just the elements part of the QTO data
-        return qto_data["elements"]
-    
-    except Exception as e:
-        logger.error(f"Error retrieving QTO elements for model ID {model_id}: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error retrieving QTO elements: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

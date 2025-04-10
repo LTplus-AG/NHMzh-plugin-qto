@@ -36,14 +36,24 @@ class MongoDBHelper:
         # --- Get configuration from environment variables ---
         self.host = os.getenv('MONGODB_HOST', 'mongodb') # Service name in Docker network
         self.port = os.getenv('MONGODB_PORT', '27017')   # Default MongoDB port
-        self.user = os.getenv('MONGODB_QTO_USER')       # Specific user for this service
-        self.password = os.getenv('MONGODB_QTO_PASSWORD') # Specific password for this service
+        
+        # --- Reverted: Use QTO Service User --- 
+        # logger.warning("FORCE TEMPORARY DEBUG: Using MongoDB Admin User credentials for QTO service!")
+        # self.user = os.getenv('MONGODB_ADMIN_USER')     # Use ADMIN user (passed from root user)
+        # self.password = os.getenv('MONGODB_ADMIN_PASSWORD') # Use ADMIN password (passed from root pass)
+        # --- END TEMP DEBUG --- 
+        
+        self.user = os.getenv('MONGODB_QTO_USER')       # Use Specific user for this service
+        self.password = os.getenv('MONGODB_QTO_PASSWORD') # Use Specific password for this service
+        
         self.db_name = db_name or os.getenv('MONGODB_QTO_DATABASE', 'qto') # Specific DB for this service
         
         # --- Validate required variables ---
         if not self.user:
+            # Reverted error message
             raise ValueError("MONGODB_QTO_USER environment variable is not set.")
         if not self.password:
+            # Reverted error message
             raise ValueError("MONGODB_QTO_PASSWORD environment variable is not set.")
             
         # --- Construct the MongoDB URI ---
@@ -275,6 +285,86 @@ class MongoDBHelper:
         except Exception as e:
             logger.error(f"Error in save_elements_batch: {e}")
             return False
+
+    # --- NEW METHODS for Parsed Data ---
+    def save_parsed_data(self, project_name: str, filename: str, elements: List[Dict[str, Any]]) -> bool:
+        """Saves the fully parsed list of element data for a project/file.
+           Overwrites existing data for the same project_name and filename.
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot save parsed data")
+            return False
+        try:
+            collection = self.db.parsed_ifc_data
+            timestamp = datetime.utcnow()
+
+            # Data structure to save
+            data_to_save = {
+                "project_name": project_name,
+                "filename": filename,
+                "elements": elements, # Store the list of parsed element dicts
+                "created_at": timestamp, # Keep track of initial processing
+                "updated_at": timestamp
+            }
+
+            # Use update_one with upsert=True to insert or replace
+            result = collection.update_one(
+                {"project_name": project_name, "filename": filename}, # Filter to find the specific project/file
+                {
+                    "$set": data_to_save,
+                    "$setOnInsert": { "created_at": timestamp } # Set created_at only on insert
+                },
+                upsert=True
+            )
+
+            if result.upserted_id:
+                logger.info(f"Inserted new parsed data for {project_name}/{filename}")
+            elif result.modified_count > 0:
+                logger.info(f"Updated existing parsed data for {project_name}/{filename}")
+            else:
+                 logger.info(f"No changes needed for parsed data {project_name}/{filename} (data might be identical)")
+
+            return True
+        except Exception as e:
+            logger.error(f"Error saving parsed data to MongoDB: {e}")
+            return False
+
+    def get_parsed_data_by_project(self, project_name: str) -> List[Dict[str, Any]]:
+        """Retrieves the stored list of parsed element data for a project.
+           If multiple filenames exist for a project, it currently retrieves the most recently updated one.
+           Consider refining this logic if multiple versions per project are needed.
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot retrieve parsed data")
+            return None
+        try:
+            collection = self.db.parsed_ifc_data
+            # Find the latest document for the project based on updated_at
+            latest_data = collection.find_one(
+                {"project_name": project_name},
+                sort=[("updated_at", -1)] # Get the most recent entry
+            )
+            if latest_data:
+                return latest_data.get("elements", [])
+            else:
+                return None # Or return [] if an empty list is preferred for not found
+        except Exception as e:
+            logger.error(f"Error retrieving parsed data from MongoDB for {project_name}: {e}")
+            return None
+
+    def list_distinct_projects(self) -> List[str]:
+        """Returns a list of distinct project names from the parsed data collection."""
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot list projects")
+            return []
+        try:
+            collection = self.db.parsed_ifc_data
+            distinct_projects = collection.distinct("project_name")
+            return distinct_projects
+        except Exception as e:
+            logger.error(f"Error listing distinct projects from MongoDB: {e}")
+            return []
+    # --- END NEW METHODS ---
 
 class QTOKafkaProducer:
     def __init__(self, bootstrap_servers=None, topic=None, max_retries=3, retry_delay=2):
