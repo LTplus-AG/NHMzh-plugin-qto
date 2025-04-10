@@ -24,6 +24,7 @@ import { UploadedFile } from "../types/types";
 import FileUpload from "./FileUpload";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 import IfcElementsList from "./IfcElementsList";
+import { QtoPreviewDialog } from "./QtoPreviewDialog"; // Import the new component
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -380,57 +381,6 @@ const MainPage = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Preview Dialog */}
-      <Dialog
-        open={previewDialogOpen}
-        onClose={handleClosePreviewDialog}
-        aria-labelledby="preview-dialog-title"
-        maxWidth="md" // Use a wider dialog for the preview table
-        fullWidth
-      >
-        <DialogTitle id="preview-dialog-title">
-          Vorschau der zu sendenden Daten
-        </DialogTitle>
-        <DialogContent>
-          <DialogContentText component="div" id="preview-dialog-description">
-            <Typography variant="body1" gutterBottom>
-              Bitte überprüfen Sie die folgenden Daten vor dem Senden:
-            </Typography>
-            <Typography variant="body2">
-              Projekt: <strong>{selectedProject}</strong>
-            </Typography>
-            <Typography variant="body2">
-              Datei: <strong>{selectedFile?.filename}</strong>
-            </Typography>
-            <Typography variant="body2">
-              Anzahl Elemente: <strong>{ifcElements.length}</strong>
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 2 }}>
-              Anzahl bearbeitete Elemente:{" "}
-              <strong>{editedElementsCount}</strong>
-            </Typography>
-            {/* TODO: Add a small preview table/list here if needed for more detail */}
-            <Typography variant="caption">
-              (Hinweis: Eine detaillierte Elementvorschau ist hier nicht
-              implementiert, nur eine Zusammenfassung.)
-            </Typography>
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleClosePreviewDialog} color="primary">
-            Abbrechen
-          </Button>
-          <Button
-            onClick={sendQtoToDatabase}
-            color="primary"
-            disabled={kafkaSending}
-            autoFocus
-          >
-            {kafkaSending ? "Senden..." : "Senden"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       {/* Sidebar */}
       <div className="w-1/4 p-8 bg-light text-primary flex flex-col">
         {/* Header und Inhalte */}
@@ -609,7 +559,7 @@ const MainPage = () => {
                       className="bg-primary whitespace-nowrap"
                       size="small"
                     >
-                      {kafkaSending ? "Senden..." : "Vorschau anzeigen"}
+                      {kafkaSending ? "Senden..." : "Vorschau & Senden"}
                     </Button>
                   )}
                 </Box>
@@ -644,6 +594,20 @@ const MainPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Add the new Dialog Component */}
+      {selectedFile && selectedProject && (
+        <QtoPreviewDialog
+          open={previewDialogOpen}
+          onClose={handleClosePreviewDialog}
+          onSend={sendQtoToDatabase}
+          selectedProject={selectedProject}
+          selectedFileName={selectedFile?.filename}
+          ifcElements={ifcElements}
+          editedElements={editedElements}
+          isSending={kafkaSending}
+        />
+      )}
     </div>
   );
 };
