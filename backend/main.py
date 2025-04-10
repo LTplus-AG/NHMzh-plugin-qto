@@ -19,11 +19,15 @@ import re
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 from datetime import datetime
 from bson import ObjectId # Needed for fallback query
+from ifc_materials_parser import parse_element_materials # Import the new parser
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, 
+logging.basicConfig(level=logging.DEBUG, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Also configure the logger used by the materials parser if it's separate
+logging.getLogger("ifc_materials_parser").setLevel(logging.DEBUG)
 
 # Log ifcopenshell version at startup
 logger.info(f"Using ifcopenshell version: {ifcopenshell.version}")
@@ -108,6 +112,7 @@ class IFCElement(BaseModel):
     original_volume: Optional[float] = None
     original_length: Optional[float] = None
     category: Optional[str] = None # Keep for compatibility if needed elsewhere
+    materials: Optional[List[Dict[str, Any]]] = Field(default_factory=list) # Add materials list
 
 class QTOResponse(BaseModel):
     """Response model for QTO operation"""
@@ -428,6 +433,308 @@ def _round_value(value, digits=3):
         return round(float(value), digits)
     except (ValueError, TypeError):
         return value
+
+def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
+    """
+    Parses the provided IFC file object and extracts element data.
+
+    Args:
+        ifc_file: An opened ifcopenshell file object.
+
+    Returns:
+        A list of IFCElement objects containing the parsed data.
+    """
+    elements = []
+    try:
+        # Create a mapping of elements to their building stories
+        element_to_storey = {}
+        building_storeys = list(ifc_file.by_type("IfcBuildingStorey"))
+
+        # Process spatial containment relationship
+        for rel in ifc_file.by_type("IfcRelContainedInSpatialStructure"):
+            if rel.RelatingStructure and rel.RelatingStructure.is_a("IfcBuildingStorey"):
+                storey_name = rel.RelatingStructure.Name if hasattr(rel.RelatingStructure, "Name") and rel.RelatingStructure.Name else "Unknown Level"
+                for element in rel.RelatedElements:
+                    if element is not None:
+                        try:
+                            element_to_storey[element.id()] = storey_name
+                        except Exception as e:
+                            logger.warning(f"Error mapping element to storey: {e}")
+
+        # Filter elements by TARGET_IFC_CLASSES
+        if TARGET_IFC_CLASSES:
+            all_elements = []
+            for element_type in TARGET_IFC_CLASSES:
+                if element_type and element_type.strip():
+                    try:
+                        type_elements = list(ifc_file.by_type(element_type.strip()))
+                        all_elements.extend(type_elements)
+                    except Exception as type_error:
+                        logger.warning(f"Error getting elements of type {element_type}: {str(type_error)}")
+
+            logger.info(f"Filtered to {len(all_elements)} elements of targeted types during parsing")
+        else:
+            all_elements = list(ifc_file.by_type("IfcElement"))
+            logger.info(f"Processing all {len(all_elements)} elements during parsing")
+
+        # Process elements in chunks (optional, can remove if memory isn't an issue here)
+        chunk_size = 100 # Adjust chunk size if needed
+        for i in range(0, len(all_elements), chunk_size):
+            chunk_index = i // chunk_size # Keep track of chunk number for logging
+            chunk = all_elements[i:i+chunk_size]
+
+            for element in chunk:
+                try:
+                    # Extract basic properties
+                    element_id_str = str(element.id())
+                    element_global_id = element.GlobalId
+                    element_type_class = element.is_a()
+                    element_instance_name = element.Name if hasattr(element, "Name") and element.Name else "Unnamed"
+                    element_data = {
+                        "id": element_id_str,
+                        "global_id": element_global_id,
+                        "type": element_type_class,
+                        "name": element_instance_name,
+                        "type_name": None,
+                        "description": element.Description if hasattr(element, "Description") and element.Description else None,
+                        "properties": {},
+                        "classification_id": None,
+                        "classification_name": None,
+                        "classification_system": None,
+                        "area": 0.0,
+                        "volume": None,
+                        "length": 0.0,
+                        "original_area": 0.0,
+                        "original_volume": None,
+                        "original_length": 0.0
+                    }
+
+                    # Add building storey information
+                    if element.id() in element_to_storey:
+                        element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": element_to_storey[element.id()]}
+                        element_data["level"] = element_to_storey[element.id()]
+                    else:
+                        # If we couldn't find a storey, try to extract from any containment relationship
+                        for rel in element.ContainedInStructure or []:
+                            if hasattr(rel, "RelatingStructure") and rel.RelatingStructure.is_a("IfcBuildingStorey"):
+                                storey_name = rel.RelatingStructure.Name or "Unknown Level"
+                                element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": storey_name}
+                                element_data["level"] = storey_name
+                                break
+
+                    # --- Extract Type Name --- START ---
+                    type_object = None
+                    # Check IfcRelDefinesByType relationship via IsTypedBy inverse attribute
+                    if hasattr(element, "IsTypedBy") and element.IsTypedBy:
+                        for rel in element.IsTypedBy:
+                            if rel.is_a("IfcRelDefinesByType") and hasattr(rel, "RelatingType") and rel.RelatingType:
+                                type_object = rel.RelatingType
+                                break # Assume only one type definition relationship is primary
+
+                    # Alternative check via IsDefinedBy (less common for type but possible)
+                    if not type_object and hasattr(element, "IsDefinedBy"):
+                         for definition in element.IsDefinedBy:
+                             if definition.is_a("IfcRelDefinesByType") and hasattr(definition, "RelatingType") and definition.RelatingType:
+                                 type_object = definition.RelatingType
+                                 break
+
+                    # Get the name from the type object if found
+                    if type_object and hasattr(type_object, "Name") and type_object.Name:
+                        element_data["type_name"] = type_object.Name
+
+                    # Extract Pset properties if available
+                    if hasattr(element, "IsDefinedBy"):
+                        for definition in element.IsDefinedBy:
+                            # Get property sets
+                            if definition.is_a('IfcRelDefinesByProperties'):
+                                property_set = definition.RelatingPropertyDefinition
+
+                                # Handle regular property sets
+                                if property_set.is_a('IfcPropertySet'):
+                                    pset_name = property_set.Name or "PropertySet"
+                                    for prop in property_set.HasProperties:
+                                        if prop.is_a('IfcPropertySingleValue') and prop.NominalValue:
+                                            prop_name = f"{pset_name}.{prop.Name}"
+                                            prop_value = str(prop.NominalValue.wrappedValue)
+                                            element_data["properties"][prop_name] = prop_value
+
+                                # Handle quantity sets
+                                elif property_set.is_a('IfcElementQuantity'):
+                                    qset_name = property_set.Name or "QuantitySet"
+                                    element_type = element_data["type"]
+
+                                    found_area = False
+                                    found_length = False
+
+                                    if element_type in TARGET_QUANTITIES:
+                                        target_config = TARGET_QUANTITIES[element_type]
+                                        target_qset_name = target_config.get("qset")
+                                        target_area_name = target_config.get("area")
+                                        target_length_name = target_config.get("length")
+
+                                        # 1. Check if the current qset matches the target qset name from config
+                                        if qset_name == target_qset_name:
+                                            for quantity in property_set.Quantities:
+                                                # Extract area based on TARGET_QUANTITIES config
+                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
+                                                    try:
+                                                        parsed_area = float(quantity.AreaValue)
+                                                        element_data["area"] = parsed_area
+                                                        element_data["original_area"] = parsed_area # Store original
+                                                        found_area = True
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' for {element_type}")
+
+                                                # Extract length based on TARGET_QUANTITIES config
+                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
+                                                    try:
+                                                        parsed_length = float(quantity.LengthValue)
+                                                        element_data["length"] = parsed_length
+                                                        element_data["original_length"] = parsed_length # Store original
+                                                        found_length = True
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' for {element_type}")
+
+                                        # 2. Fallback: Check if the current qset is exactly "BaseQuantities"
+                                        # Only check if the target quantity wasn't found in the specific qset
+                                        elif qset_name == "BaseQuantities" and (not found_area or not found_length):
+                                            for quantity in property_set.Quantities:
+                                                # Extract area based on TARGET_QUANTITIES config (if not already found)
+                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
+                                                    try:
+                                                        parsed_area = float(quantity.AreaValue)
+                                                        element_data["area"] = parsed_area
+                                                        element_data["original_area"] = parsed_area # Store original
+                                                        found_area = True
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
+
+                                                # Extract length based on TARGET_QUANTITIES config (if not already found)
+                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
+                                                    try:
+                                                        parsed_length = float(quantity.LengthValue)
+                                                        element_data["length"] = parsed_length
+                                                        element_data["original_length"] = parsed_length # Store original
+                                                        found_length = True
+                                                    except (ValueError, TypeError):
+                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
+
+                                    # --- Process All Quantities for Properties (Independent of target finding) ---
+                                    for quantity in property_set.Quantities:
+                                        if quantity.is_a('IfcQuantityLength'):
+                                            prop_name = f"{qset_name}.{quantity.Name}"
+                                            prop_value = f"{quantity.LengthValue:.3f}"
+                                            element_data["properties"][prop_name] = prop_value
+
+                                        elif quantity.is_a('IfcQuantityArea'):
+                                            prop_name = f"{qset_name}.{quantity.Name}"
+                                            prop_value = f"{quantity.AreaValue:.3f}"
+                                            element_data["properties"][prop_name] = prop_value
+                                            # NO FALLBACK FOR AREA assignment here - Only use TARGET_QUANTITIES logic above
+
+                                        elif quantity.is_a('IfcQuantityVolume'): # Keep volume processing as is
+                                            prop_name = f"{qset_name}.{quantity.Name}"
+                                            prop_value = f"{quantity.VolumeValue:.3f}"
+                                            element_data["properties"][prop_name] = prop_value
+
+                    # Extract classification information
+                    temp_classification_id = None
+                    temp_classification_name = None
+                    temp_classification_system = None
+                    found_association = False
+
+                    if hasattr(element, "HasAssociations"):
+                        for relation in element.HasAssociations:
+                            if relation.is_a("IfcRelAssociatesClassification"):
+                                classification_ref = relation.RelatingClassification
+                                if classification_ref.is_a("IfcClassificationReference"):
+                                    # Handle IFC2X3 schema differences
+                                    schema_version = ifc_file.schema
+                                    if "2X3" in schema_version:
+                                        temp_classification_id = classification_ref.ItemReference if hasattr(classification_ref, "ItemReference") else None
+                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    else:
+                                        temp_classification_id = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
+                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
+
+                                    # Get classification system name if available
+                                    if hasattr(classification_ref, "ReferencedSource") and classification_ref.ReferencedSource:
+                                        referenced_source = classification_ref.ReferencedSource
+                                        if hasattr(referenced_source, "Name"):
+                                            temp_classification_system = referenced_source.Name
+                                    found_association = True
+
+                                # If directly using IfcClassification (less common)
+                                elif classification_ref.is_a("IfcClassification"):
+                                    temp_classification_system = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                    temp_classification_name = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
+                                    found_association = True
+
+                                # Break after finding the first valid association
+                                if found_association:
+                                    break
+
+                    # Check properties for an overriding eBKP/Classification
+                    property_override_found = False
+                    for prop_name, prop_value in element_data["properties"].items():
+                        if isinstance(prop_value, str) and ("ebkp" in prop_name.lower() or "classification" in prop_name.lower()):
+                            # Override ID and System with property value
+                            element_data["classification_id"] = prop_value
+                            element_data["classification_system"] = "EBKP" # Explicitly set system based on property name convention
+                            # Keep the name found via association (if any)
+                            element_data["classification_name"] = temp_classification_name
+                            property_override_found = True
+                            break # Stop searching properties once an override is found
+
+                    # If no property override was found, use the values from the association (if any)
+                    if not property_override_found:
+                        element_data["classification_id"] = temp_classification_id
+                        element_data["classification_name"] = temp_classification_name
+                        element_data["classification_system"] = temp_classification_system
+
+                    # Get volume information for the element
+                    element_volume_dict = get_volume_from_properties(element)
+                    element_volume_value = None # Initialize volume value
+                    if element_volume_dict:
+                        # Prefer net volume, fall back to gross volume
+                        element_volume_value = element_volume_dict.get("net")
+                        if element_volume_value is None:
+                            element_volume_value = element_volume_dict.get("gross")
+
+                    # Assign the extracted float value to element_data["volume"]
+                    element_data["volume"] = element_volume_value
+                    element_data["original_volume"] = element_volume_value # Store original volume
+
+                    # Calculate material volumes - NOW USE THE NEW PARSER
+                    element_data["materials"] = parse_element_materials(element, ifc_file)
+                    # Log the materials result just before appending
+                    if i < 5 and chunk_index < 1: # Log for first 5 elements of first chunk
+                         logger.debug(f"Element ID {element.id()} Final Materials: {element_data.get('materials')}")
+
+                    # Remove material_volumes if empty - NOW CHECK materials list
+                    if not element_data["materials"]:
+                         element_data.pop("materials") # Remove if empty list
+
+                    elements.append(IFCElement(**element_data))
+                except Exception as prop_error:
+                    logger.error(f"Error extracting properties for element {element.id()}: {str(prop_error)}")
+                    logger.error(traceback.format_exc())
+
+        logger.info(f"Successfully parsed {len(elements)} elements from the IFC file")
+
+        # Log summary statistics
+        elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
+        elements_with_materials = [e for e in elements if hasattr(e, "materials") and e.materials]
+        logger.info(f"Parsing Summary: {len(elements_with_area)} elements with area, {len(elements_with_materials)} elements with materials")
+
+        return elements
+
+    except Exception as e:
+        logger.error(f"Error parsing IFC file: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Decide how to handle parsing errors: return empty list or raise?
+        # Returning empty list for now to avoid breaking the flow, but log indicates failure.
+        return []
 
 @app.on_event("startup")
 async def startup_event():

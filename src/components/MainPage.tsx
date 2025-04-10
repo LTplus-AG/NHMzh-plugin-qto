@@ -43,10 +43,11 @@ const MainPage = () => {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState<boolean>(false);
   const [previewDialogOpen, setPreviewDialogOpen] = useState<boolean>(false);
   const [hasEbkpGroups, setHasEbkpGroups] = useState<boolean>(true);
-  const [selectedProject, setSelectedProject] = useState<string>(
-    "Recyclingzentrum Juch-Areal"
-  );
+  const [selectedProject, setSelectedProject] = useState<string>("");
   const [viewType, setViewType] = useState<string>("individual");
+  const [projectList, setProjectList] = useState<string[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState<boolean>(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
 
   const {
     editedElements,
@@ -84,12 +85,42 @@ const MainPage = () => {
   };
 
   useEffect(() => {
+    const fetchProjects = async () => {
+      if (!backendConnected) return;
+      setProjectsLoading(true);
+      setProjectsError(null);
+      try {
+        const projects = await apiClient.listProjects();
+        console.log("[MainPage] Fetched projects from API:", projects);
+        setProjectList(projects || []);
+        console.log("[MainPage] Updated projectList state:", projects || []);
+        if (projects && projects.length > 0 && !selectedProject) {
+          setSelectedProject(projects[0]);
+          console.log("[MainPage] Set selectedProject to:", projects[0]);
+        } else if (projects?.length === 0) {
+          setSelectedProject("");
+        }
+      } catch (error) {
+        console.error("Error fetching project list:", error);
+        setProjectsError("Could not load project list.");
+        setProjectList([]);
+        setSelectedProject("");
+      } finally {
+        setProjectsLoading(false);
+      }
+    };
+
+    fetchProjects();
+  }, [backendConnected]);
+
+  useEffect(() => {
     if (selectedProject && backendConnected) {
       fetchProjectElements(selectedProject);
       resetEdits();
     } else {
       setIfcElements([]);
       setIfcError(null);
+      resetEdits();
     }
   }, [selectedProject, backendConnected]);
 
@@ -100,7 +131,6 @@ const MainPage = () => {
       const elementsFromApi: ApiIFCElement[] =
         await apiClient.getProjectElements(projectName);
 
-      // If we got empty results, don't clear existing elements
       if (elementsFromApi.length === 0) {
         console.log(
           `No elements found for project '${projectName}'. Using previously loaded data if available.`
@@ -110,14 +140,14 @@ const MainPage = () => {
       }
 
       const mappedElements: LocalIFCElement[] = elementsFromApi.map(
-        (apiElement: ApiIFCElement) => ({
+        (apiElement: ApiIFCElement): LocalIFCElement => ({
           id: apiElement.id,
           global_id: apiElement.global_id,
           type: apiElement.type,
           name: apiElement.name,
           type_name: (apiElement as any).type_name,
           description: apiElement.description,
-          properties: apiElement.properties,
+          properties: apiElement.properties ?? {},
           material_volumes: apiElement.material_volumes,
           level: apiElement.level,
           classification_id: apiElement.classification_id,
@@ -125,7 +155,13 @@ const MainPage = () => {
           classification_system: apiElement.classification_system,
           area: apiElement.area,
           length: apiElement.length,
-          volume: apiElement.volume?.net ?? apiElement.volume?.gross,
+          volume:
+            typeof apiElement.volume === "object" && apiElement.volume !== null
+              ? apiElement.volume.net
+              : apiElement.volume,
+          original_area: (apiElement as any).original_area,
+          original_length: (apiElement as any).original_length,
+          original_volume: (apiElement as any).original_volume,
           category: apiElement.category,
           is_structural: apiElement.is_structural,
           is_external: apiElement.is_external,
@@ -140,6 +176,9 @@ const MainPage = () => {
       );
 
       setIfcElements(mappedElements);
+      if (mappedElements.length === 0) {
+        console.log(`No elements found for project '${projectName}'.`);
+      }
     } catch (error: any) {
       if (error instanceof Error && error.message.includes("Not Found")) {
         console.log(
@@ -153,8 +192,7 @@ const MainPage = () => {
         setIfcError(
           `Could not load elements for project ${projectName}. Please check backend connection and logs.`
         );
-        // Don't clear existing elements on error
-        // setIfcElements([]);
+        setIfcElements([]);
       }
     } finally {
       setIfcLoading(false);
@@ -163,67 +201,9 @@ const MainPage = () => {
 
   const sendQtoToDatabase = async () => {
     console.warn("sendQtoToDatabase needs refactoring or removal.");
-    // if (!selectedProject) {
-    //   setKafkaError("No project is selected");
-    //   setKafkaSuccess(false);
-    //   return;
-    // }
-    // ... (rest of the logic needs rethinking - e.g., how to get updated elements?)
-    // Let's comment out the core logic for now to remove lint errors
-    /*
-    if (ifcElements.length === 0) {
-      setKafkaError("No elements found in project. Please reload the project.");
-      setKafkaSuccess(false);
-      return;
-    }
-
-    try {
-      setKafkaSending(true);
-      setKafkaError(null);
-      setKafkaSuccess(null);
-
-      // How to check if project exists on backend? Maybe not needed.
-
-      const updatedElements = ifcElements.map((element) => {
-        if (editedElements.hasOwnProperty(element.id)) {
-          const edited = editedElements[element.id];
-          if (
-            edited &&
-            edited.newArea !== null &&
-            edited.newArea !== undefined
-          ) {
-            const updatedElement = JSON.parse(JSON.stringify(element));
-            const numericArea =
-              typeof edited.newArea === "string"
-                ? parseFloat(edited.newArea)
-                : edited.newArea;
-            updatedElement.original_area = edited.originalArea;
-            updatedElement.area = numericArea;
-            return updatedElement;
-          }
-        }
-        return element;
-      });
-
-      // Sending QTO manually might not fit the new flow perfectly.
-      // The backend now sends automatically after processing.
-      // This button might need to become a "Reprocess" button if needed.
-      // For now, simulate success without calling the removed API method.
-      // await apiClient.sendQTO(...);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
-      setKafkaSuccess(true);
-    } catch (error) {
-      setKafkaError(
-        `Error sending QTO data: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      setKafkaSuccess(false);
-    } finally {
-      setKafkaSending(false);
-      setPreviewDialogOpen(false);
-    }
-    */
+    setKafkaError(
+      "Manual sending function needs refactoring for new workflow."
+    );
   };
 
   const handleCloseConfirmDialog = () => {
@@ -235,7 +215,6 @@ const MainPage = () => {
     setKafkaError(
       "Manual sending function needs refactoring for new workflow."
     );
-    // setPreviewDialogOpen(true);
   };
 
   const handleClosePreviewDialog = () => {
@@ -320,26 +299,57 @@ const MainPage = () => {
             <FormLabel focused htmlFor="select-project">
               Projekt:
             </FormLabel>
-            <FormControl variant="outlined" focused fullWidth>
+            <FormControl
+              variant="outlined"
+              focused
+              fullWidth
+              disabled={projectsLoading || !backendConnected}
+            >
               <Select
                 id="select-project"
                 size="small"
                 value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value as string)}
+                onChange={(e) => {
+                  const newProject = e.target.value as string;
+                  if (newProject !== selectedProject) {
+                    setSelectedProject(newProject);
+                    setIfcElements([]);
+                    setIfcLoading(true);
+                    setIfcError(null);
+                  }
+                }}
                 labelId="select-project"
+                displayEmpty
               >
-                <MenuItem value={"Recyclingzentrum Juch-Areal"}>
-                  Recyclingzentrum Juch-Areal
-                </MenuItem>
-                <MenuItem value={"Gesamterneuerung Stadthausanlage"}>
-                  Gesamterneuerung Stadthausanlage
-                </MenuItem>
-                <MenuItem value={"Amtshaus Walche"}>Amtshaus Walche</MenuItem>
-                <MenuItem value={"Gemeinschaftszentrum Wipkingen"}>
-                  Gemeinschaftszentrum Wipkingen
-                </MenuItem>
+                {projectsLoading && (
+                  <MenuItem value="" disabled>
+                    Lade Projekte...
+                  </MenuItem>
+                )}
+                {projectsError && (
+                  <MenuItem value="" disabled>
+                    Fehler beim Laden der Projekte
+                  </MenuItem>
+                )}
+                {!projectsLoading &&
+                  !projectsError &&
+                  projectList.length === 0 && (
+                    <MenuItem value="" disabled>
+                      Keine Projekte gefunden
+                    </MenuItem>
+                  )}
+                {projectList.map((projectName) => (
+                  <MenuItem key={projectName} value={projectName}>
+                    {projectName}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
+            {projectsError && (
+              <Typography variant="caption" color="error" sx={{ mt: 1 }}>
+                {projectsError}
+              </Typography>
+            )}
           </div>
         </div>
 
@@ -394,7 +404,8 @@ const MainPage = () => {
                       </Typography>
                     ) : (
                       <Typography variant="body2" color="text.secondary">
-                        {ifcElements.length} Elemente
+                        {ifcElements.length}{" "}
+                        {ifcElements.length === 1 ? "Element" : "Elemente"}
                       </Typography>
                     )}
 
@@ -470,8 +481,8 @@ const MainPage = () => {
             ifcElements.length === 0 &&
             !ifcError && (
               <Alert severity="info" sx={{ mb: 2 }}>
-                Keine Elemente für dieses Projekt gefunden oder Daten werden
-                noch verarbeitet.
+                Keine Elemente für dieses Projekt gefunden oder die Daten werden
+                noch verarbeitet. Versuchen Sie, das Projekt neu zu laden.
               </Alert>
             )}
           {ifcError && (
@@ -504,7 +515,9 @@ const MainPage = () => {
           onClose={handleClosePreviewDialog}
           onSend={sendQtoToDatabase}
           selectedProject={selectedProject}
-          selectedFileName={undefined}
+          selectedFileName={
+            selectedProject ? `${selectedProject}.ifc` : "unknown.ifc"
+          }
           ifcElements={ifcElements}
           editedElements={editedElements}
           isSending={kafkaSending}

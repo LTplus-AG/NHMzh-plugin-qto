@@ -303,7 +303,6 @@ class MongoDBHelper:
                 "project_name": project_name,
                 "filename": filename,
                 "elements": elements, # Store the list of parsed element dicts
-                "created_at": timestamp, # Keep track of initial processing
                 "updated_at": timestamp
             }
 
@@ -311,7 +310,12 @@ class MongoDBHelper:
             result = collection.update_one(
                 {"project_name": project_name, "filename": filename}, # Filter to find the specific project/file
                 {
-                    "$set": data_to_save,
+                    "$set": {
+                        "project_name": project_name,
+                        "filename": filename,
+                        "elements": elements,
+                        "updated_at": timestamp
+                     },
                     "$setOnInsert": { "created_at": timestamp } # Set created_at only on insert
                 },
                 upsert=True
@@ -353,13 +357,15 @@ class MongoDBHelper:
             return None
 
     def list_distinct_projects(self) -> List[str]:
-        """Returns a list of distinct project names from the parsed data collection."""
+        """Returns a list of distinct project names from the projects collection."""
         if self.db is None:
             logger.error("MongoDB not connected, cannot list projects")
             return []
         try:
-            collection = self.db.parsed_ifc_data
-            distinct_projects = collection.distinct("project_name")
+            # Query the 'projects' collection for the distinct 'name' field
+            collection = self.db.projects
+            distinct_projects = collection.distinct("name")
+            logger.info(f"Distinct projects found in 'projects' collection: {distinct_projects}")
             return distinct_projects
         except Exception as e:
             logger.error(f"Error listing distinct projects from MongoDB: {e}")

@@ -37,6 +37,8 @@ export interface IFCElement {
   length?: number | null | undefined;
   volume?: number | null | undefined;
   original_area?: number | null | undefined;
+  original_length?: number | null | undefined;
+  original_volume?: number | null | undefined;
   quantity?:
     | {
         value: number | null;
