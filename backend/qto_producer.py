@@ -290,15 +290,9 @@ class QTOKafkaProducer:
         if bootstrap_servers:
             self.bootstrap_servers = bootstrap_servers
         else:
-            # Check if we're in Docker or local environment
-            if is_running_in_docker():
-                # Use internal Docker network hostname
-                self.bootstrap_servers = os.getenv('KAFKA_BROKER', 'broker:29092')
-            else:
-                # Use localhost with the external port when running locally
-                # This maps to the port exposed by Docker to the host
-                self.bootstrap_servers = os.getenv('KAFKA_LOCAL_BROKER', 'localhost:9092')
-        
+
+            self.bootstrap_servers = os.getenv('KAFKA_BROKER', 'localhost:9092')
+
         self.topic = topic or os.getenv('KAFKA_QTO_TOPIC', 'qto-elements')
         self.max_retries = max_retries
         self.retry_delay = retry_delay

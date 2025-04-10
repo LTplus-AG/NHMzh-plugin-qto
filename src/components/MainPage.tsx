@@ -59,15 +59,27 @@ const MainPage = () => {
     checkBackendConnectivity();
   }, []);
 
-  const checkBackendConnectivity = async () => {
+  const checkBackendConnectivity = async (retries = 5) => {
     try {
       await apiClient.getHealth();
       setBackendConnected(true);
-    } catch (error) {
-      setBackendConnected(false);
-      setShowConnectionError(true);
-    } finally {
       setConnectionChecked(true);
+      setShowConnectionError(false);
+    } catch (error) {
+      if (retries > 0) {
+        console.warn(
+          `Backend health check failed. Retrying in 4 seconds... (${retries} retries left)`
+        );
+        setTimeout(() => checkBackendConnectivity(retries - 1), 4000);
+      } else {
+        console.error(
+          "Backend health check failed after multiple retries.",
+          error
+        );
+        setBackendConnected(false);
+        setShowConnectionError(true);
+        setConnectionChecked(true);
+      }
     }
   };
 
@@ -471,6 +483,7 @@ const MainPage = () => {
 
         {/* File Upload Component */}
         <FileUpload
+          connectionChecking={!connectionChecked}
           backendConnected={backendConnected}
           selectedFile={selectedFile}
           onFileSelected={handleFileSelected}

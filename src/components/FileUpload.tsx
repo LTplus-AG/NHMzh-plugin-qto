@@ -1,16 +1,12 @@
 import UploadFileIcon from "@mui/icons-material/UploadFile";
-import {
-  Alert,
-  CircularProgress,
-  Paper,
-  Typography
-} from "@mui/material";
+import { Alert, CircularProgress, Paper, Typography } from "@mui/material";
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import apiClient from "../api/ApiClient";
 import { UploadedFile } from "../types/types";
 
 interface FileUploadProps {
+  connectionChecking: boolean;
   backendConnected: boolean;
   selectedFile: UploadedFile | null;
   onFileSelected: (file: UploadedFile) => void;
@@ -18,6 +14,7 @@ interface FileUploadProps {
 }
 
 const FileUpload: React.FC<FileUploadProps> = ({
+  connectionChecking,
   backendConnected,
   onFileSelected,
   fetchIfcElements,
@@ -37,8 +34,18 @@ const FileUpload: React.FC<FileUploadProps> = ({
       setUploadError(null);
 
       try {
-        // Directly use apiClient.uploadIFC which now also fetches elements
-        const response = await apiClient.uploadIFC(file);
+        // Derive project name from filename (remove extension)
+        const projectName =
+          file.name.replace(/\.ifc$/i, "") || "UnnamedProject";
+        const timestamp = new Date().toISOString();
+
+        // Pass all required arguments to uploadIFC
+        const response = await apiClient.uploadIFC(
+          file,
+          projectName,
+          file.name,
+          timestamp
+        );
 
         // Create the UploadedFile object
         const newFile: UploadedFile = {
@@ -142,10 +149,19 @@ const FileUpload: React.FC<FileUploadProps> = ({
         </Alert>
       )}
 
-      {/* Backend Connection Warning - Simplified */}
-      {!backendConnected && !isUploading && (
+      {/* Backend Connection Status */}
+      {connectionChecking && (
+        <Alert
+          severity="info"
+          sx={{ mt: 2, mb: 2 }}
+          icon={<CircularProgress size={20} />}
+        >
+          Verbinde mit Backend...
+        </Alert>
+      )}
+      {!connectionChecking && !backendConnected && (
         <Alert severity="warning" sx={{ mt: 2, mb: 2 }}>
-          Backend nicht verbunden. Upload wird fehlschlagen.
+          Backend nicht erreichbar. Upload nicht möglich.
         </Alert>
       )}
     </div>

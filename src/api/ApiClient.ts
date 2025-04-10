@@ -78,7 +78,7 @@ export interface HealthResponse {
 const getApiBaseUrl = () => {
   // Use production URL if building for production, otherwise use local URL
   const baseUrl = import.meta.env.PROD
-    ? import.meta.env.VITE_API_URL_PROD
+    ? import.meta.env.VITE_API_URL
     : import.meta.env.VITE_API_URL_LOCAL;
 
   // Log the selected URL for debugging
@@ -117,11 +117,22 @@ export class QTOApiClient {
   /**
    * Upload an IFC file
    * @param file - The IFC file to upload
+   * @param project - Project identifier string
+   * @param filename - Original filename string
+   * @param timestamp - ISO timestamp string for the upload
    * @returns Information about the uploaded model
    */
-  async uploadIFC(file: File): Promise<ModelUploadResponse> {
+  async uploadIFC(
+    file: File,
+    project: string,
+    filename: string,
+    timestamp: string
+  ): Promise<ModelUploadResponse> {
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("project", project);
+    formData.append("filename", filename);
+    formData.append("timestamp", timestamp);
 
     const response = await fetch(`${this.baseUrl}/upload-ifc/`, {
       method: "POST",
