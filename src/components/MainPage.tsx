@@ -19,12 +19,11 @@ import {
   Typography,
 } from "@mui/material";
 import { useEffect, useState } from "react";
-import apiClient from "../api/ApiClient";
-import { UploadedFile } from "../types/types";
-import FileUpload from "./FileUpload";
+import apiClient, { IFCElement as ApiIFCElement } from "../api/ApiClient";
+import { IFCElement as LocalIFCElement } from "../types/types";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 import IfcElementsList from "./IfcElementsList";
-import { QtoPreviewDialog } from "./QtoPreviewDialog"; // Import the new component
+import { QtoPreviewDialog } from "./QtoPreviewDialog";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -32,22 +31,23 @@ const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
   : [];
 
 const MainPage = () => {
-  const [_uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
-  const [ifcElements, setIfcElements] = useState<any[]>([]);
+  const [ifcElements, setIfcElements] = useState<LocalIFCElement[]>([]);
   const [ifcLoading, setIfcLoading] = useState(false);
   const [ifcError, setIfcError] = useState<string | null>(null);
-  const [kafkaSending, setKafkaSending] = useState<boolean>(false);
   const [kafkaSuccess, setKafkaSuccess] = useState<boolean | null>(null);
   const [kafkaError, setKafkaError] = useState<string | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
-  const [connectionChecked, setConnectionChecked] = useState(false);
   const [showConnectionError, setShowConnectionError] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState<boolean>(false);
   const [previewDialogOpen, setPreviewDialogOpen] = useState<boolean>(false);
+  const [isPreviewDialogSending, setIsPreviewDialogSending] =
+    useState<boolean>(false);
   const [hasEbkpGroups, setHasEbkpGroups] = useState<boolean>(true);
-  const [selectedProject, setSelectedProject] = useState<string>("Projekt 1");
+  const [selectedProject, setSelectedProject] = useState<string>("");
   const [viewType, setViewType] = useState<string>("individual");
+  const [projectList, setProjectList] = useState<string[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState<boolean>(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
 
   const {
     editedElements,
@@ -64,7 +64,6 @@ const MainPage = () => {
     try {
       await apiClient.getHealth();
       setBackendConnected(true);
-      setConnectionChecked(true);
       setShowConnectionError(false);
     } catch (error) {
       if (retries > 0) {
@@ -79,223 +78,134 @@ const MainPage = () => {
         );
         setBackendConnected(false);
         setShowConnectionError(true);
-        setConnectionChecked(true);
       }
     }
   };
 
   useEffect(() => {
-    if (backendConnected) {
-      loadModelsList();
-    }
+    const fetchProjects = async () => {
+      if (!backendConnected) return;
+      setProjectsLoading(true);
+      setProjectsError(null);
+      try {
+        const projects = await apiClient.listProjects();
+        console.log("[MainPage] Fetched projects from API:", projects);
+        setProjectList(projects || []);
+        console.log("[MainPage] Updated projectList state:", projects || []);
+        if (projects && projects.length > 0 && !selectedProject) {
+          setSelectedProject(projects[0]);
+          console.log("[MainPage] Set selectedProject to:", projects[0]);
+        } else if (projects?.length === 0) {
+          setSelectedProject("");
+        }
+      } catch (error) {
+        console.error("Error fetching project list:", error);
+        setProjectsError("Could not load project list.");
+        setProjectList([]);
+        setSelectedProject("");
+      } finally {
+        setProjectsLoading(false);
+      }
+    };
+
+    fetchProjects();
   }, [backendConnected]);
 
-  const loadModelsList = async () => {
-    try {
-      const models = await apiClient.listModels();
-      if (models.length > 0) {
-        const modelFiles: UploadedFile[] = models.map((model) => ({
-          filename: model.filename,
-          created_at: new Date().toISOString(),
-          modelId: model.model_id,
-        }));
-        setUploadedFiles(modelFiles);
-      }
-    } catch (error) {
-      console.error("Error loading models list:", error);
-    }
-  };
-
-  const fetchIfcElements = async (modelId: string) => {
-    if (!backendConnected || !modelId) {
-      setIfcError(
-        "Backend is not connected. Please make sure the server is running."
-      );
-      return;
-    }
-
-    try {
-      setIfcLoading(true);
+  useEffect(() => {
+    if (selectedProject && backendConnected) {
+      fetchProjectElements(selectedProject);
+      resetEdits();
+    } else {
+      setIfcElements([]);
       setIfcError(null);
+      resetEdits();
+    }
+  }, [selectedProject, backendConnected]);
 
-      try {
-        const qtoData = await apiClient.getQTOElements(modelId);
+  const fetchProjectElements = async (projectName: string) => {
+    setIfcLoading(true);
+    setIfcError(null);
+    try {
+      const elementsFromApi: ApiIFCElement[] =
+        await apiClient.getProjectElements(projectName);
 
-        interface QTOElement {
-          id: string;
-          category: string;
-          level: string;
-          area: number;
-          length?: number;
-          is_structural: boolean;
-          is_external: boolean;
-          ebkph: string;
-          type_name?: string;
-          materials: Array<{
-            name: string;
-            fraction?: number;
-            volume?: number;
-            unit?: string;
-          }>;
-          classification?: {
-            id: string;
-            name: string;
-            system: string;
-          };
-          classification_references?: Array<any>;
-          has_references?: boolean;
-          properties?: Record<string, any>;
-        }
-
-        const mappedElements = qtoData.map((el: QTOElement) => {
-          let classificationId = el.classification?.id || el.ebkph || null;
-
-          const material_volumes: Record<string, any> = {};
-          if (el.materials && el.materials.length > 0) {
-            el.materials.forEach((mat, index) => {
-              const materialName = mat.name;
-              const uniqueName = material_volumes[materialName]
-                ? `${materialName} (${index})`
-                : materialName;
-
-              material_volumes[uniqueName] = {
-                volume: mat.volume,
-                fraction: mat.fraction,
-              };
-            });
-          }
-
-          return {
-            id: el.id,
-            global_id: el.id,
-            type: el.category,
-            name: el.category,
-            type_name: el.type_name,
-            description: null,
-            properties: el.properties || {},
-            material_volumes:
-              Object.keys(material_volumes).length > 0
-                ? material_volumes
-                : null,
-            category: el.category,
-            level: el.level,
-            area: el.area,
-            length: el.length,
-            is_structural: el.is_structural,
-            is_external: el.is_external,
-            ebkph: el.ebkph,
-            materials: el.materials,
-            classification_id: classificationId,
-            classification_name: el.classification?.name || null,
-            classification_system: el.classification?.system || "EBKP",
-          };
-        });
-
-        setIfcElements(mappedElements as any);
+      if (elementsFromApi.length === 0) {
         console.log(
-          `Loaded ${mappedElements.length} elements from API, viewType: ${viewType}`
+          `No elements found for project '${projectName}'. Using previously loaded data if available.`
         );
         setIfcLoading(false);
         return;
-      } catch (qtoError) {
-        // Fallback to standard IFC elements if QTO endpoint fails
-        const elements = await apiClient.getIFCElements(modelId);
-        setIfcElements(elements);
       }
-    } catch (error) {
-      setIfcError(
-        "Could not load IFC elements from server. Please try uploading the file again."
+
+      const mappedElements: LocalIFCElement[] = elementsFromApi.map(
+        (apiElement: ApiIFCElement): LocalIFCElement => ({
+          id: apiElement.id,
+          global_id: apiElement.global_id,
+          type: apiElement.type,
+          name: apiElement.name,
+          type_name: (apiElement as any).type_name,
+          description: apiElement.description,
+          properties: apiElement.properties ?? {},
+          material_volumes: apiElement.material_volumes,
+          level: apiElement.level,
+          classification_id: apiElement.classification_id,
+          classification_name: apiElement.classification_name,
+          classification_system: apiElement.classification_system,
+          area: apiElement.area,
+          length: apiElement.length,
+          volume:
+            typeof apiElement.volume === "object" && apiElement.volume !== null
+              ? apiElement.volume.net
+              : apiElement.volume,
+          original_area: (apiElement as any).original_area,
+          original_length: (apiElement as any).original_length,
+          original_volume: (apiElement as any).original_volume,
+          category: apiElement.category,
+          is_structural: apiElement.is_structural,
+          is_external: apiElement.is_external,
+          ebkph: apiElement.ebkph,
+          materials: apiElement.materials,
+          classification: {
+            id: apiElement.classification_id,
+            name: apiElement.classification_name,
+            system: apiElement.classification_system,
+          },
+        })
       );
+
+      setIfcElements(mappedElements);
+      if (mappedElements.length === 0) {
+        console.log(`No elements found for project '${projectName}'.`);
+      }
+    } catch (error: any) {
+      if (error instanceof Error && error.message.includes("Not Found")) {
+        console.log(
+          `Parsed element data for project '${projectName}' not found. Using previously loaded data if available.`
+        );
+      } else {
+        console.error(
+          `Error fetching elements for project ${projectName}:`,
+          error
+        );
+        setIfcError(
+          `Could not load elements for project ${projectName}. Please check backend connection and logs.`
+        );
+        setIfcElements([]);
+      }
     } finally {
       setIfcLoading(false);
     }
   };
 
-  const handleFileSelected = (file: UploadedFile) => {
-    setSelectedFile(file);
-    if (file.modelId && backendConnected) {
-      fetchIfcElements(file.modelId);
-    } else {
-      setIfcError(
-        "No model ID associated with this file or backend not connected."
-      );
-    }
-  };
-
   const sendQtoToDatabase = async () => {
-    if (!selectedFile?.modelId) {
-      setKafkaError("No model is selected");
-      setKafkaSuccess(false);
-      return;
-    }
-
-    if (ifcElements.length === 0) {
-      setKafkaError("No elements found in model. Please reload the model.");
-      setKafkaSuccess(false);
-      return;
-    }
-
-    try {
-      setKafkaSending(true);
-      setKafkaError(null);
-      setKafkaSuccess(null);
-
-      try {
-        await apiClient.getIFCElements(selectedFile.modelId);
-      } catch (checkError) {
-        await loadModelsList();
-        throw new Error(
-          "Model not found on server. It may have been deleted or the server was restarted."
-        );
-      }
-
-      const updatedElements = ifcElements.map((element) => {
-        if (editedElements.hasOwnProperty(element.id)) {
-          const edited = editedElements[element.id];
-          if (
-            edited &&
-            edited.newArea !== null &&
-            edited.newArea !== undefined
-          ) {
-            const updatedElement = JSON.parse(JSON.stringify(element));
-            const numericArea =
-              typeof edited.newArea === "string"
-                ? parseFloat(edited.newArea)
-                : edited.newArea;
-            updatedElement.original_area = edited.originalArea;
-            updatedElement.area = numericArea;
-            return updatedElement;
-          }
-        }
-        return element;
-      });
-
-      const projectName =
-        selectedProject === "Projekt 1"
-          ? "Recyclingzentrum Juch-Areal"
-          : selectedProject === "Projekt 2"
-          ? "Gesamterneuerung Stadthausanlage"
-          : selectedProject === "Projekt 3"
-          ? "Amtshaus Walche"
-          : "Gemeinschaftszentrum Wipkingen";
-
-      await apiClient.sendQTO(
-        selectedFile.modelId,
-        updatedElements,
-        projectName
-      );
-      setKafkaSuccess(true);
-    } catch (error) {
-      setKafkaError(
-        `Error sending QTO data: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      setKafkaSuccess(false);
-    } finally {
-      setKafkaSending(false);
-      setPreviewDialogOpen(false);
-    }
+    console.warn("sendQtoToDatabase needs refactoring or removal.");
+    setIsPreviewDialogSending(true);
+    setKafkaError(
+      "Manual sending function needs refactoring for new workflow."
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    setIsPreviewDialogSending(false);
+    setPreviewDialogOpen(false);
   };
 
   const handleCloseConfirmDialog = () => {
@@ -303,7 +213,10 @@ const MainPage = () => {
   };
 
   const handleOpenPreviewDialog = () => {
-    setPreviewDialogOpen(true);
+    console.log("Preview/Send button clicked - functionality needs review.");
+    setKafkaError(
+      "Manual sending function needs refactoring for new workflow."
+    );
   };
 
   const handleClosePreviewDialog = () => {
@@ -337,7 +250,6 @@ const MainPage = () => {
         </Alert>
       </Snackbar>
 
-      {/* Kafka Send Result Snackbar */}
       <Snackbar
         open={kafkaSuccess !== null || kafkaError !== null}
         autoHideDuration={6000}
@@ -355,7 +267,6 @@ const MainPage = () => {
         </Alert>
       </Snackbar>
 
-      {/* Confirmation Dialog (kept for potential future use) */}
       <Dialog
         open={confirmDialogOpen}
         onClose={handleCloseConfirmDialog}
@@ -381,9 +292,7 @@ const MainPage = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Sidebar */}
       <div className="w-1/4 p-8 bg-light text-primary flex flex-col">
-        {/* Header und Inhalte */}
         <div className="flex flex-col">
           <Typography variant="h3" color="primary" sx={{ mb: 2 }}>
             Mengen
@@ -392,68 +301,71 @@ const MainPage = () => {
             <FormLabel focused htmlFor="select-project">
               Projekt:
             </FormLabel>
-            <FormControl variant="outlined" focused>
+            <FormControl
+              variant="outlined"
+              focused
+              fullWidth
+              disabled={projectsLoading || !backendConnected}
+            >
               <Select
                 id="select-project"
                 size="small"
                 value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value as string)}
+                onChange={(e) => {
+                  const newProject = e.target.value as string;
+                  if (newProject !== selectedProject) {
+                    setSelectedProject(newProject);
+                    setIfcElements([]);
+                    setIfcLoading(true);
+                    setIfcError(null);
+                  }
+                }}
                 labelId="select-project"
+                displayEmpty
               >
-                <MenuItem value={"Projekt 1"}>
-                  Recyclingzentrum Juch-Areal
-                </MenuItem>
-                <MenuItem value={"Projekt 2"}>
-                  Gesamterneuerung Stadthausanlage
-                </MenuItem>
-                <MenuItem value={"Projekt 3"}>Amtshaus Walche</MenuItem>
-                <MenuItem value={"Projekt 4"}>
-                  Gemeinschaftszentrum Wipkingen
-                </MenuItem>
+                {projectsLoading && (
+                  <MenuItem value="" disabled>
+                    Lade Projekte...
+                  </MenuItem>
+                )}
+                {projectsError && (
+                  <MenuItem value="" disabled>
+                    Fehler beim Laden der Projekte
+                  </MenuItem>
+                )}
+                {!projectsLoading &&
+                  !projectsError &&
+                  projectList.length === 0 && (
+                    <MenuItem value="" disabled>
+                      Keine Projekte gefunden
+                    </MenuItem>
+                  )}
+                {projectList.map((projectName) => (
+                  <MenuItem key={projectName} value={projectName}>
+                    {projectName}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
+            {projectsError && (
+              <Typography variant="caption" color="error" sx={{ mt: 1 }}>
+                {projectsError}
+              </Typography>
+            )}
           </div>
         </div>
 
-        {/* Backend Status Indicator */}
-        {connectionChecked && (
-          <div className="mt-2 px-2 py-1 text-xs flex items-center">
-            <span
-              className={`inline-block w-2 h-2 rounded-full mr-2 ${
-                backendConnected ? "bg-green-500" : "bg-red-500"
-              }`}
-            ></span>
-            <span>
-              {backendConnected
-                ? "Backend connected"
-                : "Backend not available - IFC processing will fail"}
-            </span>
-          </div>
-        )}
-
-        {/* File Upload Component */}
-        <FileUpload
-          connectionChecking={!connectionChecked}
-          backendConnected={backendConnected}
-          selectedFile={selectedFile}
-          onFileSelected={handleFileSelected}
-          fetchIfcElements={fetchIfcElements}
-        />
-
-        {/* Fusszeile */}
         <div className="flex flex-col mt-auto">
           {/* Removed Anleitung Section */}
         </div>
       </div>
 
-      {/* Main content area - IFC Elements */}
       <div
         className="flex-1 flex flex-col overflow-y-auto"
         style={{ width: "100%" }}
       >
         <div className="p-10 flex flex-col flex-grow">
-          {/* Model information header */}
-          {selectedFile && (
+          {selectedProject && (
             <Box
               sx={{
                 display: "flex",
@@ -471,7 +383,6 @@ const MainPage = () => {
                   mb: 1,
                 }}
               >
-                {/* Model title & stats */}
                 <Box sx={{ display: "flex", flexDirection: "column" }}>
                   <Typography
                     variant="h5"
@@ -479,7 +390,7 @@ const MainPage = () => {
                     fontWeight="bold"
                     sx={{ color: "black" }}
                   >
-                    {selectedFile.filename}
+                    {selectedProject}
                   </Typography>
                   <Box
                     sx={{
@@ -489,64 +400,59 @@ const MainPage = () => {
                       mt: 1,
                     }}
                   >
-                    <Typography variant="body2" color="text.secondary">
-                      Hochgeladen:{" "}
-                      {new Date(selectedFile.created_at).toLocaleString(
-                        "de-CH"
-                      )}
-                    </Typography>
-                    <Box
-                      sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
-                    >
+                    {ifcLoading ? (
                       <Typography variant="body2" color="text.secondary">
-                        {ifcElements.length} Elemente
+                        Elemente werden geladen...
                       </Typography>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        {ifcElements.length}{" "}
+                        {ifcElements.length === 1 ? "Element" : "Elemente"}
+                      </Typography>
+                    )}
 
-                      {TARGET_IFC_CLASSES && TARGET_IFC_CLASSES.length > 0 && (
-                        <Tooltip
-                          title={
-                            <div>
-                              <p>
-                                Nur folgende IFC-Klassen werden berücksichtigt:
-                              </p>
-                              <ul
-                                style={{ margin: "8px 0", paddingLeft: "20px" }}
-                              >
-                                {TARGET_IFC_CLASSES.map((cls: string) => (
-                                  <li key={cls}>{cls}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          }
-                          arrow
-                        >
-                          <IconButton size="small" sx={{ p: 0 }}>
-                            <InfoIcon fontSize="small" color="action" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </Box>
+                    {TARGET_IFC_CLASSES && TARGET_IFC_CLASSES.length > 0 && (
+                      <Tooltip
+                        title={
+                          <div>
+                            <p>
+                              Nur folgende IFC-Klassen werden berücksichtigt:
+                            </p>
+                            <ul
+                              style={{ margin: "8px 0", paddingLeft: "20px" }}
+                            >
+                              {TARGET_IFC_CLASSES.map((cls: string) => (
+                                <li key={cls}>{cls}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        }
+                        arrow
+                      >
+                        <IconButton size="small" sx={{ p: 0 }}>
+                          <InfoIcon fontSize="small" color="action" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                   </Box>
                 </Box>
 
-                {/* Action buttons */}
                 <Box sx={{ display: "flex", gap: 2 }}>
-                  {/* Reload Button */}
                   <Button
                     variant="outlined"
                     color="primary"
                     onClick={() =>
-                      selectedFile.modelId &&
-                      fetchIfcElements(selectedFile.modelId)
+                      selectedProject && fetchProjectElements(selectedProject)
                     }
-                    disabled={ifcLoading || !backendConnected}
+                    disabled={
+                      ifcLoading || !backendConnected || !selectedProject
+                    }
                     className="text-primary border-primary whitespace-nowrap"
                     size="small"
                   >
-                    {ifcLoading ? "Lädt..." : "Modell neu laden"}
+                    {ifcLoading ? "Lädt..." : "Projekt neu laden"}
                   </Button>
 
-                  {/* Preview Button (formerly Send to Database) */}
                   {ifcElements.length > 0 && (
                     <Button
                       variant="contained"
@@ -554,12 +460,12 @@ const MainPage = () => {
                       startIcon={<SendIcon />}
                       onClick={handleOpenPreviewDialog}
                       disabled={
-                        kafkaSending || !backendConnected || !hasEbkpGroups
+                        !backendConnected || !hasEbkpGroups || ifcLoading
                       }
                       className="bg-primary whitespace-nowrap"
                       size="small"
                     >
-                      {kafkaSending ? "Senden..." : "Vorschau & Senden"}
+                      {ifcLoading ? "Lädt..." : "Vorschau & Senden"}
                     </Button>
                   )}
                 </Box>
@@ -567,15 +473,26 @@ const MainPage = () => {
             </Box>
           )}
 
-          {/* Message when no IFC file is loaded */}
-          {!ifcLoading && ifcElements.length === 0 && !ifcError && (
+          {!selectedProject && backendConnected && (
             <Alert severity="info" sx={{ mb: 2 }}>
-              Bitte laden Sie eine IFC-Datei hoch, um die Daten anzuzeigen. Die
-              IFC-Elemente werden mit ifcopenshell 0.8.1 verarbeitet.
+              Bitte wählen Sie ein Projekt aus der Liste aus.
+            </Alert>
+          )}
+          {selectedProject &&
+            !ifcLoading &&
+            ifcElements.length === 0 &&
+            !ifcError && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Keine Elemente für dieses Projekt gefunden oder die Daten werden
+                noch verarbeitet. Versuchen Sie, das Projekt neu zu laden.
+              </Alert>
+            )}
+          {ifcError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {ifcError}
             </Alert>
           )}
 
-          {/* Element list container - expanded to fill remaining space */}
           <div className="border border-gray-200 rounded-md flex-grow flex flex-col">
             <IfcElementsList
               elements={ifcElements}
@@ -585,7 +502,6 @@ const MainPage = () => {
               editedElementsCount={editedElementsCount}
               handleQuantityChange={handleQuantityChange}
               resetEdits={resetEdits}
-              // Pass callback to update EBKP status
               onEbkpStatusChange={setHasEbkpGroups}
               targetIfcClasses={TARGET_IFC_CLASSES}
               viewType={viewType}
@@ -595,17 +511,18 @@ const MainPage = () => {
         </div>
       </div>
 
-      {/* Add the new Dialog Component */}
-      {selectedFile && selectedProject && (
+      {selectedProject && (
         <QtoPreviewDialog
           open={previewDialogOpen}
           onClose={handleClosePreviewDialog}
           onSend={sendQtoToDatabase}
           selectedProject={selectedProject}
-          selectedFileName={selectedFile?.filename}
+          selectedFileName={
+            selectedProject ? `${selectedProject}.ifc` : "unknown.ifc"
+          }
           ifcElements={ifcElements}
           editedElements={editedElements}
-          isSending={kafkaSending}
+          isSending={isPreviewDialogSending}
         />
       )}
     </div>

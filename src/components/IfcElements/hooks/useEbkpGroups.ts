@@ -4,7 +4,7 @@ import { EbkpGroup } from "../types";
 
 export const useEbkpGroups = (
   elements: IFCElement[],
-  classificationFilter: string,
+  classificationFilter: string[],
   viewType: string = "individual"
 ) => {
   // Get unique classification IDs
@@ -52,27 +52,18 @@ export const useEbkpGroups = (
     );
 
     // Then apply any user-selected filter
-    const filteredElements = !classificationFilter
-      ? elementsWithValidClassification
-      : (() => {
-          const [system, identifier] = classificationFilter.split("-");
-          return elementsWithValidClassification.filter((el) => {
-            if (identifier.includes(" ")) {
-              // Filtering by name
-              return (
-                el.classification_system === system &&
-                el.classification_name &&
-                el.classification_name.includes(identifier)
-              );
-            } else {
-              // Filtering by ID
-              return (
-                el.classification_system === system &&
-                el.classification_id === identifier
-              );
-            }
+    const filteredElements =
+      classificationFilter.length === 0
+        ? elementsWithValidClassification
+        : elementsWithValidClassification.filter((el) => {
+            // Construct the value string for the element's classification
+            const elementFilterValue = el.classification_id
+              ? `${el.classification_system}-${el.classification_id}`
+              : `${el.classification_system}-${el.classification_name}`; // Fallback if ID is missing
+
+            // Check if this element's classification value is included in the filter array
+            return classificationFilter.includes(elementFilterValue);
           });
-        })();
 
     // Group by EBKP code
     const groupedElements = new Map<string, EbkpGroup>();
@@ -210,8 +201,7 @@ export const useEbkpGroups = (
               }
 
               const existingMat = materialMap.get(name);
-              // Sum up volumes if available
-              if (mat.volume !== undefined) {
+              if (mat.volume !== undefined && mat.volume !== null) {
                 existingMat.volume = (existingMat.volume || 0) + mat.volume;
                 totalVolume += mat.volume;
               }

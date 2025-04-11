@@ -9,6 +9,7 @@ export interface IFCElement {
   global_id: string;
   type: string;
   name: string;
+  type_name?: string | null;
   description?: string | null;
   properties: Record<string, any>;
   material_volumes?: Record<
@@ -77,15 +78,20 @@ export interface HealthResponse {
 // Get API URL from environment or use default
 const getApiBaseUrl = () => {
   // Use production URL if building for production, otherwise use local URL
-  const baseUrl = import.meta.env.PROD
+  const isProd = import.meta.env.PROD;
+  const baseUrl = isProd
     ? import.meta.env.VITE_API_URL
     : import.meta.env.VITE_API_URL_LOCAL;
 
-  // Log the selected URL for debugging
-  console.log(`Using API Base URL: ${baseUrl}`);
+  // Explicitly define the local fallback
+  const localFallbackUrl = "http://localhost:8000";
 
-  // Return the selected URL or fallback if neither is defined
-  return baseUrl || "/api"; // Fallback if no env vars are set
+  // Log the selected URL for debugging
+  const finalUrl = baseUrl || (isProd ? "/api" : localFallbackUrl); // Use /api for prod fallback, explicit URL for local
+  console.log(`Using API Base URL: ${finalUrl}`);
+
+  // Return the selected URL or fallback
+  return finalUrl;
 };
 
 /**
@@ -115,134 +121,56 @@ export class QTOApiClient {
   }
 
   /**
-   * Upload an IFC file
-   * @param file - The IFC file to upload
-   * @param project - Project identifier string
-   * @param filename - Original filename string
-   * @param timestamp - ISO timestamp string for the upload
-   * @returns Information about the uploaded model
+   * Get list of available project names
+   * @returns List of project names
    */
-  async uploadIFC(
-    file: File,
-    project: string,
-    filename: string,
-    timestamp: string
-  ): Promise<ModelUploadResponse> {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("project", project);
-    formData.append("filename", filename);
-    formData.append("timestamp", timestamp);
-
-    const response = await fetch(`${this.baseUrl}/upload-ifc/`, {
-      method: "POST",
-      body: formData,
-    });
-
+  async listProjects(): Promise<string[]> {
+    const response = await fetch(`${this.baseUrl}/projects/`);
     if (!response.ok) {
-      throw new Error(`Failed to upload IFC file: ${response.statusText}`);
-    }
-
-    return await response.json();
-  }
-
-  /**
-   * Get IFC elements from a model
-   * @param modelId - The ID of the model to get elements from
-   * @returns List of IFC elements
-   */
-  async getIFCElements(modelId: string): Promise<IFCElement[]> {
-    const response = await fetch(`${this.baseUrl}/ifc-elements/${modelId}`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch IFC elements: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(
+        `Failed to list projects: ${response.statusText} - ${errorText}`
+      );
     }
     return await response.json();
   }
 
   /**
-   * Get QTO elements from a model
-   * @param modelId - The ID of the model to get QTO elements from
-   * @returns QTO elements array
+   * Get parsed IFC elements for a project
+   * @param projectName - The name of the project
+   * @returns List of IFC elements for the project
    */
-  async getQTOElements(modelId: string): Promise<any[]> {
-    const response = await fetch(`${this.baseUrl}/qto-elements/${modelId}`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch QTO elements: ${response.statusText}`);
-    }
-    return await response.json();
-  }
-
-  /**
-   * List all models
-   * @returns List of model information
-   */
-  async listModels(): Promise<ModelInfo[]> {
-    const response = await fetch(`${this.baseUrl}/models`);
-    if (!response.ok) {
-      throw new Error(`Failed to list models: ${response.statusText}`);
-    }
-    return await response.json();
-  }
-
-  /**
-   * Delete a model
-   * @param modelId - The ID of the model to delete
-   * @returns Confirmation message
-   */
-  async deleteModel(modelId: string): Promise<ModelDeleteResponse> {
-    const response = await fetch(`${this.baseUrl}/models/${modelId}`, {
-      method: "DELETE",
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to delete model: ${response.statusText}`);
-    }
-    return await response.json();
-  }
-
-  /**
-   * Send QTO data to Kafka
-   * @param modelId - The ID of the model to send to Kafka
-   * @param updatedElements - Optional list of elements with updated values (for user edits)
-   * @param projectName - Optional project name to use (from sidebar dropdown)
-   * @returns The result of the operation
-   */
-  async sendQTO(
-    modelId: string,
-    updatedElements?: IFCElement[],
-    projectName?: string
-  ): Promise<QTOResponse> {
-    const url = `${this.baseUrl}/send-qto/?model_id=${modelId}`;
-
-    const headers = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-
-    const requestBody = {
-      ...(updatedElements ? { elements: updatedElements } : {}),
-      ...(projectName ? { project: projectName } : {}),
-    };
-
-    const jsonBody = JSON.stringify(requestBody);
-    const options: RequestInit = {
-      method: "POST",
-      headers: headers,
-      body: jsonBody,
-    };
-
+  async getProjectElements(projectName: string): Promise<IFCElement[]> {
+    // Ensure project name is URL encoded
+    const encodedProjectName = encodeURIComponent(projectName);
+    // Define the endpoint outside the try block for broader scope
+    const endpoint = `/projects/${encodedProjectName}/elements/`;
     try {
-      const response = await fetch(url, options);
+      console.log(`Fetching elements using endpoint: ${endpoint}`);
+      const response = await fetch(`${this.baseUrl}${endpoint}`);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to send QTO data: ${response.statusText} - ${errorText}`
+      if (response.ok) {
+        const elements = await response.json();
+        console.log(
+          `Successfully retrieved ${elements.length} elements using ${endpoint}`
         );
+        return elements;
+      } else {
+        console.error(
+          // Changed to error for clarity
+          `Endpoint ${endpoint} returned status ${response.status}. Returning empty array.`
+        );
+        return [];
       }
-
-      return await response.json();
     } catch (error) {
-      throw error;
+      // Handle potential fetch errors
+      console.error(
+        // Changed to error for clarity
+        `Error fetching elements for '${projectName}' from ${endpoint}: ${error}`
+      );
+      // Optionally re-throw or handle specific error types if needed
+      // if (error instanceof TypeError && error.message.includes("fetch")) { ... }
+      return []; // Return empty array on error
     }
   }
 }

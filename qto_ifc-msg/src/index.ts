@@ -22,43 +22,78 @@ const IFC_BUCKET_NAME = getEnv("MINIO_IFC_BUCKET");
  * Starts the Kafka consumer
  */
 async function main() {
-	log.info("Starting server...");
+  log.info("Starting server...");
 
-	log.info("Setting up Kafka consumer...");
-	const consumer = await setupKafkaConsumer();
-	log.info("Kafka consumer setup complete");
+  log.info("Setting up Kafka consumer...");
+  const consumer = await setupKafkaConsumer();
+  log.info("Kafka consumer setup complete");
 
-	log.info("Starting Kafka consumer...");
-	await startKafkaConsumer(consumer, async (message: any) => {
-		if (message.value) {
-			try {
-				log.info("Processing Kafka message:", message.value);
-				const downloadLink = message.value.toString();
-				const fileID = downloadLink.split("/").pop();
-				const file = await getFile(fileID, IFC_BUCKET_NAME, minioClient);
-				if (!file) {
-					log.error(`File ${fileID} not found`);
-					return;
-				}
+  log.info("Starting Kafka consumer...");
+  await startKafkaConsumer(consumer, async (message: any) => {
+    if (message.value) {
+      let fileID: string | undefined;
+      try {
+        log.info(
+          "Processing Kafka message value (as string):",
+          message.value.toString()
+        );
+        const downloadLink = message.value.toString();
+        fileID = downloadLink.split("/").pop();
+        if (!fileID) {
+          log.error("Could not extract fileID from download link", {
+            link: downloadLink,
+          });
+          return;
+        }
 
-				const metadata = await getFileMetadata(fileID, IFC_BUCKET_NAME, minioClient);
-				const ifcData: IFCData = {
-					project: metadata.project,
-					filename: metadata.filename,
-					timestamp: metadata.timestamp,
-					file: file,
-				};
+        log.info(`Extracted fileID: ${fileID}`);
+        const file = await getFile(fileID, IFC_BUCKET_NAME, minioClient);
+        if (!file) {
+          log.error(
+            `File ${fileID} not found or getFile returned null/undefined.`
+          );
+          return;
+        }
+        log.info(
+          `Successfully downloaded file ${fileID}, size: ${file.length} bytes`
+        );
 
-				await sendIFCFile(ifcData);
-			} catch (error: any) {
-				log.error("Error processing Kafka message:", error);
-			}
-		}
-	});
+        const metadata = await getFileMetadata(
+          fileID,
+          IFC_BUCKET_NAME,
+          minioClient
+        );
+        log.info(`Successfully retrieved metadata for ${fileID}:`, metadata);
 
-	log.info("Kafka consumer started");
+        const ifcData: IFCData = {
+          project: metadata.project,
+          filename: metadata.filename,
+          timestamp: metadata.timestamp,
+          file: file,
+        };
+
+        await sendIFCFile(ifcData);
+        log.info(
+          `Successfully processed and sent file derived from message offset ${message.offset}`
+        );
+      } catch (error: any) {
+        log.error(
+          `Error processing Kafka message for fileID '${
+            fileID || "unknown"
+          }' (offset: ${message.offset})`,
+          error
+        );
+      }
+    } else {
+      log.warn("Received Kafka message with empty value", {
+        offset: message.offset,
+      });
+    }
+  });
+
+  log.info("Kafka consumer processing loop started");
 }
 
 if (require.main === module) {
-	main().catch(log.error);
+  main().catch(log.error);
 }

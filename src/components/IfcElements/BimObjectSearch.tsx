@@ -176,6 +176,8 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
           maxHeight: 400,
           "& .MuiAutocomplete-listbox": {
             padding: "4px 0",
+            maxHeight: "unset",
+            overflow: "visible",
           },
         }}
       />
