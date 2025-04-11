@@ -34,14 +34,14 @@ const MainPage = () => {
   const [ifcElements, setIfcElements] = useState<LocalIFCElement[]>([]);
   const [ifcLoading, setIfcLoading] = useState(false);
   const [ifcError, setIfcError] = useState<string | null>(null);
-  const [kafkaSending, setKafkaSending] = useState<boolean>(false);
   const [kafkaSuccess, setKafkaSuccess] = useState<boolean | null>(null);
   const [kafkaError, setKafkaError] = useState<string | null>(null);
   const [backendConnected, setBackendConnected] = useState(false);
-  const [connectionChecked, setConnectionChecked] = useState(false);
   const [showConnectionError, setShowConnectionError] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState<boolean>(false);
   const [previewDialogOpen, setPreviewDialogOpen] = useState<boolean>(false);
+  const [isPreviewDialogSending, setIsPreviewDialogSending] =
+    useState<boolean>(false);
   const [hasEbkpGroups, setHasEbkpGroups] = useState<boolean>(true);
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [viewType, setViewType] = useState<string>("individual");
@@ -64,7 +64,6 @@ const MainPage = () => {
     try {
       await apiClient.getHealth();
       setBackendConnected(true);
-      setConnectionChecked(true);
       setShowConnectionError(false);
     } catch (error) {
       if (retries > 0) {
@@ -79,7 +78,6 @@ const MainPage = () => {
         );
         setBackendConnected(false);
         setShowConnectionError(true);
-        setConnectionChecked(true);
       }
     }
   };
@@ -201,9 +199,13 @@ const MainPage = () => {
 
   const sendQtoToDatabase = async () => {
     console.warn("sendQtoToDatabase needs refactoring or removal.");
+    setIsPreviewDialogSending(true);
     setKafkaError(
       "Manual sending function needs refactoring for new workflow."
     );
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    setIsPreviewDialogSending(false);
+    setPreviewDialogOpen(false);
   };
 
   const handleCloseConfirmDialog = () => {
@@ -458,12 +460,12 @@ const MainPage = () => {
                       startIcon={<SendIcon />}
                       onClick={handleOpenPreviewDialog}
                       disabled={
-                        kafkaSending || !backendConnected || !hasEbkpGroups
+                        !backendConnected || !hasEbkpGroups || ifcLoading
                       }
                       className="bg-primary whitespace-nowrap"
                       size="small"
                     >
-                      {kafkaSending ? "Senden..." : "Vorschau & Senden"}
+                      {ifcLoading ? "Lädt..." : "Vorschau & Senden"}
                     </Button>
                   )}
                 </Box>
@@ -520,7 +522,7 @@ const MainPage = () => {
           }
           ifcElements={ifcElements}
           editedElements={editedElements}
-          isSending={kafkaSending}
+          isSending={isPreviewDialogSending}
         />
       )}
     </div>

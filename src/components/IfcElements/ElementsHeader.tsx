@@ -14,8 +14,8 @@ interface ElementsHeaderProps {
     name: string;
     system: string;
   }>;
-  classificationFilter: string;
-  setClassificationFilter: (value: string) => void;
+  classificationFilter: string[];
+  setClassificationFilter: (value: string[]) => void;
   elements?: IFCElement[];
   onElementSelect?: (element: IFCElement | null) => void;
   viewType?: string;

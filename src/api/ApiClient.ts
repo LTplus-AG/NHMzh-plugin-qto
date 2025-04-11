@@ -143,66 +143,34 @@ export class QTOApiClient {
   async getProjectElements(projectName: string): Promise<IFCElement[]> {
     // Ensure project name is URL encoded
     const encodedProjectName = encodeURIComponent(projectName);
+    // Define the endpoint outside the try block for broader scope
+    const endpoint = `/projects/${encodedProjectName}/elements/`;
     try {
-      // First try the emergency direct endpoint
-      console.log(`Trying direct emergency endpoint for ${projectName}`);
-      const emergencyResponse = await fetch(
-        `${this.baseUrl}/db-elements/${encodedProjectName}`
-      );
+      console.log(`Fetching elements using endpoint: ${endpoint}`);
+      const response = await fetch(`${this.baseUrl}${endpoint}`);
 
-      if (emergencyResponse.ok) {
-        const elements = await emergencyResponse.json();
+      if (response.ok) {
+        const elements = await response.json();
         console.log(
-          `Successfully retrieved ${elements.length} elements for ${projectName} using emergency endpoint`
+          `Successfully retrieved ${elements.length} elements using ${endpoint}`
         );
         return elements;
-      }
-
-      console.log(
-        `Emergency endpoint failed with status ${emergencyResponse.status}, trying other options`
-      );
-
-      // Try all other endpoints in order
-      const endpoints = [
-        `/projects/${encodedProjectName}/elements-direct/`,
-        `/projects/${encodedProjectName}/elements/`,
-      ];
-
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`Trying endpoint: ${endpoint}`);
-          const response = await fetch(`${this.baseUrl}${endpoint}`);
-
-          if (response.ok) {
-            const elements = await response.json();
-            console.log(
-              `Successfully retrieved ${elements.length} elements using ${endpoint}`
-            );
-            return elements;
-          } else {
-            console.log(
-              `Endpoint ${endpoint} returned status ${response.status}`
-            );
-          }
-        } catch (error) {
-          console.warn(`Error using endpoint ${endpoint}: ${error}`);
-        }
-      }
-
-      // If we get here, all endpoints failed
-      console.log(
-        `All endpoints failed for project ${projectName}. Returning empty array.`
-      );
-      return [];
-    } catch (error) {
-      // Only re-throw if it's not a network error that might be temporary
-      if (error instanceof TypeError && error.message.includes("fetch")) {
-        console.warn(
-          `Network error fetching elements for '${projectName}': ${error.message}`
+      } else {
+        console.error(
+          // Changed to error for clarity
+          `Endpoint ${endpoint} returned status ${response.status}. Returning empty array.`
         );
         return [];
       }
-      throw error;
+    } catch (error) {
+      // Handle potential fetch errors
+      console.error(
+        // Changed to error for clarity
+        `Error fetching elements for '${projectName}' from ${endpoint}: ${error}`
+      );
+      // Optionally re-throw or handle specific error types if needed
+      // if (error instanceof TypeError && error.message.includes("fetch")) { ... }
+      return []; // Return empty array on error
     }
   }
 }

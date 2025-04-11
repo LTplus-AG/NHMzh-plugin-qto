@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import React from "react";
 import { IFCElement } from "../../types/types";
-import MaterialsTable from "./MaterialsTable";
+import MaterialsTable from "./ElementTable";
 import { EditedQuantity } from "./types";
 
 // Simple configuration based on TARGET_QUANTITIES from Python
