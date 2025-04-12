@@ -173,6 +173,44 @@ export class QTOApiClient {
       return []; // Return empty array on error
     }
   }
+
+  /**
+   * Approve project elements
+   * @param projectName - The name of the project to approve
+   * @returns Response with operation status
+   */
+  async approveProjectElements(
+    projectName: string
+  ): Promise<{ status: string; message: string; project: string }> {
+    // Ensure project name is URL encoded
+    const encodedProjectName = encodeURIComponent(projectName);
+    const endpoint = `/projects/${encodedProjectName}/approve/`;
+    try {
+      console.log(`Approving elements for project: ${projectName}`);
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to approve project: ${response.statusText} - ${errorText}`
+        );
+      }
+
+      const result = await response.json();
+      console.log(`Successfully approved elements for project ${projectName}`);
+      return result;
+    } catch (error) {
+      console.error(
+        `Error approving elements for project '${projectName}': ${error}`
+      );
+      throw error;
+    }
+  }
 }
 
 // Create and export a default instance

@@ -370,6 +370,46 @@ class MongoDBHelper:
         except Exception as e:
             logger.error(f"Error listing distinct projects from MongoDB: {e}")
             return []
+
+    def approve_project_elements(self, project_id: ObjectId) -> bool:
+        """Update the status of all elements for a project to 'active', indicating they've been reviewed and approved.
+        
+        Args:
+            project_id: ObjectId of the project
+            
+        Returns:
+            Boolean indicating if update was successful
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot approve elements")
+            return False
+            
+        try:
+            # Convert string ID to ObjectId if needed
+            if isinstance(project_id, str):
+                project_id = ObjectId(project_id)
+            
+            # Log the project_id we're using for debugging
+            logger.info(f"Approving elements for project_id: {project_id}")
+            
+            # Check if elements exist for this project before updating
+            element_count = self.db.elements.count_documents({"project_id": project_id})
+            logger.info(f"Found {element_count} total elements for project {project_id}")
+            
+            # Check how many elements have pending status
+            pending_count = self.db.elements.count_documents({"project_id": project_id, "status": "pending"})
+            logger.info(f"Found {pending_count} elements with 'pending' status")
+            
+            # Update all elements for this project to active status, regardless of current status
+            result = self.db.elements.update_many(
+                {"project_id": project_id},
+                {"$set": {"status": "active"}}
+            )
+            logger.info(f"Approved {result.modified_count} elements for project {project_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error approving project elements: {e}")
+            return False
     # --- END NEW METHODS ---
 
 class QTOKafkaProducer:
@@ -487,14 +527,16 @@ class QTOKafkaProducer:
         mongodb = MongoDBHelper()
         
         # Save project to MongoDB and get project ID
-        project_id = mongodb.save_project({
+        project_info_to_save = {
             "name": metadata["project"],
             "description": f"Project for {metadata['filename']}",
             "metadata": {
                 "file_id": metadata["file_id"],
-                "filename": metadata["filename"]
+                "filename": metadata["filename"],
+                "timestamp": metadata["timestamp"] # Add the source timestamp here
             }
-        })
+        }
+        project_id = mongodb.save_project(project_info_to_save)
         
         if not project_id:
             logger.error("Failed to save project to MongoDB, cannot proceed with elements")
@@ -642,7 +684,7 @@ class QTOKafkaProducer:
                     },
                     "materials": materials_for_db, # Assign the processed list
                     "properties": assigned_properties, # Assign parsed properties
-                    "status": "active" # Keep status
+                    "status": "pending" # Set as pending until reviewed and approved
                 }
                 elements_to_save.append(formatted_element)
             except Exception as e:
@@ -659,28 +701,31 @@ class QTOKafkaProducer:
         
         # Send a single project update notification
         try:
-            # Create a simplified notification message
+            # Create the notification message with desired payload
             notification = {
                 "eventType": "PROJECT_UPDATED",
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.utcnow().isoformat() + "Z", # Notification generation time
                 "producer": "plugin-qto",
                 "payload": {
-                    "projectId": str(project_id),
-                    "projectName": metadata["project"],
-                    "elementCount": len(elements_to_save)
+                    "project": metadata["project"],      # Original project name
+                    "filename": metadata["filename"],     # Original filename
+                    "timestamp": metadata["timestamp"],    # Original timestamp
+                    "fileId": metadata["file_id"],        # Original file ID
+                    "elementCount": len(elements_to_save), # Processed element count
+                    "dbProjectId": str(project_id)      # DB ID for reference
                 },
                 "metadata": {
                     "version": "1.0",
-                    "correlationId": metadata["file_id"]
+                    "correlationId": metadata["file_id"] # Use original file ID as correlation ID
                 }
             }
-            
+
             # Send message to Kafka
             message = json.dumps(notification)
             self.producer.produce(self.topic, message, callback=self.delivery_report)
             self.producer.poll(0)  # Trigger any callbacks
             self.producer.flush(timeout=5)  # Ensure message is delivered
-            
+
             return True
         except Exception as e:
             logger.error(f"Error sending project update notification to Kafka: {e}")
@@ -701,6 +746,82 @@ class QTOKafkaProducer:
             return remaining == 0
         except Exception as e:
             logger.error(f"Error flushing Kafka messages: {e}")
+            return False
+
+    def approve_project_elements(self, project_name: str) -> bool:
+        """Approves elements for a project and sends a confirmation notification.
+        
+        Args:
+            project_name: Name of the project to approve
+            
+        Returns:
+            Boolean indicating if the operation was successful
+        """
+        if self.producer is None:
+            logger.error("Kafka producer not initialized, cannot send notification")
+            return False
+            
+        # Initialize MongoDB helper
+        mongodb = MongoDBHelper()
+        
+        # Find project by name
+        try:
+            if mongodb.db is None:
+                logger.error("MongoDB not connected, cannot approve project elements")
+                return False
+            
+            logger.info(f"Looking for project with name: '{project_name}'")
+            project = mongodb.db.projects.find_one({"name": project_name})
+            if not project:
+                # Try case-insensitive search as fallback
+                logger.warning(f"Project '{project_name}' not found with exact match, trying case-insensitive search")
+                project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+                
+            if not project:
+                logger.error(f"Project '{project_name}' not found")
+                return False
+                
+            project_id = project["_id"]
+            logger.info(f"Found project '{project_name}' with ID: {project_id}")
+            
+            # Approve elements
+            success = mongodb.approve_project_elements(project_id)
+            if not success:
+                logger.error(f"Failed to approve elements for project '{project_name}'")
+                return False
+            
+            # Send confirmation notification
+            try:
+                # Create the notification message
+                notification = {
+                    "eventType": "PROJECT_APPROVED",
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "producer": "plugin-qto",
+                    "payload": {
+                        "project": project_name,
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "dbProjectId": str(project_id),
+                        "status": "active"
+                    },
+                    "metadata": {
+                        "version": "1.0",
+                        "correlationId": str(project_id)
+                    }
+                }
+
+                # Send message to Kafka
+                message = json.dumps(notification)
+                self.producer.produce(self.topic, message, callback=self.delivery_report)
+                self.producer.poll(0)
+                self.producer.flush(timeout=5)
+
+                return True
+            except Exception as e:
+                logger.error(f"Error sending project approval notification to Kafka: {e}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error approving project elements: {e}")
             return False
 
 def format_ifc_elements_for_qto(project_name: str, 

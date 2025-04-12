@@ -198,14 +198,32 @@ const MainPage = () => {
   };
 
   const sendQtoToDatabase = async () => {
-    console.warn("sendQtoToDatabase needs refactoring or removal.");
     setIsPreviewDialogSending(true);
-    setKafkaError(
-      "Manual sending function needs refactoring for new workflow."
-    );
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setIsPreviewDialogSending(false);
-    setPreviewDialogOpen(false);
+    setKafkaSuccess(null);
+    setKafkaError(null);
+
+    try {
+      if (!selectedProject) {
+        throw new Error("No project selected");
+      }
+
+      // Call the approve endpoint
+      await apiClient.approveProjectElements(selectedProject);
+
+      // Set success and close dialog
+      setKafkaSuccess(true);
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Brief delay
+      setPreviewDialogOpen(false);
+    } catch (error) {
+      console.error("Error approving elements:", error);
+      setKafkaError(
+        `Failed to approve elements: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    } finally {
+      setIsPreviewDialogSending(false);
+    }
   };
 
   const handleCloseConfirmDialog = () => {
@@ -213,10 +231,8 @@ const MainPage = () => {
   };
 
   const handleOpenPreviewDialog = () => {
-    console.log("Preview/Send button clicked - functionality needs review.");
-    setKafkaError(
-      "Manual sending function needs refactoring for new workflow."
-    );
+    // Open the preview dialog
+    setPreviewDialogOpen(true);
   };
 
   const handleClosePreviewDialog = () => {
