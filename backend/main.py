@@ -1117,7 +1117,7 @@ async def approve_project(project_name: str):
         )
 
 @app.get("/health", response_model=HealthResponse)
-def health_check():
+def health_check(request: Request):
     """
     Health check endpoint for monitoring service status
     
@@ -1125,18 +1125,12 @@ def health_check():
     """
     kafka_status = "unknown"
     mongodb_status = "unknown"
-    
+    origin = request.headers.get("origin")
+    allowed = origin in cors_origins if cors_origins != ["*"] else True
+
+    # Determine MongoDB status
     try:
-        producer = QTOKafkaProducer(max_retries=1, retry_delay=1)
-        kafka_status = "connected" if producer.producer else "disconnected"
-    except Exception as e:
-        logger.warning(f"Kafka health check failed: {str(e)}")
-        kafka_status = "disconnected"
-    
-    try:
-        # Check MongoDB connection
         if mongodb is not None and mongodb.db is not None:
-            # Try a simple operation to verify connection is working
             mongodb.db.command('ping')
             mongodb_status = "connected"
         else:
@@ -1145,13 +1139,39 @@ def health_check():
         logger.warning(f"MongoDB health check failed: {str(e)}")
         mongodb_status = "disconnected"
     
-    # The service is healthy if at least Kafka or MongoDB is connected
-    return {
+    # Determine Kafka status (simplified check focusing on producer init)
+    try:
+        # Attempt to create a temporary producer to check connectivity
+        # Note: This has a slight overhead but is more reliable than just checking a flag
+        temp_producer = QTOKafkaProducer(max_retries=1, retry_delay=1)
+        kafka_status = "connected" if temp_producer.producer else "disconnected"
+        # Clean up the temporary producer reference
+        del temp_producer
+    except Exception as e:
+        logger.warning(f"Kafka health check failed during temp producer init: {str(e)}")
+        kafka_status = "disconnected"
+
+    # Prepare response data
+    response_data = {
         "status": "healthy", 
         "kafka": kafka_status,
         "mongodb": mongodb_status,
         "ifcopenshell_version": ifcopenshell.version
     }
+
+    # Manually add CORS headers to the response
+    headers = {}
+    if allowed:
+        headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+        headers["Access-Control-Allow-Credentials"] = "true"
+        # Add other standard CORS headers for completeness
+        headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, HEAD"
+        headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+
+    logger.info(f"Health check request from origin: {origin}. Allowed: {allowed}. Responding with headers: {headers}")
+
+    # Return JSONResponse with manual headers
+    return JSONResponse(content=response_data, headers=headers)
 
 if __name__ == "__main__":
     import uvicorn

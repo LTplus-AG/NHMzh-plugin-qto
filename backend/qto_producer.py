@@ -533,7 +533,7 @@ class QTOKafkaProducer:
             "metadata": {
                 "file_id": metadata["file_id"],
                 "filename": metadata["filename"],
-                "timestamp": metadata["timestamp"] # Add the source timestamp here
+                "fileProcessingTimestamp": metadata["timestamp"] 
             }
         }
         project_id = mongodb.save_project(project_info_to_save)
@@ -633,62 +633,71 @@ class QTOKafkaProducer:
                 assigned_type_name = element.get("type_name") # Get type_name
                 assigned_properties = element.get("properties", {}) # Get properties
 
-                # --- Process materials --- START ---
-                material_volumes_dict = element.get("material_volumes") # Get the dict from parser
+                # --- Process materials - Get directly from parsed data --- START ---
+                # The parser should provide a list under the 'materials' key
+                materials_from_parser = element.get("materials", []) 
                 materials_for_db = []
-                if isinstance(material_volumes_dict, dict):
-                    for mat_name, mat_data in material_volumes_dict.items():
-                        # Ensure mat_data is a dictionary before accessing keys
-                        if isinstance(mat_data, dict):
+                if isinstance(materials_from_parser, list):
+                    for mat_data in materials_from_parser:
+                        # Ensure it's a dictionary and has a name
+                        if isinstance(mat_data, dict) and mat_data.get("name"):
+                            # Include expected fields, ensure correct types
                             mat_entry = {
-                                "name": mat_name,
-                                "unit": "m³" # Assuming m³ for volume-based materials
+                                "name": str(mat_data["name"]),
+                                "unit": str(mat_data.get("unit", "m³")) # Default unit if missing
                             }
-                            if "volume" in mat_data:
-                                mat_entry["volume"] = mat_data["volume"]
-                            if "fraction" in mat_data:
-                                mat_entry["fraction"] = mat_data["fraction"]
-                            # Optionally add width if present and needed
-                            # if "width" in mat_data:
-                            #     mat_entry["width"] = mat_data["width"]
+                            # Add volume if present and numeric
+                            vol = mat_data.get("volume")
+                            if vol is not None:
+                                try:
+                                    mat_entry["volume"] = float(vol)
+                                except (ValueError, TypeError):
+                                    logger.warning(f"Could not convert volume '{vol}' for material '{mat_data['name']}' in element {current_element_id}")
+                            # Add fraction if present and numeric
+                            frac = mat_data.get("fraction")
+                            if frac is not None:
+                                try:
+                                    mat_entry["fraction"] = float(frac)
+                                except (ValueError, TypeError):
+                                    logger.warning(f"Could not convert fraction '{frac}' for material '{mat_data['name']}' in element {current_element_id}")
+                            
                             materials_for_db.append(mat_entry)
                         else:
-                             # Log unexpected format for mat_data
-                             # Use the defined current_element_id
-                             logger.warning(f"Unexpected format for material data {mat_name} in element {current_element_id}: {mat_data}")
-                elif material_volumes_dict is not None: 
-                    # Log if material_volumes is not a dict but also not None
-                    # Use the defined current_element_id
-                    logger.warning(f"material_volumes for element {current_element_id} is not a dictionary: {material_volumes_dict}")
+                            logger.warning(f"Invalid material format skipped in element {current_element_id}: {mat_data}")
+                else:
+                    logger.warning(f"Expected 'materials' to be a list in element {current_element_id}, got: {type(materials_from_parser)}")
+                # --- Process materials - Get directly from parsed data --- END ---
                 
                 formatted_element = {
                     "project_id": project_id,
-                    "ifc_id": current_element_id, # Use the defined current_element_id
-                    "global_id": assigned_global_id, # Use original GlobalId (fallback to id)
-                    "ifc_class": assigned_ifc_class, # Rename 'type' to 'ifc_class'
-                    "name": assigned_name, # Instance Name (fallback to type, then Unknown)
-                    "type_name": assigned_type_name, # Type Name (e.g., CW 200mm Concrete)
-                    "level": element.get("level", ""), # Top-level field
+                    "ifc_id": current_element_id, 
+                    "global_id": assigned_global_id, 
+                    "ifc_class": assigned_ifc_class, 
+                    "name": assigned_name, 
+                    "type_name": assigned_type_name, 
+                    "level": element.get("level", ""), 
                     "quantity": {
                         "value": primary_quantity,
                         "type": quantity_key,
                         "unit": quantity_unit
                     },
-                    "original_quantity": original_quantity_obj,  # Include properly formatted original_quantity
-                    "is_structural": is_structural, # Top-level field
-                    "is_external": is_external, # Top-level field
-                    "classification": { # Top-level object
+                    "original_quantity": original_quantity_obj,  
+                    "is_structural": is_structural, 
+                    "is_external": is_external, 
+                    "classification": { 
                         "id": classification_id,
                         "name": classification_name,
                         "system": classification_system
                     },
-                    "materials": materials_for_db, # Assign the processed list
-                    "properties": assigned_properties, # Assign parsed properties
-                    "status": "pending" # Set as pending until reviewed and approved
+                    # Use the directly processed materials list
+                    "materials": materials_for_db, 
+                    "properties": assigned_properties, 
+                    "status": "pending" 
                 }
+                # Log the formatted element before adding to batch
+                logger.debug(f"Formatted element for DB save (ID: {current_element_id}): {json.dumps(formatted_element, default=str)}")
                 elements_to_save.append(formatted_element)
             except Exception as e:
-                # Use current_element_id if available, otherwise use a placeholder
                 element_identifier = current_element_id if 'current_element_id' in locals() else 'UNKNOWN'
                 logger.error(f"Error formatting element {element_identifier} for saving: {e}")
         
@@ -709,7 +718,7 @@ class QTOKafkaProducer:
                 "payload": {
                     "project": metadata["project"],      # Original project name
                     "filename": metadata["filename"],     # Original filename
-                    "timestamp": metadata["timestamp"],    # Original timestamp
+                    "timestamp": metadata["timestamp"],    
                     "fileId": metadata["file_id"],        # Original file ID
                     "elementCount": len(elements_to_save), # Processed element count
                     "dbProjectId": str(project_id)      # DB ID for reference
