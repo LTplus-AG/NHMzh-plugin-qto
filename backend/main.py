@@ -1074,6 +1074,48 @@ async def get_project_elements(project_name: str):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error retrieving project elements: {str(e)}")
 
+@app.post("/projects/{project_name}/approve/", response_model=Dict[str, Any])
+async def approve_project(project_name: str):
+    """
+    Approve a project's elements by updating their status from 'pending' to 'active'.
+    This indicates that elements have been reviewed and are ready for consumption by downstream services.
+    
+    Args:
+        project_name: Name of the project to approve
+    
+    Returns:
+        Dictionary with operation status
+    """
+    try:
+        logger.info(f"Received approval request for project: '{project_name}'")
+        
+        # Initialize Kafka producer
+        kafka_producer = QTOKafkaProducer()
+        
+        # Call the approve method
+        success = kafka_producer.approve_project_elements(project_name)
+        
+        if success:
+            logger.info(f"Successfully approved elements for project '{project_name}'")
+            return {
+                "status": "success",
+                "message": f"Project {project_name} elements approved successfully",
+                "project": project_name
+            }
+        else:
+            logger.error(f"Failed to approve elements for project '{project_name}'")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to approve elements for project {project_name}"
+            )
+    except Exception as e:
+        logger.error(f"Error approving project {project_name}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error approving project: {str(e)}"
+        )
+
 @app.get("/health", response_model=HealthResponse)
 def health_check():
     """
