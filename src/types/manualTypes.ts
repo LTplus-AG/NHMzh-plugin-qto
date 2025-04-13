@@ -23,5 +23,6 @@ export interface ManualElementInput {
   quantity: ManualQuantityInput;
   classification: ManualClassificationInput | null;
   materials: ManualMaterialInput[];
+  totalVolume?: number | null;
   description: string | null;
 }

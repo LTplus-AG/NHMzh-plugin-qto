@@ -559,6 +559,30 @@ const MainPage = () => {
   ) => {
     if (!selectedProject) return;
 
+    // <<< ADDED: Calculate material volumes based on totalVolume and fractions >>>
+    let processedMaterials: LocalIFCElement["materials"] = [];
+    if (
+      data.materials.length > 0 &&
+      typeof data.totalVolume === "number" &&
+      data.totalVolume > 0
+    ) {
+      processedMaterials = data.materials.map((m) => ({
+        name: m.name,
+        fraction: m.fraction,
+        volume: data.totalVolume! * m.fraction, // Non-null assertion ok due to check above
+        unit: "m³", // Assign unit
+      }));
+    } else {
+      // If no materials or no volume, map without volume/unit (or keep empty array)
+      processedMaterials = data.materials.map((m) => ({
+        name: m.name,
+        fraction: m.fraction,
+        // volume: undefined, // Explicitly undefined or just omit
+        // unit: undefined,
+      }));
+    }
+    // <<< END OF VOLUME CALCULATION >>>
+
     if (editingId) {
       // We are editing an existing element
       console.log(`Updating element with ID: ${editingId}`, data);
@@ -573,19 +597,7 @@ const MainPage = () => {
                 level: data.level,
                 quantity: data.quantity,
                 classification: data.classification,
-                materials: data.materials.map((formMat) => {
-                  // Find the original material in the element being edited ('el')
-                  const originalMat = el.materials?.find(
-                    (origM) => origM.name === formMat.name
-                  );
-                  return {
-                    name: formMat.name,
-                    fraction: formMat.fraction,
-                    // Use original volume and unit if found, otherwise keep as undefined/null
-                    volume: originalMat?.volume,
-                    unit: originalMat?.unit,
-                  };
-                }),
+                materials: processedMaterials, // <<< Use processed materials with volumes
                 description: data.description,
                 // Recalculate area/length based on updated quantity
                 area:
@@ -613,23 +625,18 @@ const MainPage = () => {
         quantity: data.quantity,
         original_quantity: data.quantity, // Original is same as initial for new manual
         classification: data.classification,
-        materials: data.materials.map((m) => ({
-          name: m.name,
-          fraction: m.fraction,
-          unit: data.quantity.unit,
-        })),
+        materials: processedMaterials, // <<< Use processed materials with volumes
         properties: {},
         is_manual: true,
-        status: "active",
+        status: "pending",
         area: data.quantity.type === "area" ? data.quantity.value : null,
         length: data.quantity.type === "length" ? data.quantity.value : null,
-        volume: data.quantity.type === "volume" ? data.quantity.value : null,
+        volume: null,
         original_area:
           data.quantity.type === "area" ? data.quantity.value : null,
         original_length:
           data.quantity.type === "length" ? data.quantity.value : null,
-        original_volume:
-          data.quantity.type === "volume" ? data.quantity.value : null,
+        original_volume: null,
         is_structural: false,
         is_external: false,
       };
