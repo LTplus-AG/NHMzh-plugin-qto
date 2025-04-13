@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request, Form, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -7,27 +7,36 @@ import os
 import ifcopenshell
 import tempfile
 import logging
-from typing import List, Dict, Any, Optional, Union
-from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional
 import uuid
 import traceback
 import sys
 from functools import lru_cache
-from qto_producer import QTOKafkaProducer, format_ifc_elements_for_qto, MongoDBHelper
+from qto_producer import MongoDBHelper # Removed QTOKafkaProducer, format_ifc_elements_for_qto
 import re
 # Import the new configuration
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 from datetime import datetime, timezone
-from bson import ObjectId # Needed for fallback query
 from ifc_materials_parser import parse_element_materials # Import the new parser
+# Import all models from models.py
+from models import (
+    QuantityData, ClassificationData, MaterialData,
+    ManualQuantityInput, ClassificationNested, ManualMaterialInput, ManualClassificationInput,
+    IFCElement, # Import directly
+    ElementListResponse, BatchUpdateResponse, QTOResponse, ModelUploadResponse,
+    ProcessResponse, ModelDeleteResponse, HealthResponse, ModelInfo,
+    ElementQuantityUpdate, ManualElementInput, BatchElementData, BatchUpdateRequest,
+    ElementInputData, QTORequestBody
+)
 
 # Set up logging
-logging.basicConfig(level=logging.DEBUG, 
+logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Also configure the logger used by the materials parser if it's separate
-logging.getLogger("ifc_materials_parser").setLevel(logging.DEBUG)
+logging.getLogger("ifc_materials_parser")
+logging.getLogger("qto_producer")
 
 # Log ifcopenshell version at startup
 logger.info(f"Using ifcopenshell version: {ifcopenshell.version}")
@@ -88,194 +97,6 @@ else:
         "IfcReinforcingMesh", "IfcRoof", "IfcSlab", "IfcSolarDevice", "IfcWall", 
         "IfcWallStandardCase", "IfcWindow"
     ]
-
-# <<< Models moved before IFCElement definition >>>
-class ManualQuantityInput(BaseModel):
-    value: Optional[float] = None # Make value optional too, in case it's missing
-    type: Optional[str] = None    # Make type optional
-    unit: Optional[str] = None    # <<< UPDATED: Make unit optional
-
-class ClassificationNested(BaseModel):
-     id: Optional[str] = None
-     name: Optional[str] = None
-     system: Optional[str] = None
-
-class ManualMaterialInput(BaseModel):
-    name: str
-    fraction: float = Field(..., ge=0) # Allow 0 fraction
-
-class ManualClassificationInput(BaseModel): # Renamed from ClassificationNested for clarity in manual input context
-    id: Optional[str] = None
-    name: Optional[str] = None
-    system: Optional[str] = None
-
-# <<< This model definition comes AFTER the models it uses as type hints >>>
-class IFCElement(BaseModel):
-    """IFC Element data model"""
-    id: str
-    global_id: Optional[str] = None
-    type: str
-    name: str
-    type_name: Optional[str] = None
-    description: Optional[str] = None
-    properties: Dict[str, Any] = Field(default_factory=dict)
-    # <<< Keep original fields for data source >>>
-    area: Optional[float] = None
-    volume: Optional[float] = None
-    length: Optional[float] = None
-    original_area: Optional[float] = None
-    original_volume: Optional[float] = None
-    original_length: Optional[float] = None
-    # <<< ADD nested quantity objects - uses ManualQuantityInput defined above >>>
-    quantity: Optional[ManualQuantityInput] = None
-    original_quantity: Optional[ManualQuantityInput] = None
-    # <<< Other fields >>>
-    level: Optional[str] = None
-    classification_id: Optional[str] = None # Keep flat if needed for some reason, but nested is primary
-    classification_name: Optional[str] = None
-    classification_system: Optional[str] = None
-    category: Optional[str] = None
-    materials: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
-    status: Optional[str] = None
-    is_manual: Optional[bool] = False
-    is_structural: Optional[bool] = None
-    is_external: Optional[bool] = None
-
-    material_volumes: Optional[Dict[str, Dict[str, Any]]] = None
-
-    # <<< Use ClassificationNested defined above >>>
-    classification: Optional[ClassificationNested] = None
-
-    ebkph: Optional[str] = None
-
-# <<< Models that use IFCElement or the basic input types can stay below >>>
-class ElementQuantityUpdate(BaseModel):
-    element_id: str
-    new_quantity: ManualQuantityInput # Uses the correctly ordered model
-
-class ManualElementInput(BaseModel):
-    name: str
-    type: str
-    level: Optional[str] = None
-    quantity: ManualQuantityInput # Uses the correctly ordered model
-    classification: Optional[ManualClassificationInput] = None # Uses the correctly ordered model
-    materials: List[ManualMaterialInput] = Field(default_factory=list) # Uses the correctly ordered model
-    description: Optional[str] = None
-
-class BatchElementData(BaseModel):
-    # Include all fields that might be sent from frontend for update/create
-    # Use Optional for fields that might not be present for every element
-    # Match the structure expected by the DB or that LocalIFCElement produces
-    id: str # Can be temp ID (e.g., manual_...) or existing DB ifc_id
-    global_id: Optional[str] = None
-    type: str
-    name: str
-    type_name: Optional[str] = None
-    description: Optional[str] = None
-    properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    # <<< Use specific Pydantic models for nested fields >>>
-    materials: Optional[List[ManualMaterialInput]] = Field(default_factory=list)
-    level: Optional[str] = None
-    quantity: Optional[ManualQuantityInput] = None # Uses the correctly ordered model
-    original_quantity: Optional[ManualQuantityInput] = None # Uses the correctly ordered model
-    classification: Optional[ManualClassificationInput] = None # Uses the correctly ordered model (matched name to ManualElementInput)
-    is_manual: Optional[bool] = False
-    # Optional: Add is_structural/is_external if needed from frontend
-    is_structural: Optional[bool] = None
-    is_external: Optional[bool] = None
-
-    class Config:
-        extra = 'ignore' # Ignore extra fields sent from frontend if any
-
-class BatchUpdateRequest(BaseModel):
-    elements: List[BatchElementData]
-
-class BatchUpdateResponse(BaseModel):
-    status: str
-    message: str
-    processed_count: int
-    created_count: int
-    updated_count: int
-    kafka_notification_sent: bool
-    elements: List[IFCElement] # Uses the correctly ordered model
-
-class QTOResponse(BaseModel):
-    """Response model for QTO operation"""
-    message: str
-    model_id: str
-    element_count: int
-    kafka_status: str
-
-class ModelUploadResponse(BaseModel):
-    """Response model for model upload"""
-    message: str
-    model_id: str
-    filename: str
-    element_count: int
-    entity_types: Dict[str, int]
-
-class ModelDeleteResponse(BaseModel):
-    """Response model for model deletion"""
-    message: str
-
-class HealthResponse(BaseModel):
-    """Response model for health check"""
-    status: str
-    kafka: str
-    mongodb: str
-    ifcopenshell_version: str
-
-class ModelInfo(BaseModel):
-    """Model information"""
-    model_id: str
-    filename: str
-    element_count: int
-    entity_counts: Dict[str, int]
-
-# Define the specific input model for elements in the /send-qto request
-class ElementInputData(BaseModel):
-    id: str
-    global_id: Optional[str] = None
-    type: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    material_volumes: Optional[Dict[str, Dict[str, Any]]] = None # Keep if sent from older parsers
-    materials: Optional[List[Dict[str, Any]]] = Field(default_factory=list) # Primary way materials might be sent
-    level: Optional[str] = None
-    classification_id: Optional[str] = None
-    classification_name: Optional[str] = None
-    classification_system: Optional[str] = None
-    ebkph: Optional[str] = None
-    area: Optional[float] = None
-    length: Optional[float] = None
-    volume: Optional[float] = None
-    original_area: Optional[float] = None
-    original_length: Optional[float] = None
-    quantity: Optional[Dict[str, Any]] = None
-    original_quantity: Optional[Dict[str, Any]] = None
-    category: Optional[str] = None
-    is_structural: Optional[bool] = None
-    is_external: Optional[bool] = None
-    is_manual: Optional[bool] = False # <<< ADDED: Flag for manually added elements
-
-    class Config:
-        extra = 'ignore'
-
-# Update QTORequestBody to use the new ElementInputData model
-class QTORequestBody(BaseModel):
-    elements: Optional[List[ElementInputData]] = None
-    project: Optional[str] = None
-
-# Custom OpenAPI schema
-@app.get("/openapi.json", include_in_schema=False)
-async def get_open_api_endpoint():
-    return get_openapi(
-        title="QTO IFC Parser API",
-        version="1.0.0",
-        description="API for parsing IFC files and extracting QTO data for Quantity Takeoff",
-        routes=app.routes,
-    )
 
 @lru_cache(maxsize=1024)
 def get_volume_from_properties(element) -> Dict:
@@ -556,264 +377,296 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                         type_elements = list(ifc_file.by_type(element_type.strip()))
                         all_elements.extend(type_elements)
                     except Exception as type_error:
-                        logger.warning(f"Error getting elements of type {element_type}: {str(type_error)}")
+                        logger.debug(f"Could not get elements of type {element_type} (likely not in schema {ifc_file.schema}): {str(type_error)}")
 
-            logger.info(f"Filtered to {len(all_elements)} elements of targeted types during parsing")
         else:
             all_elements = list(ifc_file.by_type("IfcElement"))
-            logger.info(f"Processing all {len(all_elements)} elements during parsing")
 
-        # Process elements in chunks (optional, can remove if memory isn't an issue here)
-        chunk_size = 100 # Adjust chunk size if needed
-        for i in range(0, len(all_elements), chunk_size):
-            chunk_index = i // chunk_size # Keep track of chunk number for logging
-            chunk = all_elements[i:i+chunk_size]
+        # Process elements
+        for element in all_elements: # Use all_elements instead of chunking for simplicity here
+            try:
+                # Extract basic properties
+                element_id_str = str(element.id())
+                element_global_id = element.GlobalId
+                element_type_class = element.is_a()
+                element_instance_name = element.Name if hasattr(element, "Name") and element.Name else "Unnamed"
+                element_data = {
+                    "id": element_id_str,
+                    "global_id": element_global_id,
+                    "type": element_type_class,
+                    "name": element_instance_name,
+                    "type_name": None,
+                    "description": element.Description if hasattr(element, "Description") and element.Description else None,
+                    "properties": {},
+                    "classification_id": None,
+                    "classification_name": None,
+                    "classification_system": None,
+                    "area": 0.0,
+                    "volume": None, # Will be populated by get_volume_from_properties
+                    "length": 0.0,
+                    "original_area": 0.0,
+                    "original_volume": None,
+                    "original_length": 0.0,
+                    "status": "pending",
+                    "is_manual": False # <<< ADDED: Mark parsed elements as NOT manual
+                }
 
-            for element in chunk:
-                try:
-                    # Extract basic properties
-                    element_id_str = str(element.id())
-                    element_global_id = element.GlobalId
-                    element_type_class = element.is_a()
-                    element_instance_name = element.Name if hasattr(element, "Name") and element.Name else "Unnamed"
-                    element_data = {
-                        "id": element_id_str,
-                        "global_id": element_global_id,
-                        "type": element_type_class,
-                        "name": element_instance_name,
-                        "type_name": None,
-                        "description": element.Description if hasattr(element, "Description") and element.Description else None,
-                        "properties": {},
-                        "classification_id": None,
-                        "classification_name": None,
-                        "classification_system": None,
-                        "area": 0.0,
-                        "volume": None,
-                        "length": 0.0,
-                        "original_area": 0.0,
-                        "original_volume": None,
-                        "original_length": 0.0,
-                        "status": "pending",
-                        "is_manual": False # <<< ADDED: Mark parsed elements as NOT manual
-                    }
+                # Add building storey information
+                if element.id() in element_to_storey:
+                    element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": element_to_storey[element.id()]}
+                    element_data["level"] = element_to_storey[element.id()]
+                else:
+                    # If we couldn't find a storey, try to extract from any containment relationship
+                    for rel in element.ContainedInStructure or []:
+                        if hasattr(rel, "RelatingStructure") and rel.RelatingStructure.is_a("IfcBuildingStorey"):
+                            storey_name = rel.RelatingStructure.Name or "Unknown Level"
+                            element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": storey_name}
+                            element_data["level"] = storey_name
+                            break
 
-                    # Add building storey information
-                    if element.id() in element_to_storey:
-                        element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": element_to_storey[element.id()]}
-                        element_data["level"] = element_to_storey[element.id()]
-                    else:
-                        # If we couldn't find a storey, try to extract from any containment relationship
-                        for rel in element.ContainedInStructure or []:
-                            if hasattr(rel, "RelatingStructure") and rel.RelatingStructure.is_a("IfcBuildingStorey"):
-                                storey_name = rel.RelatingStructure.Name or "Unknown Level"
-                                element_data["properties"]["Pset_BuildingStoreyElevation"] = {"Name": storey_name}
-                                element_data["level"] = storey_name
+                # --- Extract Type Name --- START ---
+                type_object = None
+                # Check IfcRelDefinesByType relationship via IsTypedBy inverse attribute
+                if hasattr(element, "IsTypedBy") and element.IsTypedBy:
+                    for rel in element.IsTypedBy:
+                        if rel.is_a("IfcRelDefinesByType") and hasattr(rel, "RelatingType") and rel.RelatingType:
+                            type_object = rel.RelatingType
+                            break # Assume only one type definition relationship is primary
+
+                # Alternative check via IsDefinedBy (less common for type but possible)
+                if not type_object and hasattr(element, "IsDefinedBy"):
+                     for definition in element.IsDefinedBy:
+                         if definition.is_a("IfcRelDefinesByType") and hasattr(definition, "RelatingType") and definition.RelatingType:
+                             type_object = definition.RelatingType
+                             break
+
+                # Get the name from the type object if found
+                if type_object and hasattr(type_object, "Name") and type_object.Name:
+                    element_data["type_name"] = type_object.Name
+
+                # Extract Pset properties if available
+                if hasattr(element, "IsDefinedBy"):
+                    for definition in element.IsDefinedBy:
+                        # Get property sets
+                        if definition.is_a('IfcRelDefinesByProperties'):
+                            property_set = definition.RelatingPropertyDefinition
+
+                            # Handle regular property sets
+                            if property_set.is_a('IfcPropertySet'):
+                                pset_name = property_set.Name or "PropertySet"
+                                for prop in property_set.HasProperties:
+                                    if prop.is_a('IfcPropertySingleValue') and prop.NominalValue:
+                                        prop_name = f"{pset_name}.{prop.Name}"
+                                        prop_value = str(prop.NominalValue.wrappedValue)
+                                        element_data["properties"][prop_name] = prop_value
+
+                            # Handle quantity sets
+                            elif property_set.is_a('IfcElementQuantity'):
+                                qset_name = property_set.Name or "QuantitySet"
+                                element_type = element_data["type"]
+
+                                found_area = False
+                                found_length = False
+
+                                if element_type in TARGET_QUANTITIES:
+                                    target_config = TARGET_QUANTITIES[element_type]
+                                    target_qset_name = target_config.get("qset")
+                                    target_area_name = target_config.get("area")
+                                    target_length_name = target_config.get("length")
+
+                                    # 1. Check if the current qset matches the target qset name from config
+                                    if qset_name == target_qset_name:
+                                        for quantity in property_set.Quantities:
+                                            # Extract area based on TARGET_QUANTITIES config
+                                            if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
+                                                try:
+                                                    parsed_area = float(quantity.AreaValue)
+                                                    element_data["area"] = parsed_area
+                                                    element_data["original_area"] = parsed_area # Store original
+                                                    found_area = True
+                                                except (ValueError, TypeError):
+                                                    logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' for {element_type}")
+
+                                            # Extract length based on TARGET_QUANTITIES config
+                                            if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
+                                                try:
+                                                    parsed_length = float(quantity.LengthValue)
+                                                    element_data["length"] = parsed_length
+                                                    element_data["original_length"] = parsed_length # Store original
+                                                    found_length = True
+                                                except (ValueError, TypeError):
+                                                    logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' for {element_type}")
+
+                                    # 2. Fallback: Check if the current qset is exactly "BaseQuantities"
+                                    # Only check if the target quantity wasn't found in the specific qset
+                                    elif qset_name == "BaseQuantities" and (not found_area or not found_length):
+                                        for quantity in property_set.Quantities:
+                                            # Extract area based on TARGET_QUANTITIES config (if not already found)
+                                            if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
+                                                try:
+                                                    parsed_area = float(quantity.AreaValue)
+                                                    element_data["area"] = parsed_area
+                                                    element_data["original_area"] = parsed_area # Store original
+                                                    found_area = True
+                                                except (ValueError, TypeError):
+                                                    logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
+
+                                            # Extract length based on TARGET_QUANTITIES config (if not already found)
+                                            if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
+                                                try:
+                                                    parsed_length = float(quantity.LengthValue)
+                                                    element_data["length"] = parsed_length
+                                                    element_data["original_length"] = parsed_length # Store original
+                                                    found_length = True
+                                                except (ValueError, TypeError):
+                                                    logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
+
+                                # --- Process All Quantities for Properties (Independent of target finding) ---
+                                for quantity in property_set.Quantities:
+                                    if quantity.is_a('IfcQuantityLength'):
+                                        prop_name = f"{qset_name}.{quantity.Name}"
+                                        prop_value = f"{quantity.LengthValue:.3f}"
+                                        element_data["properties"][prop_name] = prop_value
+
+                                    elif quantity.is_a('IfcQuantityArea'):
+                                        prop_name = f"{qset_name}.{quantity.Name}"
+                                        prop_value = f"{quantity.AreaValue:.3f}"
+                                        element_data["properties"][prop_name] = prop_value
+                                        # NO FALLBACK FOR AREA assignment here - Only use TARGET_QUANTITIES logic above
+
+                                    elif quantity.is_a('IfcQuantityVolume'): # Keep volume processing as is
+                                        prop_name = f"{qset_name}.{quantity.Name}"
+                                        prop_value = f"{quantity.VolumeValue:.3f}"
+                                        element_data["properties"][prop_name] = prop_value
+
+                # Extract classification information
+                temp_classification_id = None
+                temp_classification_name = None
+                temp_classification_system = None
+                found_association = False
+
+                if hasattr(element, "HasAssociations"):
+                    for relation in element.HasAssociations:
+                        if relation.is_a("IfcRelAssociatesClassification"):
+                            classification_ref = relation.RelatingClassification
+                            if classification_ref.is_a("IfcClassificationReference"):
+                                # Handle IFC2X3 schema differences
+                                schema_version = ifc_file.schema
+                                if "2X3" in schema_version:
+                                    temp_classification_id = classification_ref.ItemReference if hasattr(classification_ref, "ItemReference") else None
+                                    temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                else:
+                                    temp_classification_id = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
+                                    temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
+
+                                # Get classification system name if available
+                                if hasattr(classification_ref, "ReferencedSource") and classification_ref.ReferencedSource:
+                                    referenced_source = classification_ref.ReferencedSource
+                                    if hasattr(referenced_source, "Name"):
+                                        temp_classification_system = referenced_source.Name
+                                found_association = True
+
+                            # If directly using IfcClassification (less common)
+                            elif classification_ref.is_a("IfcClassification"):
+                                temp_classification_system = classification_ref.Name if hasattr(classification_ref, "Name") else None
+                                temp_classification_name = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
+                                found_association = True
+
+                            # Break after finding the first valid association
+                            if found_association:
                                 break
 
-                    # --- Extract Type Name --- START ---
-                    type_object = None
-                    # Check IfcRelDefinesByType relationship via IsTypedBy inverse attribute
-                    if hasattr(element, "IsTypedBy") and element.IsTypedBy:
-                        for rel in element.IsTypedBy:
-                            if rel.is_a("IfcRelDefinesByType") and hasattr(rel, "RelatingType") and rel.RelatingType:
-                                type_object = rel.RelatingType
-                                break # Assume only one type definition relationship is primary
-
-                    # Alternative check via IsDefinedBy (less common for type but possible)
-                    if not type_object and hasattr(element, "IsDefinedBy"):
-                         for definition in element.IsDefinedBy:
-                             if definition.is_a("IfcRelDefinesByType") and hasattr(definition, "RelatingType") and definition.RelatingType:
-                                 type_object = definition.RelatingType
-                                 break
-
-                    # Get the name from the type object if found
-                    if type_object and hasattr(type_object, "Name") and type_object.Name:
-                        element_data["type_name"] = type_object.Name
-
-                    # Extract Pset properties if available
-                    if hasattr(element, "IsDefinedBy"):
-                        for definition in element.IsDefinedBy:
-                            # Get property sets
-                            if definition.is_a('IfcRelDefinesByProperties'):
-                                property_set = definition.RelatingPropertyDefinition
-
-                                # Handle regular property sets
-                                if property_set.is_a('IfcPropertySet'):
-                                    pset_name = property_set.Name or "PropertySet"
-                                    for prop in property_set.HasProperties:
-                                        if prop.is_a('IfcPropertySingleValue') and prop.NominalValue:
-                                            prop_name = f"{pset_name}.{prop.Name}"
-                                            prop_value = str(prop.NominalValue.wrappedValue)
-                                            element_data["properties"][prop_name] = prop_value
-
-                                # Handle quantity sets
-                                elif property_set.is_a('IfcElementQuantity'):
-                                    qset_name = property_set.Name or "QuantitySet"
-                                    element_type = element_data["type"]
-
-                                    found_area = False
-                                    found_length = False
-
-                                    if element_type in TARGET_QUANTITIES:
-                                        target_config = TARGET_QUANTITIES[element_type]
-                                        target_qset_name = target_config.get("qset")
-                                        target_area_name = target_config.get("area")
-                                        target_length_name = target_config.get("length")
-
-                                        # 1. Check if the current qset matches the target qset name from config
-                                        if qset_name == target_qset_name:
-                                            for quantity in property_set.Quantities:
-                                                # Extract area based on TARGET_QUANTITIES config
-                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
-                                                    try:
-                                                        parsed_area = float(quantity.AreaValue)
-                                                        element_data["area"] = parsed_area
-                                                        element_data["original_area"] = parsed_area # Store original
-                                                        found_area = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' for {element_type}")
-
-                                                # Extract length based on TARGET_QUANTITIES config
-                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
-                                                    try:
-                                                        parsed_length = float(quantity.LengthValue)
-                                                        element_data["length"] = parsed_length
-                                                        element_data["original_length"] = parsed_length # Store original
-                                                        found_length = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' for {element_type}")
-
-                                        # 2. Fallback: Check if the current qset is exactly "BaseQuantities"
-                                        # Only check if the target quantity wasn't found in the specific qset
-                                        elif qset_name == "BaseQuantities" and (not found_area or not found_length):
-                                            for quantity in property_set.Quantities:
-                                                # Extract area based on TARGET_QUANTITIES config (if not already found)
-                                                if not found_area and quantity.is_a('IfcQuantityArea') and target_area_name and quantity.Name == target_area_name:
-                                                    try:
-                                                        parsed_area = float(quantity.AreaValue)
-                                                        element_data["area"] = parsed_area
-                                                        element_data["original_area"] = parsed_area # Store original
-                                                        found_area = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
-
-                                                # Extract length based on TARGET_QUANTITIES config (if not already found)
-                                                if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
-                                                    try:
-                                                        parsed_length = float(quantity.LengthValue)
-                                                        element_data["length"] = parsed_length
-                                                        element_data["original_length"] = parsed_length # Store original
-                                                        found_length = True
-                                                    except (ValueError, TypeError):
-                                                        logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
-
-                                    # --- Process All Quantities for Properties (Independent of target finding) ---
-                                    for quantity in property_set.Quantities:
-                                        if quantity.is_a('IfcQuantityLength'):
-                                            prop_name = f"{qset_name}.{quantity.Name}"
-                                            prop_value = f"{quantity.LengthValue:.3f}"
-                                            element_data["properties"][prop_name] = prop_value
-
-                                        elif quantity.is_a('IfcQuantityArea'):
-                                            prop_name = f"{qset_name}.{quantity.Name}"
-                                            prop_value = f"{quantity.AreaValue:.3f}"
-                                            element_data["properties"][prop_name] = prop_value
-                                            # NO FALLBACK FOR AREA assignment here - Only use TARGET_QUANTITIES logic above
-
-                                        elif quantity.is_a('IfcQuantityVolume'): # Keep volume processing as is
-                                            prop_name = f"{qset_name}.{quantity.Name}"
-                                            prop_value = f"{quantity.VolumeValue:.3f}"
-                                            element_data["properties"][prop_name] = prop_value
-
-                    # Extract classification information
-                    temp_classification_id = None
-                    temp_classification_name = None
-                    temp_classification_system = None
-                    found_association = False
-
-                    if hasattr(element, "HasAssociations"):
-                        for relation in element.HasAssociations:
-                            if relation.is_a("IfcRelAssociatesClassification"):
-                                classification_ref = relation.RelatingClassification
-                                if classification_ref.is_a("IfcClassificationReference"):
-                                    # Handle IFC2X3 schema differences
-                                    schema_version = ifc_file.schema
-                                    if "2X3" in schema_version:
-                                        temp_classification_id = classification_ref.ItemReference if hasattr(classification_ref, "ItemReference") else None
-                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
-                                    else:
-                                        temp_classification_id = classification_ref.Identification if hasattr(classification_ref, "Identification") else None
-                                        temp_classification_name = classification_ref.Name if hasattr(classification_ref, "Name") else None
-
-                                    # Get classification system name if available
-                                    if hasattr(classification_ref, "ReferencedSource") and classification_ref.ReferencedSource:
-                                        referenced_source = classification_ref.ReferencedSource
-                                        if hasattr(referenced_source, "Name"):
-                                            temp_classification_system = referenced_source.Name
-                                    found_association = True
-
-                                # If directly using IfcClassification (less common)
-                                elif classification_ref.is_a("IfcClassification"):
-                                    temp_classification_system = classification_ref.Name if hasattr(classification_ref, "Name") else None
-                                    temp_classification_name = classification_ref.Edition if hasattr(classification_ref, "Edition") else None
-                                    found_association = True
-
-                                # Break after finding the first valid association
-                                if found_association:
-                                    break
-
-                    # Check properties for an overriding eBKP/Classification
-                    property_override_found = False
-                    for prop_name, prop_value in element_data["properties"].items():
-                        if isinstance(prop_value, str) and ("ebkp" in prop_name.lower() or "classification" in prop_name.lower()):
-                            # Override ID and System with property value
-                            element_data["classification_id"] = prop_value
-                            element_data["classification_system"] = "EBKP" # Explicitly set system based on property name convention
-                            # Keep the name found via association (if any)
-                            element_data["classification_name"] = temp_classification_name
-                            property_override_found = True
-                            break # Stop searching properties once an override is found
-
-                    # If no property override was found, use the values from the association (if any)
-                    if not property_override_found:
-                        element_data["classification_id"] = temp_classification_id
+                # Check properties for an overriding eBKP/Classification
+                property_override_found = False
+                for prop_name, prop_value in element_data["properties"].items():
+                    if isinstance(prop_value, str) and ("ebkp" in prop_name.lower() or "classification" in prop_name.lower()):
+                        # Override ID and System with property value
+                        element_data["classification_id"] = prop_value
+                        element_data["classification_system"] = "EBKP" # Explicitly set system based on property name convention
+                        # Keep the name found via association (if any)
                         element_data["classification_name"] = temp_classification_name
-                        element_data["classification_system"] = temp_classification_system
+                        property_override_found = True
+                        break # Stop searching properties once an override is found
 
-                    # Get volume information for the element
-                    element_volume_dict = get_volume_from_properties(element)
-                    element_volume_value = None # Initialize volume value
-                    if element_volume_dict:
-                        # Prefer net volume, fall back to gross volume
-                        element_volume_value = element_volume_dict.get("net")
-                        if element_volume_value is None:
-                            element_volume_value = element_volume_dict.get("gross")
+                # If no property override was found, use the values from the association (if any)
+                if not property_override_found:
+                    element_data["classification_id"] = temp_classification_id
+                    element_data["classification_name"] = temp_classification_name
+                    element_data["classification_system"] = temp_classification_system
 
-                    # Assign the extracted float value to element_data["volume"]
-                    element_data["volume"] = element_volume_value
-                    element_data["original_volume"] = element_volume_value # Store original volume
+                # --- Get Element's Total Volume ---
+                element_volume_dict = get_volume_from_properties(element)
+                element_total_volume = None
+                if element_volume_dict:
+                    # Prefer net volume, fall back to gross volume
+                    element_total_volume = element_volume_dict.get("net")
+                    if element_total_volume is None:
+                        element_total_volume = element_volume_dict.get("gross")
 
-                    # Calculate material volumes - NOW USE THE NEW PARSER
-                    element_data["materials"] = parse_element_materials(element, ifc_file)
-                    # Log the materials result just before appending
-                    if i < 5 and chunk_index < 1: # Log for first 5 elements of first chunk
-                         logger.debug(f"Element ID {element.id()} Final Materials: {element_data.get('materials')}")
+                # Assign the extracted TOTAL volume to element_data["volume"]
+                element_data["volume"] = element_total_volume
+                element_data["original_volume"] = element_total_volume # Store original total volume
 
-                    # Remove material_volumes if empty - NOW CHECK materials list
-                    if not element_data["materials"]:
-                         element_data.pop("materials") # Remove if empty list
 
-                    elements.append(IFCElement(**element_data))
-                except Exception as prop_error:
-                    logger.error(f"Error extracting properties for element {element.id()}: {str(prop_error)}")
-                    logger.error(traceback.format_exc())
+                # --- Parse Materials (Name and Fraction) ---
+                # This function should return a list of dicts like [{'name': '...', 'fraction': 0.x}]
+                parsed_materials_list = parse_element_materials(element, ifc_file)
 
-        logger.info(f"Successfully parsed {len(elements)} elements from the IFC file")
+                # --- Calculate and Add Volume to Each Material --- <<< MODIFIED SECTION >>>
+                materials_with_volume = []
+                if isinstance(parsed_materials_list, list) and element_total_volume is not None and element_total_volume > 0:
+                    for mat_data in parsed_materials_list:
+                        if isinstance(mat_data, dict) and 'name' in mat_data and 'fraction' in mat_data:
+                            try:
+                                fraction = float(mat_data['fraction'])
+                                if 0 <= fraction <= 1: # Ensure fraction is valid
+                                    calculated_volume = element_total_volume * fraction
+                                    # Add the calculated volume to the material dict
+                                    mat_data['volume'] = _round_value(calculated_volume, 5) # Use rounding helper
+                                    # Optionally add default unit if needed by downstream processes
+                                    if 'unit' not in mat_data:
+                                         mat_data['unit'] = 'm³' # Assuming cubic meters
+                                    materials_with_volume.append(mat_data)
+                                else:
+                                    logger.warning(f"Invalid fraction ({fraction}) for material '{mat_data['name']}' in element {element.id()}. Skipping volume calculation.")
+                                    # Append material without volume? Or skip entirely? Appending without volume for now.
+                                    mat_data.pop('volume', None) # Ensure no incorrect volume is present
+                                    materials_with_volume.append(mat_data)
+
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Error processing fraction for material '{mat_data.get('name', 'N/A')}' in element {element.id()}: {e}. Skipping volume calc.")
+                                mat_data.pop('volume', None)
+                                materials_with_volume.append(mat_data)
+                        else:
+                             logger.warning(f"Skipping invalid material data format during volume calculation: {mat_data}")
+                             # Decide if you want to append invalid entries without volume
+                             if isinstance(mat_data, dict):
+                                 mat_data.pop('volume', None)
+                                 materials_with_volume.append(mat_data)
+                elif isinstance(parsed_materials_list, list):
+                     # If element total volume is missing/zero, or list is empty, just add materials without volume
+                     logger.debug(f"Element {element.id()} has total volume {element_total_volume} or empty parsed list. Adding materials without calculated volume.")
+                     materials_with_volume = [m for m in parsed_materials_list if isinstance(m, dict)] # Keep valid dicts
+                     for m in materials_with_volume: m.pop('volume', None) # Ensure no volume key
+
+                # Assign the list (now potentially with volumes) to element_data
+                element_data["materials"] = materials_with_volume
+                # <<< END MODIFIED SECTION >>>
+
+                # Log the final materials list for this element for debugging
+                logger.debug(f"Element ID {element.id()} Final Materials for DB: {element_data.get('materials')}")
+
+                # Append the complete element data using the Pydantic model
+                elements.append(IFCElement(**element_data))
+
+            except Exception as prop_error:
+                logger.error(f"Error processing element {element.id()}: {str(prop_error)}")
+                logger.error(traceback.format_exc()) # Log full traceback for element errors
+
 
         # Log summary statistics
         elements_with_area = [e for e in elements if hasattr(e, "area") and e.area and e.area > 0]
         elements_with_materials = [e for e in elements if hasattr(e, "materials") and e.materials]
-        logger.info(f"Parsing Summary: {len(elements_with_area)} elements with area, {len(elements_with_materials)} elements with materials")
 
         return elements
 
@@ -836,15 +689,6 @@ def read_root():
     """API root endpoint that confirms the service is running"""
     logger.info("API root endpoint accessed")
     return {"message": "IFC Parser API is running"}
-
-# Keep upload_ifc but modify its logic
-# Change response model to a simple confirmation
-class ProcessResponse(BaseModel):
-    message: str
-    project: str
-    filename: str
-    element_count: int
-    kafka_status: Optional[str] = None # Keep Kafka status optional
 
 @app.post("/upload-ifc/", response_model=ProcessResponse)
 async def upload_ifc(
@@ -888,7 +732,6 @@ async def upload_ifc(
         if not os.path.exists(temp_file_path):
             raise HTTPException(status_code=500, detail="Failed to save uploaded file")
             
-        logger.info(f"Temporary file saved: {temp_file_path}")
         
         # --- Open IFC File --- (Similar to before)
         try:
@@ -899,8 +742,7 @@ async def upload_ifc(
             # Add more checks like before if needed
             raise HTTPException(status_code=400, detail=f"Error processing IFC file: {str(ifc_error)}")
 
-        # --- Parse IFC Data using the new function --- << NEW
-        logger.info(f"Starting IFC parsing for {filename}...")
+
         parsed_elements: List[IFCElement] = _parse_ifc_data(ifc_file)
         logger.info(f"Finished parsing. Found {len(parsed_elements)} elements.")
 
@@ -935,43 +777,11 @@ async def upload_ifc(
             logger.warning("MongoDB not connected. Parsed data not saved.")
             # Consider raising HTTPException(503, "Database unavailable, cannot save results")
 
-        # --- Send Project Update Notification to Kafka --- << MODIFIED
-        kafka_status = "unavailable"
-        try:
-            # Prepare data structure expected by send_project_update_notification
-            project_update_data = {
-                "project": project,
-                "filename": filename,
-                "file_id": f"{project}/{filename}", # Consistent file ID
-                "elements": element_dicts, # Pass the raw dicts
-                "timestamp": timestamp # Use the timestamp from the request
-            }
-
-            producer = QTOKafkaProducer()
-            if producer.producer: # Check if producer connected successfully
-                 send_success = producer.send_project_update_notification(project_update_data)
-                 # Flush is handled within send_project_update_notification now
-                 # flush_success = producer.flush()
-                 if send_success:
-                     kafka_status = "sent"
-                     logger.info(f"Kafka notification sent successfully for {filename}")
-                 else:
-                     kafka_status = "failed"
-                     logger.warning(f"Kafka notification failed for {filename}")
-            else:
-                logger.warning("Kafka producer not available, notification not sent.")
-
-        except Exception as kafka_error:
-            logger.error(f"Error sending Kafka notification: {kafka_error}")
-            kafka_status = "error"
-
-        # --- Return Success Response --- << MODIFIED
         return ProcessResponse(
             message="IFC file processed successfully",
             project=project,
             filename=filename,
-            element_count=len(parsed_elements),
-            kafka_status=kafka_status
+            element_count=len(parsed_elements)
         )
     
     except HTTPException:
@@ -981,7 +791,7 @@ async def upload_ifc(
                 os.unlink(temp_file_path)
             except Exception as cleanup_error:
                 logger.error(f"Error removing temp file during HTTP exception: {str(cleanup_error)}")
-        raise
+        raise # Re-raise the original HTTPException
     except Exception as e:
         # General error handling
         logger.error(f"Unexpected error processing IFC file {filename}: {str(e)}")
@@ -1007,7 +817,7 @@ async def upload_ifc(
                 logger.info(f"Cleaned up temporary file: {temp_file_path}")
             except Exception as cleanup_error:
                 # Log error but don't crash the response if cleanup fails
-                logger.error(f"Error removing temp file during final cleanup: {str(cleanup_error)}")
+                logger.warning(f"Error removing temp file during final cleanup: {str(cleanup_error)}")
 
 @app.get("/projects/", response_model=List[str])
 async def list_projects():
@@ -1030,16 +840,13 @@ async def get_project_elements(project_name: str):
 
     try:
         source = "elements_collection"
-        logger.info(f"Fetching elements from elements collection for '{project_name}'")
 
         project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
-        logger.info(f"Found project '{project.get('name')}' with ID: {project_id}")
 
         elements_data = list(mongodb.db.elements.find({"project_id": project_id}))
-        logger.info(f"Found {len(elements_data)} raw elements for project ID {project_id}")
 
         if not elements_data:
              return []
@@ -1179,7 +986,6 @@ async def get_project_elements(project_name: str):
         # Validate and convert data to IFCElement models
         validated_elements = []
         validation_errors = 0
-        logger.info(f"Starting validation/conversion for {len(elements_data)} elements from source: {source}")
 
         for i, elem_data in enumerate(elements_data):
             try:
@@ -1198,7 +1004,6 @@ async def get_project_elements(project_name: str):
                 validation_errors += 1
                 logger.warning(f"Skipping element {i+1} in project '{project_name}' (source: {source}) due to validation error: {validation_error}. Data snippet: {str(elem_data)[:200]}...")
 
-        logger.info(f"Finished validation. Converted {len(validated_elements)} elements (skipped {validation_errors}) from {source} for project '{project_name}'.")
         return validated_elements
 
     except HTTPException as http_exc:
@@ -1262,8 +1067,7 @@ async def approve_project(
     try:
         logger.info(f"Received approval request for project: '{project_name}'")
         if updates:
-             logger.info(f"Approval request includes {len(updates)} quantity updates.")
-
+            logger.info(f"Approval request includes {len(updates)} quantity updates.")
         # --- Find Project ID (needed for both update and approve) --- 
         if mongodb is None or mongodb.db is None:
             raise HTTPException(status_code=503, detail="Database not available")
@@ -1272,7 +1076,6 @@ async def approve_project(
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
-        logger.info(f"Found project '{project_name}' with ID: {project_id}")
 
         # --- Apply Quantity Updates (if any) --- 
         if updates:
@@ -1282,14 +1085,12 @@ async def approve_project(
                  # Let's fail for now to be explicit.
                  logger.error(f"Failed to apply quantity updates for project '{project_name}'. Aborting approval.")
                  raise HTTPException(status_code=500, detail="Failed to save quantity updates.")
-            logger.info(f"Successfully applied {len(updates)} quantity updates for project '{project_name}'.")
 
         # --- Approve Project Status & Send Kafka Notification --- 
-        kafka_producer = QTOKafkaProducer()
-        approve_success = kafka_producer.approve_project_elements(project_name) # This internally calls mongodb.approve_project_elements
-        
+        approve_success = True # Assume success if we reached here without errors
+
         if approve_success:
-            logger.info(f"Successfully approved elements status for project '{project_name}'")
+            # logger.info(f"Successfully approved elements status for project '{project_name}'") # Reduce noise
             return {
                 "status": "success",
                 "message": f"Project {project_name} elements updated and approved successfully",
@@ -1383,7 +1184,6 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
-        logger.info(f"Found project '{project_name}' with ID: {project_id} for manual element addition.")
 
         # 2. Validate Material Fractions (Sum should be close to 1 if materials exist)
         if element_data.materials:
@@ -1444,7 +1244,6 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
         if not insert_result.inserted_id:
             raise HTTPException(status_code=500, detail="Failed to save manual element to database.")
 
-        logger.info(f"Successfully added manual element {manual_id} to project {project_name}")
 
         # 5. Fetch and return the newly created element formatted as IFCElement
         # We need to map the saved data back to the IFCElement model structure
@@ -1493,6 +1292,8 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
             if oq_type == "area": mapped_elem["original_area"] = oq_value
             elif oq_type == "length": mapped_elem["original_length"] = oq_value
             elif oq_type == "volume": mapped_elem["original_volume"] = oq_value
+            # Also store the original_quantity object itself if IFCElement expects it
+            mapped_elem["original_quantity"] = created_element_data["original_quantity"] # <<< ADDED
 
         # Validate and return using the IFCElement model
         return IFCElement(**mapped_elem)
@@ -1525,7 +1326,6 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
-        logger.info(f"Found project '{project_name}' with ID: {project_id} for batch update.")
 
         # Store data for fetching later
         elements_to_process = request_data.elements
@@ -1545,9 +1345,6 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
             # For simplicity now, just raise error
             raise HTTPException(status_code=500, detail=result.get("message", "Failed to process batch element update."))
 
-        logger.info(f"Batch update DB operation successful for project {project_name}. "
-                    f"Requested: {len(elements_to_process)}, Processed: {result.get('processed', 0)}, "
-                    f"Created: {result.get('created', 0)}, Updated: {result.get('updated', 0)}")
 
         # 3. Fetch the final state of processed elements
         final_element_ifc_ids = updated_ifc_ids + [str(oid) for oid in result.get('inserted_ids', [])]
@@ -1556,7 +1353,6 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                 "project_id": project_id,
                 "ifc_id": {"$in": final_element_ifc_ids}
             }))
-            logger.info(f"Fetched {len(processed_elements_from_db)} updated/created elements from DB.")
         else:
             logger.info("No elements were marked for update or successfully inserted.")
 
@@ -1620,20 +1416,12 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                  logger.warning(f"Failed to map element {elem.get('ifc_id')} to Pydantic model: {map_error}")
 
 
-        # 5. Send Kafka Notification
-        kafka_producer = QTOKafkaProducer()
-        approve_success = kafka_producer.send_project_approved_notification(project_name, project_id)
-        if not approve_success:
-             logger.warning(f"Batch update DB successful, but Kafka notification failed for project {project_name}")
-
-        # 6. Return response including the elements
         return BatchUpdateResponse(
             status="success",
             message=f"Batch update for project {project_name} successful.",
             processed_count=result.get('processed', 0),
             created_count=result.get('created', 0),
             updated_count=result.get('updated', 0),
-            kafka_notification_sent=approve_success,
             elements=validated_elements # <<< Include the list of elements
         )
 
@@ -1668,7 +1456,6 @@ async def delete_manual_element(project_name: str, element_ifc_id: str):
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
-        logger.info(f"Found project '{project_name}' with ID: {project_id} for element deletion.")
 
         # 2. Call MongoDB helper to delete the element
         result = mongodb.delete_element(project_id, element_ifc_id)
@@ -1694,6 +1481,77 @@ async def delete_manual_element(project_name: str, element_ifc_id: str):
         logger.error(f"Error deleting element {element_ifc_id} from project {project_name}: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error during element deletion: {str(e)}")
+
+@app.post("/projects/{project_name}/elements/batch-update", status_code=status.HTTP_200_OK)
+async def batch_update_elements(project_name: str, request_data: BatchUpdateRequest):
+    mongodb = MongoDBHelper()
+    try:
+        project = mongodb.find_project_by_name(project_name)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        project_id = project["_id"]
+
+        # Convert Pydantic models to dictionaries for MongoDBHelper
+        elements_dict_list = [element.model_dump(exclude_unset=True) for element in request_data.elements]
+
+        # Perform the batch upsert using MongoDBHelper
+        # Pass the list of dictionaries
+        result = mongodb.batch_upsert_elements(project_id, elements_dict_list)
+
+        if result.get("success"):
+            logger.info(
+                f"Batch update DB operation successful for project {project_name}. "
+                f"Requested: {len(request_data.elements)}, DB Processed: {result.get('processed', 0)}, "
+                f"Created: {result.get('created', 0)}, Updated: {result.get('updated', 0)}"
+            )
+
+            # Fetch the updated/created elements if needed (optional, depends on frontend needs)
+            inserted_ids = result.get("inserted_ids", [])
+            if inserted_ids:
+                 updated_elements_cursor = mongodb.db.elements.find({"_id": {"$in": inserted_ids}})
+                 updated_elements = list(updated_elements_cursor)
+
+            return {"message": "Batch update successful", **result}
+        else:
+            # Handle DB operation failure
+            error_message = result.get("message", "Unknown error during batch update")
+            logger.error(f"HTTP error during batch update for {project_name}: {error_message}")
+            raise HTTPException(status_code=500, detail=error_message)
+
+    except HTTPException as http_exc:
+        # Re-raise HTTPExceptions (like 404)
+        raise http_exc
+    except Exception as e:
+        # Catch Pydantic validation errors (which are VAEs) and other exceptions
+        logger.error(f"Error processing batch update for project {project_name}: {e}", exc_info=True)
+        # Log the full traceback
+        logger.error("Traceback:", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error during batch update: {e}")
+
+@app.delete("/projects/{project_name}/elements/{element_id}", status_code=status.HTTP_200_OK)
+async def delete_element_endpoint(project_name: str, element_id: str):
+    mongodb = MongoDBHelper()
+    try:
+        project = mongodb.find_project_by_name(project_name)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        project_id = project["_id"]
+        logger.info(f"Found project '{project_name}' with ID: {project_id} for element deletion.")
+
+        success = mongodb.delete_element(project_id, element_id)
+
+        if success:
+             return {"message": f"Element {element_id} deleted successfully from project {project_name}"}
+        else:
+             # Log as warning, return 404 to client
+             logger.warning(f"Attempted to delete element {element_id} from {project_name}, but it was not found or not manual.")
+             raise HTTPException(status_code=404, detail="Element not found")
+
+    except HTTPException as http_exc:
+         raise http_exc # Re-raise specific HTTP errors
+    except Exception as e:
+         logger.error(f"Error deleting element {element_id} from {project_name}: {e}", exc_info=True)
+         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
 if __name__ == "__main__":
     import uvicorn

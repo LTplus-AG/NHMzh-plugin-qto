@@ -253,9 +253,7 @@ const MainPage = () => {
             classification_system: apiElement.classification_system,
             // Get current quantity directly
             quantity: apiElement.quantity,
-            // <<< UPDATED: Get original quantity explicitly, handle potential absence >>>
             original_quantity: (apiElement as any).original_quantity ?? null, // Default to null if missing
-            // Keep old fields for potential fallback? Or rely solely on quantity/original_quantity?
             area: apiElement.area,
             length: apiElement.length,
             volume:
@@ -263,10 +261,6 @@ const MainPage = () => {
               apiElement.volume !== null
                 ? apiElement.volume.net
                 : apiElement.volume,
-            // Try mapping old original fields too, preferring original_quantity if available
-            original_area: (apiElement as any).original_area ?? null,
-            original_length: (apiElement as any).original_length ?? null,
-            original_volume: (apiElement as any).original_volume ?? null,
             category: apiElement.category,
             is_structural: apiElement.is_structural,
             is_external: apiElement.is_external,
@@ -455,8 +449,9 @@ const MainPage = () => {
           properties: element.properties,
           materials: element.materials?.map((m) => ({
             name: m.name,
-            fraction: m.fraction ?? 0, // Default null/undefined to 0
-            unit: m.unit, // Assume material unit comes correctly from element data
+            fraction: m.fraction ?? 0,
+            unit: m.unit,
+            volume: m.volume,
           })),
           level: element.level,
           quantity: currentQuantity, // Send determined quantity
@@ -566,11 +561,19 @@ const MainPage = () => {
                 level: data.level,
                 quantity: data.quantity,
                 classification: data.classification,
-                materials: data.materials.map((m) => ({
-                  name: m.name,
-                  fraction: m.fraction,
-                  unit: data.quantity.unit,
-                })), // Map back materials
+                materials: data.materials.map((formMat) => {
+                  // Find the original material in the element being edited ('el')
+                  const originalMat = el.materials?.find(
+                    (origM) => origM.name === formMat.name
+                  );
+                  return {
+                    name: formMat.name,
+                    fraction: formMat.fraction,
+                    // Use original volume and unit if found, otherwise keep as undefined/null
+                    volume: originalMat?.volume,
+                    unit: originalMat?.unit,
+                  };
+                }),
                 description: data.description,
                 // Recalculate area/length based on updated quantity
                 area:
@@ -584,14 +587,6 @@ const MainPage = () => {
             : el
         )
       );
-      // Add to editedElements map for sending update later (if not already there)
-      // Note: handleQuantityChange already handles this, but ensure structure matches
-      // This might require adjusting useElementEditing hook or manually adding here
-      // Example (needs refinement based on useElementEditing logic):
-      // const originalQty = editingElement?.quantity; // Assuming editingElement state holds original
-      // if (originalQty && originalQty.value !== data.quantity.value) {
-      //     handleQuantityChange(editingId, data.quantity.type as any, originalQty.value, String(data.quantity.value));
-      // }
     } else {
       // We are adding a new element
       const tempId = `manual_${uuidv4()}`;
