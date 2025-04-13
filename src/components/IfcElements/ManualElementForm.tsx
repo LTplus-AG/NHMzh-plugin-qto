@@ -817,7 +817,23 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
               label="Menge"
               name="value"
               type="number"
-              inputProps={{ step: "any", sx: { textAlign: "right" } }}
+              sx={{
+                "& input[type=number]::-webkit-outer-spin-button": {
+                  WebkitAppearance: "none",
+                  margin: 0,
+                },
+                "& input[type=number]::-webkit-inner-spin-button": {
+                  WebkitAppearance: "none",
+                  margin: 0,
+                },
+                "& input[type=number]": {
+                  MozAppearance: "textfield",
+                },
+              }}
+              inputProps={{
+                step: "any",
+                sx: { textAlign: "right" },
+              }}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -1028,14 +1044,30 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
         {(formData.materials.length > 0 ||
           (initialData && formData.materials.length > 0)) && (
           <>
-            <Grid container spacing={2} sx={{ mb: 2, alignItems: "center" }}>
-              <Grid item xs={12} sm={7}>
+            <Grid container spacing={2} sx={{ mb: 1 }}>
+              <Grid item xs={12}>
+                <Typography variant="subtitle1">
+                  Gesamtvolumen & Materialdetails
+                </Typography>
+              </Grid>
+              <Grid item xs={12} sm={8}>
                 <TextField
                   required={formData.materials.length > 0}
                   fullWidth
                   label="Gesamtvolumen des Elements (m³)"
                   name="totalVolume"
                   type="number"
+                  sx={{
+                    "& input[type=number]::-webkit-outer-spin-button": {
+                      WebkitAppearance: "none",
+                      margin: 0,
+                    },
+                    "& input[type=number]::-webkit-inner-spin-button": {
+                      WebkitAppearance: "none",
+                      margin: 0,
+                    },
+                    "& input[type=number]": { MozAppearance: "textfield" },
+                  }}
                   inputProps={{
                     step: "any",
                     min: 0,
@@ -1056,7 +1088,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
                   }
                 />
               </Grid>
-              <Grid item xs={12} sm={5} sx={{ textAlign: "right" }}>
+              <Grid item xs={12} sm={4} sx={{ textAlign: "right" }}>
                 <Button
                   startIcon={<AddCircleOutlineIcon />}
                   onClick={addMaterial}
