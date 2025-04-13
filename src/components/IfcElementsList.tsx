@@ -105,7 +105,7 @@ const IfcElementsList = ({
         editData.newQuantity?.value !== undefined &&
         editData.newQuantity?.value !== null
       ) {
-        currentValue = editData.newQuantity.value;
+        currentValue = editData.newQuantity?.value;
       } else {
         const config = quantityConfig[element.type] || { key: "area" };
         currentValue =
