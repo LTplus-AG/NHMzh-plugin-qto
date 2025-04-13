@@ -305,7 +305,15 @@ const MainPage = () => {
           }
           return null; // Return null for items that shouldn't be sent
         })
-        .filter((update) => update !== null); // Filter out null entries
+        // Use a type predicate to filter out nulls and assert the correct type
+        .filter(
+          (
+            update
+          ): update is {
+            element_id: string;
+            new_quantity: { value: number; type: string; unit: string };
+          } => update !== null
+        );
 
       // Call the approve endpoint WITH updates
       await apiClient.approveProjectElements(selectedProject, updatesToSend); // <<< PASS updatesToSend

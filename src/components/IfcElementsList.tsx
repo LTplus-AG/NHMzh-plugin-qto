@@ -369,7 +369,7 @@ const IfcElementsList = ({
           <Typography
             variant="subtitle1"
             fontWeight="medium"
-            sx={{ whiteSpace: "nowrap" }}
+            sx={{ whiteSpace: "nowrap", color: "black" }}
           >
             Elemente ({totalFilteredElements})
           </Typography>
