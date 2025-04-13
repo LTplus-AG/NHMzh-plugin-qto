@@ -113,6 +113,18 @@ class IFCElement(BaseModel):
     original_length: Optional[float] = None
     category: Optional[str] = None # Keep for compatibility if needed elsewhere
     materials: Optional[List[Dict[str, Any]]] = Field(default_factory=list) # Add materials list
+    status: Optional[str] = None # Add status field (e.g., "pending", "active")
+
+# <<< START NEW MODELS FOR UPDATE >>>
+class QuantityData(BaseModel):
+    value: Optional[float] = None
+    type: Optional[str] = None
+    unit: Optional[str] = None
+
+class ElementQuantityUpdate(BaseModel):
+    element_id: str
+    new_quantity: QuantityData
+# <<< END NEW MODELS FOR UPDATE >>>
 
 class QTOResponse(BaseModel):
     """Response model for QTO operation"""
@@ -506,7 +518,8 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                         "length": 0.0,
                         "original_area": 0.0,
                         "original_volume": None,
-                        "original_length": 0.0
+                        "original_length": 0.0,
+                        "status": "pending"
                     }
 
                     # Add building storey information
@@ -936,105 +949,107 @@ async def list_projects():
 
 @app.get("/projects/{project_name}/elements/", response_model=List[IFCElement])
 async def get_project_elements(project_name: str):
-    """Retrieves element data for a given project name.
-    
-    Tries to fetch data from the parsed_ifc_data collection first.
-    If not found, falls back to querying the raw elements collection.
-    """
+    """Retrieves element data for a given project name directly from the elements collection."""
     if mongodb is None or mongodb.db is None:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    elements_data = None
-    source = "parsed_ifc_data" # Track the source of the data
-
     try:
-        # 1. Attempt primary data fetch from parsed_ifc_data
-        logger.info(f"Attempting primary data fetch from parsed_ifc_data for '{project_name}'")
-        elements_data = mongodb.get_parsed_data_by_project(project_name)
+        source = "elements_collection"
+        logger.info(f"Fetching elements from elements collection for '{project_name}'")
+            
+        # Find project ID (case-insensitive, partial match)
+        project = mongodb.db.projects.find_one({"name": {"$regex": re.escape(project_name), "$options": "i"}})
+            
+        if not project:
+            logger.warning(f"Project matching '{project_name}' not found in projects collection.")
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+            
+        project_id = project["_id"]
+        logger.info(f"Found project '{project.get('name')}' with ID: {project_id}")
+            
+        # Get raw elements
+        elements_data = list(mongodb.db.elements.find({"project_id": project_id}))
+        logger.info(f"Found {len(elements_data)} raw elements for project ID {project_id}")
+            
+        if not elements_data:
+             logger.warning(f"No element data found for '{project_name}' in the elements collection.")
+             # Return empty list instead of 404, as the project exists but has no elements
+             return []
+
+        # Adapt raw element structure to match IFCElement (if necessary)
+        adapted_elements = []
+        for elem in elements_data:
+            # Convert ObjectId to string
+            if "_id" in elem: elem["_id"] = str(elem["_id"])
+            if "project_id" in elem: elem["project_id"] = str(elem["project_id"])
+            
+            # Map potential field name differences
+            mapped_elem = {
+                "id": elem.get("ifc_id", str(elem.get("_id"))), # Use ifc_id if present, else _id
+                "global_id": elem.get("global_id"),
+                "type": elem.get("ifc_class", "Unknown"), # Use ifc_class if present
+                "name": elem.get("name", "Unnamed"),
+                "type_name": elem.get("type_name"),
+                "description": elem.get("description"),
+                "properties": elem.get("properties", {}),
+                "material_volumes": elem.get("material_volumes"), # Keep for potential older data
+                "materials": elem.get("materials", []), # Ensure materials list exists
+                "level": elem.get("level"),
+                "classification_id": None,
+                "classification_name": None,
+                "classification_system": None,
+                "area": None, # Initially None, potentially filled by quantity below
+                "volume": None, # Initially None, potentially filled by quantity below
+                "length": None, # Initially None, potentially filled by quantity below
+                # Map original quantities if they exist
+                "original_area": elem.get("original_area"), 
+                "original_volume": elem.get("original_volume"),
+                "original_length": elem.get("original_length"), 
+                "category": elem.get("category"), # Keep for compatibility
+                "status": elem.get("status", "pending") # Map status, default to pending if missing
+            }
+
+            # Handle nested classification
+            if "classification" in elem and isinstance(elem["classification"], dict):
+                mapped_elem["classification_id"] = elem["classification"].get("id")
+                mapped_elem["classification_name"] = elem["classification"].get("name")
+                mapped_elem["classification_system"] = elem["classification"].get("system")
+            
+            # Handle nested quantity (assuming simple area/length)
+            if "quantity" in elem and isinstance(elem["quantity"], dict):
+                q_type = elem["quantity"].get("type")
+                q_value = elem["quantity"].get("value")
+                if q_value is not None:
+                    try:
+                        if q_type == "area":
+                            mapped_elem["area"] = float(q_value)
+                        elif q_type == "length":
+                            mapped_elem["length"] = float(q_value)
+                        elif q_type == "volume": # Map volume from quantity if present
+                            mapped_elem["volume"] = float(q_value)
+                    except (ValueError, TypeError):
+                         logger.warning(f"Could not convert quantity value '{q_value}' for element {mapped_elem['id']}")
+            
+            # Handle original_quantity separately if needed
+            if "original_quantity" in elem and isinstance(elem["original_quantity"], dict):
+                oq_type = elem["original_quantity"].get("type")
+                oq_value = elem["original_quantity"].get("value")
+                if oq_value is not None:
+                     try:
+                         if oq_type == "area":
+                             mapped_elem["original_area"] = float(oq_value)
+                         elif oq_type == "length":
+                            mapped_elem["original_length"] = float(oq_value)
+                         elif oq_type == "volume":
+                            mapped_elem["original_volume"] = float(oq_value)
+                     except (ValueError, TypeError):
+                         logger.warning(f"Could not convert original quantity value '{oq_value}' for element {mapped_elem['id']}")
+
+            adapted_elements.append(mapped_elem)
         
-        if elements_data:
-            logger.info(f"Found {len(elements_data)} elements in parsed_ifc_data for '{project_name}'")
-        else:
-            logger.info(f"No data found in parsed_ifc_data for '{project_name}'. Attempting fallback.")
+        elements_data = adapted_elements # Use the adapted data for validation
 
-        # 2. Fallback: If primary fetch failed or returned empty, try raw elements collection
-        if not elements_data:
-            source = "elements_collection (fallback)"
-            logger.info(f"Attempting fallback fetch from elements collection for '{project_name}'")
-            
-            # Find project ID (case-insensitive, partial match)
-            project = mongodb.db.projects.find_one({"name": {"$regex": re.escape(project_name), "$options": "i"}})
-            
-            if not project:
-                logger.warning(f"Fallback failed: Project matching '{project_name}' not found in projects collection.")
-                raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-            
-            project_id = project["_id"]
-            logger.info(f"Fallback: Found project '{project.get('name')}' with ID: {project_id}")
-            
-            # Get raw elements
-            elements_data = list(mongodb.db.elements.find({"project_id": project_id}))
-            logger.info(f"Fallback: Found {len(elements_data)} raw elements for project ID {project_id}")
-            
-            # Adapt raw element structure to match IFCElement (if necessary)
-            adapted_elements = []
-            for elem in elements_data:
-                # Convert ObjectId to string
-                if "_id" in elem: elem["_id"] = str(elem["_id"])
-                if "project_id" in elem: elem["project_id"] = str(elem["project_id"])
-                
-                # Map potential field name differences
-                mapped_elem = {
-                    "id": elem.get("ifc_id", str(elem.get("_id"))), # Use ifc_id if present, else _id
-                    "global_id": elem.get("global_id"),
-                    "type": elem.get("ifc_class", "Unknown"), # Use ifc_class if present
-                    "name": elem.get("name", "Unnamed"),
-                    "type_name": elem.get("type_name"),
-                    "description": elem.get("description"),
-                    "properties": elem.get("properties", {}),
-                    "material_volumes": elem.get("material_volumes"),
-                    "level": elem.get("level"),
-                    "classification_id": None,
-                    "classification_name": None,
-                    "classification_system": None,
-                    "area": None,
-                    "volume": elem.get("volume"), # Direct mapping if available
-                    "length": None,
-                    # No original quantities in raw elements typically
-                    "original_area": None, 
-                    "original_volume": None,
-                    "original_length": None, 
-                    "category": elem.get("category")
-                }
-
-                # Handle nested classification
-                if "classification" in elem and isinstance(elem["classification"], dict):
-                    mapped_elem["classification_id"] = elem["classification"].get("id")
-                    mapped_elem["classification_name"] = elem["classification"].get("name")
-                    mapped_elem["classification_system"] = elem["classification"].get("system")
-                
-                # Handle nested quantity (assuming simple area/length)
-                if "quantity" in elem and isinstance(elem["quantity"], dict):
-                    q_type = elem["quantity"].get("type")
-                    q_value = elem["quantity"].get("value")
-                    if q_value is not None:
-                        try:
-                            if q_type == "area":
-                                mapped_elem["area"] = float(q_value)
-                            elif q_type == "length":
-                                mapped_elem["length"] = float(q_value)
-                        except (ValueError, TypeError):
-                             logger.warning(f"Could not convert fallback quantity value '{q_value}' for element {mapped_elem['id']}")
-                
-                adapted_elements.append(mapped_elem)
-            elements_data = adapted_elements # Use the adapted data for validation
-
-        # If still no data after fallback
-        if not elements_data:
-            logger.warning(f"No element data found for '{project_name}' from any source.")
-            raise HTTPException(status_code=404, detail=f"Element data not found for project '{project_name}'")
-
-        # 3. Validate and convert data (from either source) to IFCElement models
+        # Validate and convert data to IFCElement models
         validated_elements = []
         validation_errors = 0
         logger.info(f"Starting validation/conversion for {len(elements_data)} elements from source: {source}")
@@ -1050,6 +1065,8 @@ async def get_project_elements(project_name: str):
                     elem_data["name"] = f"Unnamed-{i}"
                 if "properties" not in elem_data or elem_data["properties"] is None:
                      elem_data["properties"] = {} # Ensure properties is a dict
+                if "materials" not in elem_data or elem_data["materials"] is None:
+                     elem_data["materials"] = [] # Ensure materials is a list
                 
                 # Add other potential defaults if needed based on IFCElement definition
 
@@ -1058,9 +1075,6 @@ async def get_project_elements(project_name: str):
             except Exception as validation_error:
                 validation_errors += 1
                 logger.warning(f"Skipping element {i+1} in project '{project_name}' (source: {source}) due to validation error: {validation_error}. Data snippet: {str(elem_data)[:200]}...")
-                # Optionally log full data for debugging first few errors
-                # if validation_errors <= 5:
-                #     logger.debug(f"Full problematic data: {elem_data}")
         
         logger.info(f"Finished validation. Converted {len(validated_elements)} elements (skipped {validation_errors}) from {source} for project '{project_name}'.")
         return validated_elements
@@ -1074,46 +1088,108 @@ async def get_project_elements(project_name: str):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error retrieving project elements: {str(e)}")
 
+@app.get("/projects/{project_name}/metadata/", response_model=Dict[str, Any])
+async def get_project_metadata(project_name: str):
+    """Retrieves metadata for a specific project."""
+    if mongodb is None or mongodb.db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        # Find project (case-insensitive)
+        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+        project_id = project["_id"]
+        
+        # Get element count from the elements collection for this project_id
+        element_count = mongodb.db.elements.count_documents({"project_id": project_id})
+
+        # Extract metadata, handling potential missing fields
+        metadata = project.get("metadata", {})
+        response_data = {
+            "filename": metadata.get("filename"),
+            "file_id": metadata.get("file_id"),
+            "created_at": project.get("created_at"),
+            "updated_at": project.get("updated_at"),
+            "element_count": element_count # Include the count
+        }
+        return response_data
+
+    except HTTPException as http_exc:
+        logger.warning(f"HTTPException getting metadata for '{project_name}': {http_exc.status_code} - {http_exc.detail}")
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error retrieving metadata for project '{project_name}': {e}")
+        raise HTTPException(status_code=500, detail="Internal server error retrieving project metadata")
+
 @app.post("/projects/{project_name}/approve/", response_model=Dict[str, Any])
-async def approve_project(project_name: str):
+async def approve_project(
+    project_name: str,
+    updates: Optional[List[ElementQuantityUpdate]] = None # <<< ACCEPT updates in body
+):
     """
-    Approve a project's elements by updating their status from 'pending' to 'active'.
-    This indicates that elements have been reviewed and are ready for consumption by downstream services.
+    Updates element quantities based on provided edits AND approves the project's elements 
+    by updating their status to 'active'.
     
     Args:
         project_name: Name of the project to approve
+        updates: Optional list of elements with their new quantities.
     
     Returns:
         Dictionary with operation status
     """
     try:
         logger.info(f"Received approval request for project: '{project_name}'")
-        
-        # Initialize Kafka producer
+        if updates:
+             logger.info(f"Approval request includes {len(updates)} quantity updates.")
+
+        # --- Find Project ID (needed for both update and approve) --- 
+        if mongodb is None or mongodb.db is None:
+            raise HTTPException(status_code=503, detail="Database not available")
+
+        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        project_id = project["_id"]
+        logger.info(f"Found project '{project_name}' with ID: {project_id}")
+
+        # --- Apply Quantity Updates (if any) --- 
+        if updates:
+            update_success = mongodb.update_element_quantities(project_id, updates)
+            if not update_success:
+                 # Log the error but proceed with approval for now? Or fail?
+                 # Let's fail for now to be explicit.
+                 logger.error(f"Failed to apply quantity updates for project '{project_name}'. Aborting approval.")
+                 raise HTTPException(status_code=500, detail="Failed to save quantity updates.")
+            logger.info(f"Successfully applied {len(updates)} quantity updates for project '{project_name}'.")
+
+        # --- Approve Project Status & Send Kafka Notification --- 
         kafka_producer = QTOKafkaProducer()
+        approve_success = kafka_producer.approve_project_elements(project_name) # This internally calls mongodb.approve_project_elements
         
-        # Call the approve method
-        success = kafka_producer.approve_project_elements(project_name)
-        
-        if success:
-            logger.info(f"Successfully approved elements for project '{project_name}'")
+        if approve_success:
+            logger.info(f"Successfully approved elements status for project '{project_name}'")
             return {
                 "status": "success",
-                "message": f"Project {project_name} elements approved successfully",
+                "message": f"Project {project_name} elements updated and approved successfully",
                 "project": project_name
             }
         else:
-            logger.error(f"Failed to approve elements for project '{project_name}'")
+            # If updates were applied but status approval failed, this is problematic
+            logger.error(f"Applied quantity updates BUT failed to approve elements status for project '{project_name}'")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to approve elements for project {project_name}"
+                detail=f"Failed to finalize approval status update for project {project_name}"
             )
+    except HTTPException as http_exc:
+        logger.error(f"HTTP error during approval/update for {project_name}: {http_exc.detail}")
+        raise http_exc # Re-raise HTTPException
     except Exception as e:
-        logger.error(f"Error approving project {project_name}: {str(e)}")
+        logger.error(f"Error processing approval/update for project {project_name}: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500,
-            detail=f"Error approving project: {str(e)}"
+            detail=f"Error processing approval/update: {str(e)}"
         )
 
 @app.get("/health", response_model=HealthResponse)

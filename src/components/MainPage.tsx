@@ -17,13 +17,19 @@ import {
   Snackbar,
   Tooltip,
   Typography,
+  Chip,
 } from "@mui/material";
 import { useEffect, useState } from "react";
-import apiClient, { IFCElement as ApiIFCElement } from "../api/ApiClient";
+import apiClient, {
+  IFCElement as ApiIFCElement,
+  ProjectMetadata,
+} from "../api/ApiClient";
 import { IFCElement as LocalIFCElement } from "../types/types";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 import IfcElementsList from "./IfcElementsList";
 import { QtoPreviewDialog } from "./QtoPreviewDialog";
+import React from "react";
+import { quantityConfig } from "../types/types";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -48,6 +54,9 @@ const MainPage = () => {
   const [projectList, setProjectList] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState<boolean>(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [projectMetadata, setProjectMetadata] =
+    useState<ProjectMetadata | null>(null);
+  const [metadataLoading, setMetadataLoading] = useState<boolean>(false);
 
   const {
     editedElements,
@@ -90,14 +99,9 @@ const MainPage = () => {
       try {
         const projects = await apiClient.listProjects();
         console.log("[MainPage] Fetched projects from API:", projects);
-        setProjectList(projects || []);
-        console.log("[MainPage] Updated projectList state:", projects || []);
-        if (projects && projects.length > 0 && !selectedProject) {
-          setSelectedProject(projects[0]);
-          console.log("[MainPage] Set selectedProject to:", projects[0]);
-        } else if (projects?.length === 0) {
-          setSelectedProject("");
-        }
+        const fetchedProjects = projects || [];
+        setProjectList(fetchedProjects);
+        console.log("[MainPage] Updated projectList state:", fetchedProjects);
       } catch (error) {
         console.error("Error fetching project list:", error);
         setProjectsError("Could not load project list.");
@@ -112,12 +116,33 @@ const MainPage = () => {
   }, [backendConnected]);
 
   useEffect(() => {
+    if (
+      projectList.length > 0 &&
+      (!selectedProject || !projectList.includes(selectedProject))
+    ) {
+      const defaultProject = projectList[0];
+      setSelectedProject(defaultProject);
+      console.log(
+        "[MainPage Effect] Setting default selectedProject to:",
+        defaultProject
+      );
+    } else if (projectList.length === 0 && selectedProject !== "") {
+      setSelectedProject("");
+      console.log(
+        "[MainPage Effect] Resetting selectedProject as projectList is empty."
+      );
+    }
+  }, [projectList]);
+
+  useEffect(() => {
     if (selectedProject && backendConnected) {
       fetchProjectElements(selectedProject);
+      fetchProjectMetadata(selectedProject);
       resetEdits();
     } else {
       setIfcElements([]);
       setIfcError(null);
+      setProjectMetadata(null);
       resetEdits();
     }
   }, [selectedProject, backendConnected]);
@@ -170,6 +195,7 @@ const MainPage = () => {
             name: apiElement.classification_name,
             system: apiElement.classification_system,
           },
+          status: apiElement.status,
         })
       );
 
@@ -197,6 +223,22 @@ const MainPage = () => {
     }
   };
 
+  const fetchProjectMetadata = async (projectName: string) => {
+    setMetadataLoading(true);
+    try {
+      const metadata = await apiClient.getProjectMetadata(projectName);
+      setProjectMetadata(metadata);
+    } catch (error) {
+      console.error(
+        `Error fetching metadata for project ${projectName}:`,
+        error
+      );
+      setProjectMetadata(null);
+    } finally {
+      setMetadataLoading(false);
+    }
+  };
+
   const sendQtoToDatabase = async () => {
     setIsPreviewDialogSending(true);
     setKafkaSuccess(null);
@@ -207,13 +249,73 @@ const MainPage = () => {
         throw new Error("No project selected");
       }
 
-      // Call the approve endpoint
-      await apiClient.approveProjectElements(selectedProject);
+      // <<< FORMAT DATA FOR UPDATE >>>
+      const updatesToSend = Object.entries(editedElements)
+        .map(([elementId, editData]) => {
+          // Determine the primary quantity key for this element (needed for unit/type)
+          const element = ifcElements.find((el) => el.id === elementId);
+          const config = element
+            ? quantityConfig[element.type] || { key: "area", unit: "m²" }
+            : { key: "area", unit: "m²" }; // Default if element not found
+          const primaryKey = config.key;
+          const unit = config.unit;
+
+          let newValue: number | null = null;
+          // Prefer newQuantity if available
+          if (
+            editData.newQuantity?.value !== undefined &&
+            editData.newQuantity?.value !== null
+          ) {
+            newValue =
+              typeof editData.newQuantity.value === "string"
+                ? parseFloat(editData.newQuantity.value)
+                : editData.newQuantity.value;
+          }
+          // Fallback logic (adapt based on how editedElements state is actually populated)
+          else if (
+            primaryKey === "area" &&
+            editData.newArea !== undefined &&
+            editData.newArea !== null
+          ) {
+            newValue =
+              typeof editData.newArea === "string"
+                ? parseFloat(editData.newArea)
+                : editData.newArea;
+          } else if (
+            primaryKey === "length" &&
+            editData.newLength !== undefined &&
+            editData.newLength !== null
+          ) {
+            newValue =
+              typeof editData.newLength === "string"
+                ? parseFloat(editData.newLength)
+                : editData.newLength;
+          }
+
+          // Only include update if newValue is a valid number
+          if (newValue !== null && !isNaN(newValue)) {
+            return {
+              element_id: elementId, // Use the element ID (which should be ifc_id from DB)
+              new_quantity: {
+                value: newValue,
+                type: primaryKey,
+                unit: unit,
+              },
+            };
+          }
+          return null; // Return null for items that shouldn't be sent
+        })
+        .filter((update) => update !== null); // Filter out null entries
+
+      // Call the approve endpoint WITH updates
+      await apiClient.approveProjectElements(selectedProject, updatesToSend); // <<< PASS updatesToSend
 
       // Set success and close dialog
       setKafkaSuccess(true);
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Brief delay
       setPreviewDialogOpen(false);
+      // Re-fetch elements to update status after successful approval
+      fetchProjectElements(selectedProject);
     } catch (error) {
       console.error("Error approving elements:", error);
       setKafkaError(
@@ -385,106 +487,157 @@ const MainPage = () => {
             <Box
               sx={{
                 display: "flex",
-                flexDirection: "column",
+                justifyContent: "space-between",
+                alignItems: "center",
                 mb: 3,
-                borderBottom: "1px solid rgba(0, 0, 0, 0.12)",
-                pb: 2,
+                gap: 2,
               }}
             >
               <Box
                 sx={{
                   display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  mb: 1,
+                  alignItems: "center",
+                  gap: 1,
+                  flexShrink: 1,
+                  minWidth: 0,
                 }}
               >
-                <Box sx={{ display: "flex", flexDirection: "column" }}>
-                  <Typography
-                    variant="h5"
-                    component="h1"
-                    fontWeight="bold"
-                    sx={{ color: "black" }}
-                  >
-                    {selectedProject}
+                {metadataLoading ? (
+                  <Typography variant="body2" color="text.secondary">
+                    Lade Metadaten...
                   </Typography>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 2,
-                      mt: 1,
-                    }}
+                ) : projectMetadata?.filename ? (
+                  <Tooltip
+                    title={`Datei: ${projectMetadata.filename} | Elemente: ${
+                      projectMetadata.element_count ?? "N/A"
+                    } | Letzte Verarbeitung: ${
+                      projectMetadata.updated_at
+                        ? new Date(projectMetadata.updated_at).toLocaleString(
+                            "de-DE",
+                            {
+                              timeZone: "Europe/Berlin",
+                              dateStyle: "short",
+                              timeStyle: "medium",
+                            }
+                          )
+                        : "N/A"
+                    }`}
                   >
-                    {ifcLoading ? (
-                      <Typography variant="body2" color="text.secondary">
-                        Elemente werden geladen...
-                      </Typography>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        {ifcElements.length}{" "}
-                        {ifcElements.length === 1 ? "Element" : "Elemente"}
-                      </Typography>
-                    )}
-
-                    {TARGET_IFC_CLASSES && TARGET_IFC_CLASSES.length > 0 && (
-                      <Tooltip
-                        title={
-                          <div>
-                            <p>
-                              Nur folgende IFC-Klassen werden berücksichtigt:
-                            </p>
-                            <ul
-                              style={{ margin: "8px 0", paddingLeft: "20px" }}
-                            >
-                              {TARGET_IFC_CLASSES.map((cls: string) => (
-                                <li key={cls}>{cls}</li>
-                              ))}
-                            </ul>
-                          </div>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{
+                        fontStyle: "italic",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {projectMetadata.filename} (
+                      {projectMetadata.element_count ?? "-"} Elemente) - Stand:{" "}
+                      {(() => {
+                        if (!projectMetadata?.updated_at) return "N/A";
+                        const dateStr = projectMetadata.updated_at;
+                        const utcDateStr = dateStr.endsWith("Z")
+                          ? dateStr
+                          : dateStr + "Z";
+                        try {
+                          return new Date(utcDateStr).toLocaleTimeString(
+                            "de-DE",
+                            {
+                              timeZone: "Europe/Berlin",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            }
+                          );
+                        } catch (e) {
+                          console.error("[Debug] Error formatting date:", e);
+                          return "Invalid Date";
                         }
-                        arrow
-                      >
-                        <IconButton size="small" sx={{ p: 0 }}>
-                          <InfoIcon fontSize="small" color="action" />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </Box>
-                </Box>
+                      })()}
+                    </Typography>
+                  </Tooltip>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    {/* Fallback: Show only element count if metadata fails */}
+                    {ifcElements.length}{" "}
+                    {ifcElements.length === 1 ? "Element" : "Elemente"}
+                  </Typography>
+                )}
+              </Box>
 
-                <Box sx={{ display: "flex", gap: 2 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 2,
+                  flexShrink: 0,
+                }}
+              >
+                {editedElementsCount > 0 && (
+                  <Tooltip title="Änderungen zurücksetzen">
+                    <Chip
+                      label={`${editedElementsCount} Element${
+                        editedElementsCount > 1 ? "e" : ""
+                      } bearbeitet`}
+                      color="warning"
+                      onDelete={resetEdits}
+                      size="small"
+                    />
+                  </Tooltip>
+                )}
+
+                {editedElementsCount === 0 &&
+                  TARGET_IFC_CLASSES &&
+                  TARGET_IFC_CLASSES.length > 0 && (
+                    <Tooltip
+                      title={
+                        <React.Fragment>
+                          <p>Nur folgende IFC-Klassen werden berücksichtigt:</p>
+                          <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
+                            {TARGET_IFC_CLASSES.map((cls: string) => (
+                              <li key={cls}>{cls}</li>
+                            ))}
+                          </ul>
+                        </React.Fragment>
+                      }
+                      arrow
+                    >
+                      <IconButton size="small" sx={{ p: 0 }}>
+                        <InfoIcon fontSize="small" color="action" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  onClick={() => {
+                    if (selectedProject) {
+                      fetchProjectElements(selectedProject);
+                      fetchProjectMetadata(selectedProject);
+                    }
+                  }}
+                  disabled={ifcLoading || !backendConnected || !selectedProject}
+                  className="text-primary border-primary whitespace-nowrap"
+                  size="small"
+                >
+                  {ifcLoading ? "Lädt..." : "Projekt neu laden"}
+                </Button>
+
+                {ifcElements.length > 0 && (
                   <Button
-                    variant="outlined"
+                    variant="contained"
                     color="primary"
-                    onClick={() =>
-                      selectedProject && fetchProjectElements(selectedProject)
-                    }
-                    disabled={
-                      ifcLoading || !backendConnected || !selectedProject
-                    }
-                    className="text-primary border-primary whitespace-nowrap"
+                    startIcon={<SendIcon />}
+                    onClick={handleOpenPreviewDialog}
+                    disabled={!backendConnected || !hasEbkpGroups || ifcLoading}
+                    className="bg-primary whitespace-nowrap"
                     size="small"
                   >
-                    {ifcLoading ? "Lädt..." : "Projekt neu laden"}
+                    {ifcLoading ? "Lädt..." : "Vorschau & Senden"}
                   </Button>
-
-                  {ifcElements.length > 0 && (
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      startIcon={<SendIcon />}
-                      onClick={handleOpenPreviewDialog}
-                      disabled={
-                        !backendConnected || !hasEbkpGroups || ifcLoading
-                      }
-                      className="bg-primary whitespace-nowrap"
-                      size="small"
-                    >
-                      {ifcLoading ? "Lädt..." : "Vorschau & Senden"}
-                    </Button>
-                  )}
-                </Box>
+                )}
               </Box>
             </Box>
           )}
@@ -515,9 +668,7 @@ const MainPage = () => {
               loading={ifcLoading}
               error={ifcError}
               editedElements={editedElements}
-              editedElementsCount={editedElementsCount}
               handleQuantityChange={handleQuantityChange}
-              resetEdits={resetEdits}
               onEbkpStatusChange={setHasEbkpGroups}
               targetIfcClasses={TARGET_IFC_CLASSES}
               viewType={viewType}

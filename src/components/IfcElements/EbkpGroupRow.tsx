@@ -10,6 +10,7 @@ import {
   Table,
   TableHead,
   TableBody,
+  Tooltip,
 } from "@mui/material";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
@@ -17,6 +18,7 @@ import EditIcon from "@mui/icons-material/Edit";
 import { IFCElement } from "../../types/types";
 import ElementRow from "./ElementRow";
 import { EditedQuantity } from "./types";
+import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
 
 interface EbkpGroup {
   code: string;
@@ -37,6 +39,7 @@ interface EbkpGroupRowProps {
     originalValue: number | null | undefined,
     newValue: string
   ) => void;
+  getElementDisplayStatus: (element: IFCElement) => ElementDisplayStatus;
 }
 
 const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
@@ -47,9 +50,33 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
   toggleExpandElement,
   editedElements,
   handleQuantityChange,
+  getElementDisplayStatus,
 }) => {
   // Check if any element in the group has been edited
   const hasEditedElements = group.elements.some((el) => editedElements[el.id]);
+
+  // Aggregate status for the group
+  const aggregateStatus = React.useMemo(() => {
+    let hasPending = false;
+    let hasEdited = false;
+    for (const element of group.elements) {
+      const status = getElementDisplayStatus(element);
+      if (status === "pending") {
+        hasPending = true;
+        break; // Pending takes highest precedence
+      }
+      if (status === "edited") {
+        hasEdited = true;
+      }
+    }
+    if (hasPending) return "pending";
+    if (hasEdited) return "edited";
+    return "active";
+  }, [group.elements, getElementDisplayStatus]);
+
+  // Get the color for the aggregate status
+  const statusColor = STATUS_CONFIG[aggregateStatus].color;
+  const statusLabel = STATUS_CONFIG[aggregateStatus].label;
 
   return (
     <React.Fragment>
@@ -92,11 +119,24 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
         </TableCell>
         <TableCell>{group.name}</TableCell>
         <TableCell>{group.elements.length}</TableCell>
+        <TableCell align="center">
+          <Tooltip title={statusLabel}>
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                bgcolor: statusColor,
+                display: "inline-block",
+              }}
+            />
+          </Tooltip>
+        </TableCell>
       </TableRow>
 
       {/* Expanded EBKP elements */}
       <TableRow>
-        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={4}>
+        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
           <Collapse in={isExpanded} timeout="auto" unmountOnExit>
             <Box sx={{ margin: 1 }}>
               <Typography variant="h6" gutterBottom component="div">
@@ -118,7 +158,6 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                       <TableCell width="150px" align="center">
                         Menge
                       </TableCell>
-                      <TableCell>Eigenschaften</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -134,6 +173,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                         toggleExpand={toggleExpandElement}
                         editedElement={editedElements[element.id]}
                         handleQuantityChange={handleQuantityChange}
+                        getElementDisplayStatus={getElementDisplayStatus}
+                        isParentGroupExpanded={isExpanded}
                       />
                     ))}
                   </TableBody>

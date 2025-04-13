@@ -3,7 +3,6 @@ import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import {
   Box,
-  Chip,
   Collapse,
   IconButton,
   TableCell,
@@ -16,29 +15,8 @@ import React from "react";
 import { IFCElement } from "../../types/types";
 import MaterialsTable from "./ElementTable";
 import { EditedQuantity } from "./types";
-
-// Simple configuration based on TARGET_QUANTITIES from Python
-// Maps IFC type to its primary quantity key and unit
-const quantityConfig: {
-  [key: string]: { key: "area" | "length"; unit: string };
-} = {
-  IfcWall: { key: "area", unit: "m²" },
-  IfcWallStandardCase: { key: "area", unit: "m²" },
-  IfcSlab: { key: "area", unit: "m²" },
-  IfcCovering: { key: "area", unit: "m²" },
-  IfcRoof: { key: "area", unit: "m²" },
-  IfcPlate: { key: "area", unit: "m²" },
-  IfcCurtainWall: { key: "area", unit: "m²" },
-  IfcWindow: { key: "area", unit: "m²" },
-  IfcDoor: { key: "area", unit: "m²" },
-  IfcBeam: { key: "length", unit: "m" },
-  IfcBeamStandardCase: { key: "length", unit: "m" },
-  IfcColumn: { key: "length", unit: "m" },
-  IfcColumnStandardCase: { key: "length", unit: "m" },
-  IfcRailing: { key: "length", unit: "m" },
-  IfcReinforcingBar: { key: "length", unit: "m" },
-  // Add other types as needed, default to area if not specified
-};
+import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
+import { quantityConfig } from "../../types/types";
 
 interface ElementRowProps {
   element: IFCElement;
@@ -53,6 +31,8 @@ interface ElementRowProps {
     originalValue: number | null | undefined,
     newValue: string
   ) => void;
+  getElementDisplayStatus: (element: IFCElement) => ElementDisplayStatus; // Add prop type
+  isParentGroupExpanded: boolean; // <<< ADD parent expansion state prop
 }
 
 const getQuantityValue = (
@@ -87,6 +67,8 @@ const ElementRow: React.FC<ElementRowProps> = ({
   toggleExpand,
   editedElement,
   handleQuantityChange,
+  getElementDisplayStatus, // Destructure prop
+  isParentGroupExpanded, // <<< DESTRUCTURE parent expansion state prop
 }) => {
   const category = element.category || element.type;
   const level = element.level || "unbekannt";
@@ -100,15 +82,16 @@ const ElementRow: React.FC<ElementRowProps> = ({
   const primaryQuantityKey = config.key;
   const unit = config.unit;
 
-  // Get the quantity value using our utility function
-  const originalQuantity = getQuantityValue(element, primaryQuantityKey);
+  // Determine display status
+  const displayStatus = getElementDisplayStatus(element);
+  const statusConfig = STATUS_CONFIG[displayStatus];
 
   // Check if this element has been edited (focusing on the primary quantity)
-  const isEdited = editedElement !== undefined;
+  const isEdited = displayStatus === "edited"; // Use displayStatus for consistency
 
   // Get the original quantity if it was edited
   const getOriginalQuantityValue = (): number | null | undefined => {
-    if (isEdited) {
+    if (isEdited && editedElement) {
       // Try new schema first
       if (
         editedElement.originalQuantity &&
@@ -150,9 +133,58 @@ const ElementRow: React.FC<ElementRowProps> = ({
 
   // Format value for display in the TextField
   const getDisplayValue = () => {
-    const valueToFormat = isEdited
-      ? editedElement.newQuantity?.value
-      : originalQuantity;
+    // PRIORITIZE showing the value from the transient edit state if it exists
+    if (editedElement) {
+      let valueFromEditState: number | string | null | undefined = undefined;
+      // Try new structure first
+      if (
+        editedElement.newQuantity?.value !== undefined &&
+        editedElement.newQuantity?.value !== null
+      ) {
+        valueFromEditState = editedElement.newQuantity.value;
+      }
+      // Fallback to older properties if new one isn't populated by the hook yet
+      else if (
+        primaryQuantityKey === "area" &&
+        editedElement.newArea !== undefined &&
+        editedElement.newArea !== null
+      ) {
+        valueFromEditState = editedElement.newArea;
+      } else if (
+        primaryQuantityKey === "length" &&
+        editedElement.newLength !== undefined &&
+        editedElement.newLength !== null
+      ) {
+        valueFromEditState = editedElement.newLength;
+      }
+
+      // If we found a value in the edit state, format and return it
+      if (valueFromEditState !== undefined && valueFromEditState !== null) {
+        // Return the raw string if it's explicitly an empty string (user deleted input)
+        if (
+          typeof valueFromEditState === "string" &&
+          valueFromEditState === ""
+        ) {
+          return "";
+        }
+        // Otherwise, try to format as number
+        const numericValue =
+          typeof valueFromEditState === "string"
+            ? parseFloat(valueFromEditState)
+            : valueFromEditState;
+        if (!isNaN(numericValue)) {
+          // Format valid numbers (don't format if it was originally a non-empty string like partial input "1.")
+          return typeof valueFromEditState === "number"
+            ? formatNumber(numericValue)
+            : valueFromEditState;
+        }
+        // If it wasn't empty string or a number, return original value (e.g. during partial input like "1.")
+        // Fallthrough will handle this by returning the original value below
+      }
+    }
+
+    // If no transient edit state, show the value from the main element prop
+    const valueToFormat = getQuantityValue(element, primaryQuantityKey); // Use helper
     if (valueToFormat === null || valueToFormat === undefined) return "";
     return formatNumber(valueToFormat);
   };
@@ -164,11 +196,13 @@ const ElementRow: React.FC<ElementRowProps> = ({
         sx={{
           "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.02)" },
           cursor: "pointer",
-          backgroundColor: isEdited
-            ? "rgba(255, 152, 0, 0.08)"
-            : element.groupedElements && element.groupedElements > 1
-            ? "rgba(25, 118, 210, 0.05)"
-            : "inherit",
+          backgroundColor: isExpanded
+            ? "rgba(0, 0, 255, 0.04)" // Expanded background
+            : displayStatus === "edited"
+            ? "rgba(144, 202, 249, 0.1)" // Lighter blue for edited
+            : displayStatus === "pending"
+            ? "rgba(255, 204, 128, 0.1)" // Lighter orange for pending
+            : "inherit", // Default
           transition: "background-color 0.3s ease",
         }}
         onClick={() => toggleExpand(element.id)}
@@ -187,7 +221,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
         </TableCell>
         <TableCell>
           {element.type_name || element.name || element.type}
-          {isEdited && (
+          {displayStatus === "edited" && (
             <EditIcon
               fontSize="small"
               sx={{
@@ -239,7 +273,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
             }),
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center" }}>
+          <Box sx={{ display: "flex", alignItems: "center", width: "100%" }}>
             {element.groupedElements && element.groupedElements > 1 ? (
               <Tooltip
                 title="Bearbeitung nicht möglich, da mehrere Elemente gruppiert angezeigt werden. Wechseln Sie zur Einzelansicht um Mengen zu bearbeiten."
@@ -248,7 +282,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
               >
                 <span style={{ width: "100%" }}>
                   <TextField
-                    variant="standard"
+                    variant="outlined"
                     size="small"
                     type="number"
                     inputProps={{
@@ -259,19 +293,25 @@ const ElementRow: React.FC<ElementRowProps> = ({
                     disabled={true}
                     onClick={(e) => e.stopPropagation()}
                     sx={{
-                      flexGrow: 1, // Take available space
-                      mr: 1, // Margin right for spacing
+                      width: "calc(100% - 40px)", // Adjust width, leave space for unit
+                      mr: 1,
                       "& .MuiInput-root": {
-                        "&:before, &:after": {
-                          borderBottom: isEdited
-                            ? "2px solid orange"
-                            : undefined,
-                        },
+                        borderRadius: 1, // Match outlined style
                       },
                       // Style for disabled state
                       "& .Mui-disabled": {
                         WebkitTextFillColor: "rgba(0, 0, 0, 0.6) !important",
                         cursor: "not-allowed",
+                        backgroundColor: "rgba(0, 0, 0, 0.02)", // Slight background for disabled
+                      },
+                      // Hide number input spinners
+                      "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
+                        {
+                          WebkitAppearance: "none",
+                          margin: 0,
+                        },
+                      "& input[type=number]": {
+                        MozAppearance: "textfield",
                       },
                     }}
                   />
@@ -279,7 +319,6 @@ const ElementRow: React.FC<ElementRowProps> = ({
               </Tooltip>
             ) : (
               <TextField
-                variant="standard"
                 size="small"
                 type="number"
                 inputProps={{
@@ -303,12 +342,23 @@ const ElementRow: React.FC<ElementRowProps> = ({
                 onFocus={(e) => e.target.select()}
                 onClick={(e) => e.stopPropagation()}
                 sx={{
-                  flexGrow: 1, // Take available space
-                  mr: 1, // Margin right for spacing
+                  width: "calc(100% - 40px)", // Adjust width, leave space for unit
+                  mr: 1,
                   "& .MuiInput-root": {
-                    "&:before, &:after": {
-                      borderBottom: isEdited ? "2px solid orange" : undefined,
+                    borderRadius: 1,
+                    borderColor: isEdited ? "warning.main" : undefined, // Highlight border if edited
+                    "&.Mui-focused fieldset": {
+                      borderColor: isEdited ? "warning.main" : undefined, // Keep border color on focus if edited
                     },
+                  },
+                  // Hide number input spinners
+                  "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
+                    {
+                      WebkitAppearance: "none",
+                      margin: 0,
+                    },
+                  "& input[type=number]": {
+                    MozAppearance: "textfield",
                   },
                 }}
               />
@@ -332,40 +382,27 @@ const ElementRow: React.FC<ElementRowProps> = ({
           )}
         </TableCell>
         {/* End Quantity Cell */}
-        <TableCell>
-          {element.is_structural && (
-            <Chip
-              label="Tragend"
-              size="small"
-              color="primary"
-              variant="outlined"
-              sx={{ mr: 1, mb: 0.5 }}
-            />
-          )}
-          {element.is_external && (
-            <Chip
-              label="Aussen"
-              size="small"
-              color="secondary"
-              variant="outlined"
-              sx={{ mr: 1, mb: 0.5 }}
-            />
-          )}
-          {element.ebkph && (
-            <Chip
-              label={`EBKPH: ${element.ebkph}`}
-              size="small"
-              color="default"
-              variant="outlined"
-              sx={{ mb: 0.5, mr: 1 }}
-            />
+        {/* Status Cell - Add the colored dot */}
+        <TableCell align="center">
+          {!isParentGroupExpanded && (
+            <Tooltip title={statusConfig.label}>
+              <Box
+                sx={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: "50%",
+                  bgcolor: statusConfig.color,
+                  display: "inline-block",
+                }}
+              />
+            </Tooltip>
           )}
         </TableCell>
       </TableRow>
 
       {/* Element details when expanded */}
       <TableRow>
-        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={6}>
+        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
           <Collapse in={isExpanded} timeout="auto" unmountOnExit>
             <Box sx={{ margin: 1, paddingLeft: 2 }}>
               {/* Materials Section */}
