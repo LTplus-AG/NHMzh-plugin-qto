@@ -8,7 +8,7 @@ from typing import Dict, Any, List
 import re
 from pymongo import MongoClient
 from bson.objectid import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -143,9 +143,9 @@ class MongoDBHelper:
         try:
             # Add timestamps if they don't exist
             if 'created_at' not in project_data:
-                project_data['created_at'] = datetime.utcnow()
+                project_data['created_at'] = datetime.now(timezone.utc)
             
-            project_data['updated_at'] = datetime.utcnow()
+            project_data['updated_at'] = datetime.now(timezone.utc)
             
             # Check if project already exists by name
             existing_project = self.db.projects.find_one({"name": project_data["name"]})
@@ -183,9 +183,9 @@ class MongoDBHelper:
         try:
             # Add timestamps if they don't exist
             if 'created_at' not in element_data:
-                element_data['created_at'] = datetime.utcnow()
+                element_data['created_at'] = datetime.now(timezone.utc)
             
-            element_data['updated_at'] = datetime.utcnow()
+            element_data['updated_at'] = datetime.now(timezone.utc)
             
             # Make sure project_id is an ObjectId
             if 'project_id' in element_data and isinstance(element_data['project_id'], str):
@@ -271,8 +271,8 @@ class MongoDBHelper:
                 # Add timestamps and ensure project_id is ObjectId
                 for element in elements:
                     if 'created_at' not in element:
-                        element['created_at'] = datetime.utcnow()
-                    element['updated_at'] = datetime.utcnow()
+                        element['created_at'] = datetime.now(timezone.utc)
+                    element['updated_at'] = datetime.now(timezone.utc)
                     if isinstance(element.get('project_id'), str):
                         element['project_id'] = ObjectId(element['project_id'])
                 
@@ -296,7 +296,7 @@ class MongoDBHelper:
             return False
         try:
             collection = self.db.parsed_ifc_data
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
 
             # Data structure to save
             data_to_save = {
@@ -410,6 +410,90 @@ class MongoDBHelper:
         except Exception as e:
             logger.error(f"Error approving project elements: {e}")
             return False
+
+    def update_element_quantities(self, project_id: ObjectId, updates: List[Dict[str, Any]]) -> bool:
+        """Updates the quantity field for multiple elements within a project.
+        
+        Args:
+            project_id: ObjectId of the project.
+            updates: List of update objects, each containing 'element_id' (the ifc_id) 
+                     and 'new_quantity' (a dict with 'value', 'type', 'unit').
+                     
+        Returns:
+            Boolean indicating if all updates were attempted successfully.
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot update quantities")
+            return False
+
+        success_count = 0
+        error_count = 0
+        
+        for update in updates:
+            element_ifc_id = None
+            new_quantity_dict = None # Initialize dict for logging
+            try:
+                # Access attributes directly from Pydantic model
+                element_ifc_id = update.element_id 
+                new_quantity_model = update.new_quantity
+                
+                # Check if the model and its value are valid
+                if not element_ifc_id or not new_quantity_model or new_quantity_model.value is None:
+                    logger.warning(f"Skipping invalid update data (missing ID or quantity value): {update.model_dump() if hasattr(update, 'model_dump') else update}") # Use model_dump if available
+                    error_count += 1
+                    continue
+
+                # Convert Pydantic QuantityData back to dict for MongoDB
+                new_quantity_dict = {
+                    "value": new_quantity_model.value,
+                    "type": new_quantity_model.type,
+                    "unit": new_quantity_model.unit
+                } if new_quantity_model else None
+
+                if not new_quantity_dict: # Double check conversion
+                    logger.warning(f"Skipping update due to inability to create quantity dict for element: {element_ifc_id}")
+                    error_count += 1
+                    continue
+
+                # Find the element by project_id and ifc_id
+                filter_criteria = {"project_id": project_id, "ifc_id": element_ifc_id}
+                
+                # Prepare the update operation
+                update_operation = {
+                    "$set": {
+                        "quantity": new_quantity_dict, # Use the dictionary
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+                
+                # Log before update
+                logger.debug(f"Attempting MongoDB update for element_ifc_id: {element_ifc_id}")
+                logger.debug(f"Filter criteria: {filter_criteria}")
+                logger.debug(f"Update operation: {update_operation}")
+
+                result = self.db.elements.update_one(filter_criteria, update_operation)
+                
+                if result.matched_count == 0:
+                    logger.warning(f"No element found matching project {project_id} and ifc_id {element_ifc_id}. Update skipped.")
+                    error_count += 1
+                elif result.modified_count == 0:
+                    # Matched but didn't modify (maybe quantity was already the same?)
+                    logger.info(f"Element {element_ifc_id} matched but not modified (quantity might be unchanged). Considered success.")
+                    success_count += 1 
+                else:
+                    # Successfully modified
+                    success_count += 1
+                    
+            except Exception as e:
+                # Log the error, using the element_ifc_id if assigned, or the raw update data
+                error_identifier = element_ifc_id if element_ifc_id else str(update.model_dump() if hasattr(update, 'model_dump') else update)
+                logger.error(f"Error updating quantity for element {error_identifier} in project {project_id}: {e}")
+                error_count += 1
+        
+        logger.info(f"Quantity update process finished for project {project_id}. Success: {success_count}, Errors/Skipped: {error_count}")
+        # Return True if there were no errors, even if some were skipped/not found
+        return error_count == 0
+
     # --- END NEW METHODS ---
 
 class QTOKafkaProducer:
@@ -713,7 +797,7 @@ class QTOKafkaProducer:
             # Create the notification message with desired payload
             notification = {
                 "eventType": "PROJECT_UPDATED",
-                "timestamp": datetime.utcnow().isoformat() + "Z", # Notification generation time
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z", # Notification generation time
                 "producer": "plugin-qto",
                 "payload": {
                     "project": metadata["project"],      # Original project name
@@ -804,11 +888,11 @@ class QTOKafkaProducer:
                 # Create the notification message
                 notification = {
                     "eventType": "PROJECT_APPROVED",
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
                     "producer": "plugin-qto",
                     "payload": {
                         "project": project_name,
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
                         "dbProjectId": str(project_id),
                         "status": "active"
                     },
@@ -850,7 +934,7 @@ def format_ifc_elements_for_qto(project_name: str,
     """
     from datetime import datetime
     
-    timestamp = datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat() + "Z"
     
     # Format the QTO message with timestamp and filename as file_id
     qto_data = {

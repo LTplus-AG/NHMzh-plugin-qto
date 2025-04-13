@@ -78,6 +78,7 @@ export interface IFCElement {
   groupedElements?: number;
   originalElementIds?: string[];
   hasPropertyDifferences?: boolean;
+  status?: "pending" | "active" | null | undefined;
 }
 
 export interface EBKPItem {
@@ -121,3 +122,24 @@ export interface ColumnWidthsType {
   totalChf: string;
   kommentar: string;
 }
+
+export const quantityConfig: {
+  [key: string]: { key: "area" | "length"; unit: string };
+} = {
+  IfcWall: { key: "area", unit: "m²" },
+  IfcWallStandardCase: { key: "area", unit: "m²" },
+  IfcSlab: { key: "area", unit: "m²" },
+  IfcCovering: { key: "area", unit: "m²" },
+  IfcRoof: { key: "area", unit: "m²" },
+  IfcPlate: { key: "area", unit: "m²" },
+  IfcCurtainWall: { key: "area", unit: "m²" },
+  IfcWindow: { key: "area", unit: "m²" },
+  IfcDoor: { key: "area", unit: "m²" },
+  IfcBeam: { key: "length", unit: "m" },
+  IfcBeamStandardCase: { key: "length", unit: "m" },
+  IfcColumn: { key: "length", unit: "m" },
+  IfcColumnStandardCase: { key: "length", unit: "m" },
+  IfcRailing: { key: "length", unit: "m" },
+  IfcReinforcingBar: { key: "length", unit: "m" },
+  // Add other types as needed, default to area if not specified
+};

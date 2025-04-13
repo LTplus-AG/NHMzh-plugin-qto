@@ -40,7 +40,18 @@ export interface IFCElement {
     unit?: string;
   }>;
   length?: number | null;
+  status?: "pending" | "active" | null;
 }
+
+// <<< START NEW METADATA INTERFACE >>>
+export interface ProjectMetadata {
+  filename?: string | null;
+  file_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  element_count?: number | null;
+}
+// <<< END NEW METADATA INTERFACE >>>
 
 export interface ModelUploadResponse {
   message: string;
@@ -175,23 +186,66 @@ export class QTOApiClient {
   }
 
   /**
-   * Approve project elements
+   * Get metadata for a specific project
+   * @param projectName - The name of the project
+   * @returns Project metadata object
+   */
+  async getProjectMetadata(projectName: string): Promise<ProjectMetadata> {
+    const encodedProjectName = encodeURIComponent(projectName);
+    const endpoint = `/projects/${encodedProjectName}/metadata/`;
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`);
+      if (!response.ok) {
+        // Handle non-OK responses (e.g., 404 Not Found)
+        const errorText = await response.text();
+        console.error(
+          `Failed to fetch metadata for '${projectName}': ${response.status} - ${errorText}`
+        );
+        // Return an empty object or throw an error based on desired handling
+        return {}; // Returning empty object for now
+      }
+      const metadata = await response.json();
+      console.log(
+        `Successfully retrieved metadata for project '${projectName}':`,
+        metadata
+      );
+      return metadata;
+    } catch (error) {
+      console.error(
+        `Network or other error fetching metadata for '${projectName}': ${error}`
+      );
+      // Return an empty object or throw an error
+      return {}; // Returning empty object on error
+    }
+  }
+
+  /**
+   * Approve project elements AND optionally update quantities
    * @param projectName - The name of the project to approve
+   * @param updates - Optional list of element updates [{ element_id: string, new_quantity: { value: number, type: string, unit: string } }]
    * @returns Response with operation status
    */
   async approveProjectElements(
-    projectName: string
+    projectName: string,
+    updates?: Array<{
+      element_id: string;
+      new_quantity: { value?: number | null; type?: string; unit?: string };
+    }>
   ): Promise<{ status: string; message: string; project: string }> {
-    // Ensure project name is URL encoded
     const encodedProjectName = encodeURIComponent(projectName);
     const endpoint = `/projects/${encodedProjectName}/approve/`;
     try {
-      console.log(`Approving elements for project: ${projectName}`);
+      console.log(
+        `Approving elements (and potentially updating ${
+          updates?.length || 0
+        } quantities) for project: ${projectName}`
+      );
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        body: updates ? JSON.stringify(updates) : undefined, // Send updates in body if provided
       });
 
       if (!response.ok) {

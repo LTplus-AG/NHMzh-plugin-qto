@@ -71,7 +71,7 @@ const MaterialsTable: React.FC<MaterialsTableProps> = ({
           )}
         </div>
       )}
-      <Table size="small" aria-label="materials">
+      <Table size="small" aria-label="materials" style={{ width: "100%" }}>
         <TableHead>
           <TableRow>
             <TableCell>Material</TableCell>
