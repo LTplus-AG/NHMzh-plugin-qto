@@ -83,6 +83,8 @@ async function main() {
           }' (offset: ${message.offset})`,
           error
         );
+        // Re-throw the error to prevent offset commit by kafkajs
+        throw error;
       }
     } else {
       log.warn("Received Kafka message with empty value", {

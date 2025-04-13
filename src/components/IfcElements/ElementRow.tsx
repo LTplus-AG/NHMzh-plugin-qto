@@ -1,6 +1,9 @@
 import EditIcon from "@mui/icons-material/Edit";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import BuildIcon from "@mui/icons-material/Build";
+import EditNoteIcon from "@mui/icons-material/EditNote";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import {
   Box,
   Collapse,
@@ -11,7 +14,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import React from "react";
+import React, { useMemo } from "react";
 import { IFCElement } from "../../types/types";
 import MaterialsTable from "./ElementTable";
 import { EditedQuantity } from "./types";
@@ -33,6 +36,8 @@ interface ElementRowProps {
   ) => void;
   getElementDisplayStatus: (element: IFCElement) => ElementDisplayStatus; // Add prop type
   isParentGroupExpanded: boolean; // <<< ADD parent expansion state prop
+  handleEditManualClick: (element: IFCElement) => void; // <<< ADDED prop
+  openDeleteConfirm: (element: IFCElement) => void; // <<< ADDED prop
 }
 
 const getQuantityValue = (
@@ -59,6 +64,26 @@ const getQuantityValue = (
   return undefined; // Or 0, depending on desired behavior
 };
 
+// <<< ADDED: Helper to check for persisted quantity difference >>>
+const checkPersistedEdit = (element: IFCElement): boolean => {
+  const currentVal = element.quantity?.value;
+  const originalVal = element.original_quantity?.value;
+
+  // Ensure both values are valid numbers before comparing
+  if (
+    currentVal !== null &&
+    currentVal !== undefined &&
+    !isNaN(currentVal) &&
+    originalVal !== null &&
+    originalVal !== undefined &&
+    !isNaN(originalVal)
+  ) {
+    // Use tolerance for float comparison
+    return Math.abs(currentVal - originalVal) > 1e-9;
+  }
+  return false; // Not considered a persisted edit if values are missing/invalid
+};
+
 const ElementRow: React.FC<ElementRowProps> = ({
   element,
   groupCode,
@@ -69,6 +94,8 @@ const ElementRow: React.FC<ElementRowProps> = ({
   handleQuantityChange,
   getElementDisplayStatus, // Destructure prop
   isParentGroupExpanded, // <<< DESTRUCTURE parent expansion state prop
+  handleEditManualClick, // <<< Destructure prop
+  openDeleteConfirm, // <<< Destructure prop
 }) => {
   const category = element.category || element.type;
   const level = element.level || "unbekannt";
@@ -86,12 +113,18 @@ const ElementRow: React.FC<ElementRowProps> = ({
   const displayStatus = getElementDisplayStatus(element);
   const statusConfig = STATUS_CONFIG[displayStatus];
 
-  // Check if this element has been edited (focusing on the primary quantity)
-  const isEdited = displayStatus === "edited"; // Use displayStatus for consistency
+  // Check if this element is currently being edited locally (unsaved)
+  const isLocallyEdited = editedElement !== undefined;
+
+  // Check for persisted quantity difference using helper
+  const isPersistedEdit = useMemo(
+    () => checkPersistedEdit(element),
+    [element.quantity, element.original_quantity]
+  );
 
   // Get the original quantity if it was edited
   const getOriginalQuantityValue = (): number | null | undefined => {
-    if (isEdited && editedElement) {
+    if (isLocallyEdited && editedElement) {
       // Try new schema first
       if (
         editedElement.originalQuantity &&
@@ -189,6 +222,18 @@ const ElementRow: React.FC<ElementRowProps> = ({
     return formatNumber(valueToFormat);
   };
 
+  // <<< ADDED: Logging before return >>>
+  console.log(`Element ID: ${element.id}`);
+  console.log(`  isLocallyEdited: ${isLocallyEdited}`);
+  console.log(`  element.quantity:`, element.quantity);
+  console.log(`  element.original_quantity:`, element.original_quantity);
+  console.log(`  isPersistedEdit (calculated): ${isPersistedEdit}`);
+  console.log(
+    `  Apply Highlight (local || persisted): ${
+      isLocallyEdited || isPersistedEdit
+    }`
+  );
+
   return (
     <React.Fragment>
       <TableRow
@@ -198,38 +243,98 @@ const ElementRow: React.FC<ElementRowProps> = ({
           cursor: "pointer",
           backgroundColor: isExpanded
             ? "rgba(0, 0, 255, 0.04)" // Expanded background
-            : displayStatus === "edited"
-            ? "rgba(144, 202, 249, 0.1)" // Lighter blue for edited
+            : isLocallyEdited
+            ? "rgba(144, 202, 249, 0.1)" // Local Edit color (using 'edited' status color)
+            : displayStatus === "manual"
+            ? "rgba(255, 183, 77, 0.1)" // Manual unsaved color (using 'manual' status color)
             : displayStatus === "pending"
-            ? "rgba(255, 204, 128, 0.1)" // Lighter orange for pending
+            ? "rgba(255, 204, 128, 0.1)" // Pending color
             : "inherit", // Default
           transition: "background-color 0.3s ease",
         }}
         onClick={() => toggleExpand(element.id)}
       >
-        <TableCell>
-          <IconButton
-            aria-label="expand element"
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleExpand(element.id);
-            }}
-          >
-            {isExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-          </IconButton>
+        <TableCell sx={{ display: "flex", alignItems: "center" }}>
+          {/* Expansion Icon (shown when not manual or when expanded) */}
+          {(isExpanded || !element.is_manual) && (
+            <IconButton
+              aria-label="expand element"
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleExpand(element.id);
+              }}
+              sx={{ padding: "4px" }}
+            >
+              {isExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+            </IconButton>
+          )}
+          {/* Manual Element Buttons (Edit/Delete - shown when collapsed) */}
+          {!isExpanded && element.is_manual && (
+            <Box sx={{ display: "flex" }}>
+              <Tooltip title="Manuelles Element bearbeiten">
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditManualClick(element);
+                  }}
+                  sx={{ padding: "4px" }}
+                >
+                  <EditNoteIcon fontSize="inherit" color="action" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Manuelles Element löschen">
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openDeleteConfirm(element);
+                  }}
+                  sx={{ padding: "4px", ml: 0.5 }}
+                  color="error"
+                >
+                  <DeleteOutlineIcon fontSize="inherit" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          )}
         </TableCell>
         <TableCell>
           {element.type_name || element.name || element.type}
-          {displayStatus === "edited" && (
-            <EditIcon
-              fontSize="small"
-              sx={{
-                ml: 1,
-                verticalAlign: "middle",
-                color: "warning.main",
-              }}
-            />
+          {/* Manual Element Indicator */}
+          {element.is_manual && (
+            <Tooltip title="Manuell hinzugefügtes Element">
+              <BuildIcon
+                fontSize="small"
+                sx={{
+                  ml: 1,
+                  verticalAlign: "middle",
+                  color: "action.active", // Or another suitable color
+                  fontSize: "1rem",
+                }}
+              />
+            </Tooltip>
+          )}
+          {/* Edited Element Indicator */}
+          {(isLocallyEdited || isPersistedEdit) && !element.is_manual && (
+            <Tooltip
+              title={
+                isLocallyEdited
+                  ? "Lokal bearbeitet (ungespeichert)"
+                  : "Menge wurde überschrieben"
+              }
+            >
+              <EditIcon
+                fontSize="small"
+                sx={{
+                  ml: 1,
+                  verticalAlign: "middle",
+                  color: "warning.main",
+                  fontSize: "1rem",
+                }}
+              />
+            </Tooltip>
           )}
           {element.groupedElements && element.groupedElements > 1 && (
             <Typography
@@ -267,7 +372,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
         <TableCell
           sx={{
             position: "relative",
-            ...(isEdited && {
+            ...((isLocallyEdited || isPersistedEdit) && {
               backgroundColor: "rgba(255, 152, 0, 0.15)",
               borderRadius: 1,
             }),
@@ -346,9 +451,17 @@ const ElementRow: React.FC<ElementRowProps> = ({
                   mr: 1,
                   "& .MuiInput-root": {
                     borderRadius: 1,
-                    borderColor: isEdited ? "warning.main" : undefined, // Highlight border if edited
+                    // <<< UPDATED: Highlight border if locally edited OR persisted edit >>>
+                    borderColor:
+                      isLocallyEdited || isPersistedEdit
+                        ? "warning.main"
+                        : undefined,
                     "&.Mui-focused fieldset": {
-                      borderColor: isEdited ? "warning.main" : undefined, // Keep border color on focus if edited
+                      // <<< UPDATED: Keep border color on focus if edited/persisted >>>
+                      borderColor:
+                        isLocallyEdited || isPersistedEdit
+                          ? "warning.main"
+                          : undefined,
                     },
                   },
                   // Hide number input spinners
@@ -367,13 +480,14 @@ const ElementRow: React.FC<ElementRowProps> = ({
               {unit}
             </Typography>
           </Box>
-          {isEdited && (
+          {/* Show original value only when there is an UNSAVED local edit */}
+          {isLocallyEdited && (
             <Typography
               variant="caption"
               sx={{
                 display: "block",
                 color: "text.secondary",
-                textAlign: "right", // Align original value text right
+                textAlign: "right",
                 fontSize: "0.7rem",
               }}
             >

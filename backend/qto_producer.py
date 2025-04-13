@@ -6,9 +6,11 @@ import socket
 import time
 from typing import Dict, Any, List
 import re
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne, InsertOne
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
+from pymongo.errors import BulkWriteError
+from models import BatchElementData # Import the necessary model
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -90,7 +92,7 @@ class MongoDBHelper:
                 # Get database
                 self.db = self.client[self.db_name]
                 
-                logger.info(f"MongoDB connection established successfully to database '{self.db_name}'")
+                logger.info(f"MongoDB connected successfully to database '{self.db_name}'")
                 
                 # Ensure collections exist (optional, init script should handle this)
                 # self._ensure_collections() 
@@ -152,16 +154,17 @@ class MongoDBHelper:
             
             if existing_project:
                 # Update existing project
-                self.db.projects.update_one(
+                update_result = self.db.projects.update_one(
                     {"_id": existing_project["_id"]},
-                    {"$set": project_data}
+                    {"\$set": project_data}
                 )
-                logger.info(f"Updated existing project: {existing_project['_id']}")
+                if update_result.modified_count > 0:
+                    logger.info(f"Updated existing project: {existing_project['_id']}")
                 return existing_project["_id"]
             else:
                 # Insert new project
                 result = self.db.projects.insert_one(project_data)
-                logger.info(f"Inserted new project: {result.inserted_id}")
+                logger.info(f"Inserted new project '{project_data['name']}' with ID: {result.inserted_id}")
                 return result.inserted_id
         except Exception as e:
             logger.error(f"Error saving project to MongoDB: {e}")
@@ -240,8 +243,9 @@ class MongoDBHelper:
                 
             # Delete all elements for this project
             result = self.db.elements.delete_many({"project_id": project_id})
-            logger.info(f"Deleted {result.deleted_count} elements for project {project_id}")
-            return True
+            if result.deleted_count > 0:
+                logger.info(f"Deleted {result.deleted_count} elements for project {project_id}")
+                return True
         except Exception as e:
             logger.error(f"Error deleting project elements: {e}")
             return False
@@ -262,23 +266,29 @@ class MongoDBHelper:
             return False
             
         try:
-            # First delete all existing elements for this project
-            delete_result = self.db.elements.delete_many({"project_id": project_id})
-            logger.info(f"Deleted {delete_result.deleted_count} existing elements for project {project_id}")
+            # First delete all existing non-manual elements for this project
+            # Add a filter to keep elements marked as manual
+            delete_filter = {
+                "project_id": project_id,
+                "is_manual": {"$ne": True} # Only delete elements that are NOT manual
+            }
+            delete_result = self.db.elements.delete_many(delete_filter)
+            logger.info(f"Deleted {delete_result.deleted_count} existing non-manual elements for project {project_id}")
             
-            # Now insert all new elements
+            # Now insert all new elements from the IFC file
             if elements:
-                # Add timestamps and ensure project_id is ObjectId
+                # Add timestamps, project_id, and mark as non-manual
                 for element in elements:
-                    if 'created_at' not in element:
-                        element['created_at'] = datetime.now(timezone.utc)
+                    element['created_at'] = datetime.now(timezone.utc) # Set creation time for new batch
                     element['updated_at'] = datetime.now(timezone.utc)
                     if isinstance(element.get('project_id'), str):
                         element['project_id'] = ObjectId(element['project_id'])
+                    element['is_manual'] = False # Explicitly mark elements from IFC as not manual
                 
                 # Insert all elements
                 result = self.db.elements.insert_many(elements)
-                logger.info(f"Inserted {len(result.inserted_ids)} new elements for project {project_id}")
+                if result.inserted_ids:
+                    logger.info(f"Inserted {len(result.inserted_ids)} new elements from IFC for project {project_id}")
             
             return True
                     
@@ -365,7 +375,7 @@ class MongoDBHelper:
             # Query the 'projects' collection for the distinct 'name' field
             collection = self.db.projects
             distinct_projects = collection.distinct("name")
-            logger.info(f"Distinct projects found in 'projects' collection: {distinct_projects}")
+            # logger.info(f"Distinct projects found in 'projects' collection: {distinct_projects}") # Too verbose
             return distinct_projects
         except Exception as e:
             logger.error(f"Error listing distinct projects from MongoDB: {e}")
@@ -393,12 +403,12 @@ class MongoDBHelper:
             logger.info(f"Approving elements for project_id: {project_id}")
             
             # Check if elements exist for this project before updating
-            element_count = self.db.elements.count_documents({"project_id": project_id})
-            logger.info(f"Found {element_count} total elements for project {project_id}")
+            # element_count = self.db.elements.count_documents({"project_id": project_id})
+            # logger.info(f"Found {element_count} total elements for project {project_id}") # Too verbose
             
             # Check how many elements have pending status
-            pending_count = self.db.elements.count_documents({"project_id": project_id, "status": "pending"})
-            logger.info(f"Found {pending_count} elements with 'pending' status")
+            # pending_count = self.db.elements.count_documents({"project_id": project_id, "status": "pending"})
+            # logger.info(f"Found {pending_count} elements with 'pending' status") # Too verbose
             
             # Update all elements for this project to active status, regardless of current status
             result = self.db.elements.update_many(
@@ -431,7 +441,7 @@ class MongoDBHelper:
         
         for update in updates:
             element_ifc_id = None
-            new_quantity_dict = None # Initialize dict for logging
+            new_quantity_dict = None
             try:
                 # Access attributes directly from Pydantic model
                 element_ifc_id = update.element_id 
@@ -467,9 +477,9 @@ class MongoDBHelper:
                 }
                 
                 # Log before update
-                logger.debug(f"Attempting MongoDB update for element_ifc_id: {element_ifc_id}")
-                logger.debug(f"Filter criteria: {filter_criteria}")
-                logger.debug(f"Update operation: {update_operation}")
+                # logger.debug(f"Attempting MongoDB update for element_ifc_id: {element_ifc_id}")
+                # logger.debug(f"Filter criteria: {filter_criteria}")
+                # logger.debug(f"Update operation: {update_operation}")
 
                 result = self.db.elements.update_one(filter_criteria, update_operation)
                 
@@ -478,7 +488,7 @@ class MongoDBHelper:
                     error_count += 1
                 elif result.modified_count == 0:
                     # Matched but didn't modify (maybe quantity was already the same?)
-                    logger.info(f"Element {element_ifc_id} matched but not modified (quantity might be unchanged). Considered success.")
+                    # logger.info(f"Element {element_ifc_id} matched but not modified (quantity might be unchanged). Considered success.") # Too verbose
                     success_count += 1 
                 else:
                     # Successfully modified
@@ -494,596 +504,192 @@ class MongoDBHelper:
         # Return True if there were no errors, even if some were skipped/not found
         return error_count == 0
 
-    # --- END NEW METHODS ---
-
-class QTOKafkaProducer:
-    def __init__(self, bootstrap_servers=None, topic=None, max_retries=3, retry_delay=2):
-        """Initialize the Kafka producer.
+    def delete_element(self, project_id: ObjectId, element_ifc_id: str) -> Dict[str, Any]:
+        """Deletes a single element, ensuring it belongs to the project and is manual."""
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot delete element")
+            return {"success": False, "message": "Database not connected."}
         
-        Args:
-            bootstrap_servers: Kafka broker address (defaults to environment variable)
-            topic: Kafka topic to send messages to (defaults to environment variable)
-            max_retries: Maximum number of connection retries
-            retry_delay: Delay between retries in seconds
-        """
-        # Get configuration from environment variables or use default values
-        if bootstrap_servers:
-            self.bootstrap_servers = bootstrap_servers
-        else:
-
-            self.bootstrap_servers = os.getenv('KAFKA_BROKER', 'localhost:9092')
-
-        self.topic = topic or os.getenv('KAFKA_QTO_TOPIC', 'qto-elements')
-        self.max_retries = max_retries
-        self.retry_delay = retry_delay
-        self.producer = None     
-        # Initialize producer with retries
-        self._initialize_producer()
-    
-    def _initialize_producer(self):
-        """Initialize the Kafka producer with retry logic."""
-        retries = 0
-        while retries <= self.max_retries:
-            try:
-                # Check if broker hostname is resolvable
-                host = self.bootstrap_servers.split(':')[0]
-                try:
-                    socket.gethostbyname(host)
-                except socket.gaierror:
-                    logger.warning(f"Could not resolve hostname: {host}. Kafka connections may fail.")
-                
-                # Create the producer
-                self.producer = Producer({'bootstrap.servers': self.bootstrap_servers})
-                
-                # Test the connection by listing topics (will raise exception if can't connect)
-                self.producer.list_topics(timeout=5)
-
-                return
-            except Exception as e:
-                retries += 1
-                if retries <= self.max_retries:
-                    logger.warning(f"Failed to connect to Kafka (attempt {retries}/{self.max_retries}): {e}")
-                    logger.info(f"Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
-                else:
-                    logger.error(f"Failed to connect to Kafka after {self.max_retries} attempts: {e}")
-                    # Initialize producer anyway to avoid NoneType errors, but it won't work
-                    self.producer = Producer({'bootstrap.servers': self.bootstrap_servers})
-    
-    def delivery_report(self, err, msg):
-        """Callback invoked on successful or failed message delivery."""
-        if err is not None:
-            logger.error(f"Message delivery failed: {err}")
-        else:
-            logger.info(f"Message delivered to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}")
-    
-    def send_qto_message(self, qto_data: Dict[str, Any]):
-        """Send QTO data to Kafka topic.
-        
-        Args:
-            qto_data: Dictionary containing QTO data
-            
-        Returns:
-            Boolean indicating if message was sent successfully
-        """
-        if self.producer is None:
-            logger.error("Kafka producer not initialized, cannot send message")
-            return False
-            
         try:
-            # Check if this data contains an elements array (raw element dictionaries)
-            if isinstance(qto_data.get('elements'), list) and len(qto_data.get('elements', [])) > 0:
-                # Pass the entire dictionary which includes metadata and raw elements
-                return self.send_project_update_notification(qto_data)
-        except Exception as e:
-            logger.error(f"Error sending QTO data to Kafka: {e}")
-            return False
-    
-    def send_project_update_notification(self, project_update_data: Dict[str, Any]):
-        """Saves project/elements to MongoDB and sends a simplified project update 
-           notification to Kafka topic.
-        
-        Args:
-            project_update_data: Dictionary containing project metadata and the 
-                                   LIST OF RAW element dictionaries.
+            # Find the element first to verify it's manual and belongs to the project
+            element_to_delete = self.db.elements.find_one({
+                "project_id": project_id,
+                "ifc_id": element_ifc_id
+            })
+
+            if not element_to_delete:
+                logger.warning(f"Element with ifc_id {element_ifc_id} not found in project {project_id} for deletion.")
+                return {"success": False, "message": "Element not found.", "deleted_count": 0}
             
-        Returns:
-            Boolean indicating if the notification was sent successfully
-        """
-        if self.producer is None:
-            logger.error("Kafka producer not initialized, cannot send notification")
-            return False
-            
-        # Extract elements (raw dicts) and metadata from the input dictionary
-        elements = project_update_data.get('elements', [])
-        if not elements:
-            logger.warning("No elements found in project update data, no notification sent")
-            return False
-            
-        metadata = {
-            "project": project_update_data.get("project"),
-            "filename": project_update_data.get("filename"),
-            "timestamp": project_update_data.get("timestamp"),
-            "file_id": project_update_data.get("file_id")
-        }
-        
-        # Initialize MongoDB helper
-        mongodb = MongoDBHelper()
-        
-        # Save project to MongoDB and get project ID
-        project_info_to_save = {
-            "name": metadata["project"],
-            "description": f"Project for {metadata['filename']}",
-            "metadata": {
-                "file_id": metadata["file_id"],
-                "filename": metadata["filename"],
-                "fileProcessingTimestamp": metadata["timestamp"] 
-            }
-        }
-        project_id = mongodb.save_project(project_info_to_save)
-        
-        if not project_id:
-            logger.error("Failed to save project to MongoDB, cannot proceed with elements")
-            return False
-        
-        # Format all elements for saving
-        elements_to_save = []
-        for element in elements:
-            try:
-                # Get element ID safely for logging and formatting
-                current_element_id = element.get("id", "UNKNOWN_ID") 
-                
-                # Get element type
-                element_type = element.get("type", "").lower()
-                
-                # Check if element is structural based on type
-                is_structural = any(s in element_type for s in ["wall", "column", "beam", "slab", "footing"])
-                
-                # Check if element is external based on common property
-                is_external = False
-                # Use .get() for safer access to properties dictionary
-                properties = element.get("properties", {})
-                if properties:
-                    # Check for IsExternal property (variations of capitalization)
-                    for prop_name, prop_value in properties.items():
-                        if prop_name.lower() == "isexternal" and str(prop_value).lower() in ["true", "1", "yes"]:
-                            is_external = True
-                            break
-                
-                # Get the original area - may be stored directly or in properties
-                original_area = element.get("original_area")
-                if original_area is None and "original_area" in properties:
-                    original_area = properties["original_area"]
-                
-                # Get area value
-                area_value = element.get("area", 0)
-                length_value = element.get("length", 0) # Get length value too
+            # <<< Important Check: Only allow deleting manual elements >>>
+            if not element_to_delete.get("is_manual", False):
+                 logger.warning(f"Attempted to delete non-manual element {element_ifc_id}. Operation forbidden.")
+                 return {"success": False, "message": "Only manually added elements can be deleted.", "deleted_count": 0}
 
-                # Ensure numeric types, default to 0 if conversion fails
-                try:
-                    area_value = float(area_value) if area_value is not None else 0
-                except (ValueError, TypeError):
-                    area_value = 0
-                try:
-                    length_value = float(length_value) if length_value is not None else 0
-                except (ValueError, TypeError):
-                    length_value = 0
+            # Proceed with deletion
+            result = self.db.elements.delete_one({
+                "_id": element_to_delete["_id"] # Delete by unique _id
+            })
 
-                # Determine primary quantity based on element type
-                if element_type in ["ifcwallstandardcase", "ifcslab", "ifcfooting"]:
-                    primary_quantity = area_value
-                    quantity_key = "area"
-                    quantity_unit = "m²"
-                elif element_type in ["ifcbeam", "ifccolumn"]:
-                    primary_quantity = length_value
-                    quantity_key = "length"
-                    quantity_unit = "m"
-                else:
-                    # Default fallback: prioritize area if available, otherwise length
-                    if area_value is not None and area_value != 0:
-                         primary_quantity = area_value
-                         quantity_key = "area"
-                         quantity_unit = "m²"
-                    elif length_value is not None and length_value != 0:
-                         primary_quantity = length_value
-                         quantity_key = "length"
-                         quantity_unit = "m"
-                    else: # If neither is available, default to area 0
-                        primary_quantity = 0 
-                        quantity_key = "area" 
-                        quantity_unit = "m²"
-                
-                classification_id = element.get("classification_id", element.get("ebkph", "")) # Use ebkph as fallback
-                classification_name = element.get("classification_name", "")
-                classification_system = element.get("classification_system", "")
-
-                # Create the original_quantity object with both value and type fields
-                original_quantity_obj = None
-                if original_area is not None:
-                    original_quantity_obj = {
-                        "value": original_area,
-                        "type": "area"
-                    }
-                elif element.get("original_length") is not None:
-                    original_quantity_obj = {
-                        "value": element.get("original_length"),
-                        "type": "length"
-                    }
-                
-                # Format element for MongoDB saving (aligning with target schema)
-                assigned_global_id = element.get("global_id") # Use direct get, handle None later if necessary
-                assigned_ifc_class = element.get("type", "Unknown") 
-                assigned_name = element.get("name", "Unknown") # Default to Unknown if name is missing
-                assigned_type_name = element.get("type_name") # Get type_name
-                assigned_properties = element.get("properties", {}) # Get properties
-
-                # --- Process materials - Get directly from parsed data --- START ---
-                # The parser should provide a list under the 'materials' key
-                materials_from_parser = element.get("materials", []) 
-                materials_for_db = []
-                if isinstance(materials_from_parser, list):
-                    for mat_data in materials_from_parser:
-                        # Ensure it's a dictionary and has a name
-                        if isinstance(mat_data, dict) and mat_data.get("name"):
-                            # Include expected fields, ensure correct types
-                            mat_entry = {
-                                "name": str(mat_data["name"]),
-                                "unit": str(mat_data.get("unit", "m³")) # Default unit if missing
-                            }
-                            # Add volume if present and numeric
-                            vol = mat_data.get("volume")
-                            if vol is not None:
-                                try:
-                                    mat_entry["volume"] = float(vol)
-                                except (ValueError, TypeError):
-                                    logger.warning(f"Could not convert volume '{vol}' for material '{mat_data['name']}' in element {current_element_id}")
-                            # Add fraction if present and numeric
-                            frac = mat_data.get("fraction")
-                            if frac is not None:
-                                try:
-                                    mat_entry["fraction"] = float(frac)
-                                except (ValueError, TypeError):
-                                    logger.warning(f"Could not convert fraction '{frac}' for material '{mat_data['name']}' in element {current_element_id}")
-                            
-                            materials_for_db.append(mat_entry)
-                        else:
-                            logger.warning(f"Invalid material format skipped in element {current_element_id}: {mat_data}")
-                else:
-                    logger.warning(f"Expected 'materials' to be a list in element {current_element_id}, got: {type(materials_from_parser)}")
-                # --- Process materials - Get directly from parsed data --- END ---
-                
-                formatted_element = {
-                    "project_id": project_id,
-                    "ifc_id": current_element_id, 
-                    "global_id": assigned_global_id, 
-                    "ifc_class": assigned_ifc_class, 
-                    "name": assigned_name, 
-                    "type_name": assigned_type_name, 
-                    "level": element.get("level", ""), 
-                    "quantity": {
-                        "value": primary_quantity,
-                        "type": quantity_key,
-                        "unit": quantity_unit
-                    },
-                    "original_quantity": original_quantity_obj,  
-                    "is_structural": is_structural, 
-                    "is_external": is_external, 
-                    "classification": { 
-                        "id": classification_id,
-                        "name": classification_name,
-                        "system": classification_system
-                    },
-                    # Use the directly processed materials list
-                    "materials": materials_for_db, 
-                    "properties": assigned_properties, 
-                    "status": "pending" 
-                }
-                # Log the formatted element before adding to batch
-                logger.debug(f"Formatted element for DB save (ID: {current_element_id}): {json.dumps(formatted_element, default=str)}")
-                elements_to_save.append(formatted_element)
-            except Exception as e:
-                element_identifier = current_element_id if 'current_element_id' in locals() else 'UNKNOWN'
-                logger.error(f"Error formatting element {element_identifier} for saving: {e}")
-        
-        # Save all elements in a single batch
-        if elements_to_save:
-            success = mongodb.save_elements_batch(elements_to_save, project_id)
-            if not success:
-                logger.error("Failed to save elements to MongoDB")
-                return False
-        
-        # Send a single project update notification
-        try:
-            # Create the notification message with desired payload
-            notification = {
-                "eventType": "PROJECT_UPDATED",
-                "timestamp": datetime.now(timezone.utc).isoformat() + "Z", # Notification generation time
-                "producer": "plugin-qto",
-                "payload": {
-                    "project": metadata["project"],      # Original project name
-                    "filename": metadata["filename"],     # Original filename
-                    "timestamp": metadata["timestamp"],    
-                    "fileId": metadata["file_id"],        # Original file ID
-                    "elementCount": len(elements_to_save), # Processed element count
-                    "dbProjectId": str(project_id)      # DB ID for reference
-                },
-                "metadata": {
-                    "version": "1.0",
-                    "correlationId": metadata["file_id"] # Use original file ID as correlation ID
-                }
-            }
-
-            # Send message to Kafka
-            message = json.dumps(notification)
-            self.producer.produce(self.topic, message, callback=self.delivery_report)
-            self.producer.poll(0)  # Trigger any callbacks
-            self.producer.flush(timeout=5)  # Ensure message is delivered
-
-            return True
-        except Exception as e:
-            logger.error(f"Error sending project update notification to Kafka: {e}")
-            return False
-    
-    def flush(self):
-        """Wait for all messages to be delivered."""
-        if self.producer is None:
-            logger.error("Kafka producer not initialized, cannot flush")
-            return False
-            
-        try:
-            remaining = self.producer.flush(timeout=10)
-            if remaining > 0:
-                logger.warning(f"{remaining} messages still in queue after timeout")
+            if result.deleted_count == 1:
+                logger.info(f"Successfully deleted manual element {element_ifc_id} from project {project_id}")
+                return {"success": True, "deleted_count": 1}
             else:
-                logger.info("All messages delivered successfully")
-            return remaining == 0
-        except Exception as e:
-            logger.error(f"Error flushing Kafka messages: {e}")
-            return False
+                 # Should not happen if find_one succeeded, but good practice
+                 logger.error(f"Failed to delete element {element_ifc_id} even though it was found.")
+                 return {"success": False, "message": "Deletion failed after element was found.", "deleted_count": 0}
 
-    def approve_project_elements(self, project_name: str) -> bool:
-        """Approves elements for a project and sends a confirmation notification.
-        
+        except Exception as e:
+            logger.error(f"Error deleting element {element_ifc_id}: {e}")
+            return {"success": False, "message": str(e), "deleted_count": 0}
+
+    # --- ADDED: Method for Batch Upsert --- #
+    def batch_upsert_elements(self, project_id: ObjectId, elements_data: List[Any]) -> Dict[str, Any]: # Changed type hint to List[Any] to handle potential dicts
+        """Performs a batch update/insert operation for elements.
+
+        - Updates existing elements based on 'id' (ifc_id).
+        - Inserts new manual elements (if 'id' starts with 'manual_').
+        - Sets status to 'active' for all processed elements.
+
         Args:
-            project_name: Name of the project to approve
-            
+            project_id: ObjectId of the project.
+            elements_data: List of element Pydantic models (BatchElementData).
+
         Returns:
-            Boolean indicating if the operation was successful
+            Dictionary with success status and counts (processed, created, updated).
         """
-        if self.producer is None:
-            logger.error("Kafka producer not initialized, cannot send notification")
-            return False
-            
-        # Initialize MongoDB helper
-        mongodb = MongoDBHelper()
-        
-        # Find project by name
-        try:
-            if mongodb.db is None:
-                logger.error("MongoDB not connected, cannot approve project elements")
-                return False
-            
-            logger.info(f"Looking for project with name: '{project_name}'")
-            project = mongodb.db.projects.find_one({"name": project_name})
-            if not project:
-                # Try case-insensitive search as fallback
-                logger.warning(f"Project '{project_name}' not found with exact match, trying case-insensitive search")
-                project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
-                
-            if not project:
-                logger.error(f"Project '{project_name}' not found")
-                return False
-                
-            project_id = project["_id"]
-            logger.info(f"Found project '{project_name}' with ID: {project_id}")
-            
-            # Approve elements
-            success = mongodb.approve_project_elements(project_id)
-            if not success:
-                logger.error(f"Failed to approve elements for project '{project_name}'")
-                return False
-            
-            # Send confirmation notification
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot perform batch upsert")
+            return {"success": False, "message": "Database not connected."}
+
+        operations = []
+        processed_count = 0
+        now = datetime.now(timezone.utc)
+
+        for element_model in elements_data:
+            element_id = None # Initialize for error logging
             try:
-                # Create the notification message
-                notification = {
-                    "eventType": "PROJECT_APPROVED",
-                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-                    "producer": "plugin-qto",
-                    "payload": {
-                        "project": project_name,
-                        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-                        "dbProjectId": str(project_id),
-                        "status": "active"
-                    },
-                    "metadata": {
-                        "version": "1.0",
-                        "correlationId": str(project_id)
-                    }
+                # <<< Ensure we are working with Pydantic model attributes >>>
+                element_id = element_model.id # Use attribute access
+                if not element_id:
+                    logger.warning(f"Skipping element without ID in batch upsert: {getattr(element_model, 'name', 'N/A')}")
+                    continue
+
+                is_manual_input = getattr(element_model, 'is_manual', False) # Default to False
+                is_create_operation = is_manual_input and isinstance(element_id, str) and element_id.startswith('manual_')
+
+                # Prepare the document data to be saved/updated using .model_dump()
+                # Handle potential nested Pydantic models
+                quantity_dict = element_model.quantity.model_dump(exclude_none=True) if element_model.quantity and hasattr(element_model.quantity, 'model_dump') else None
+                original_quantity_dict = element_model.original_quantity.model_dump(exclude_none=True) if element_model.original_quantity and hasattr(element_model.original_quantity, 'model_dump') else None
+                classification_dict = element_model.classification.model_dump(exclude_none=True) if element_model.classification and hasattr(element_model.classification, 'model_dump') else None
+                materials_list = [mat.model_dump(exclude_none=True) for mat in element_model.materials if hasattr(mat, 'model_dump')] if element_model.materials else []
+
+                db_doc = {
+                    "project_id": project_id,
+                    "ifc_class": getattr(element_model, 'type', None) or getattr(element_model, 'ifc_class', None), # Handle alias
+                    "name": getattr(element_model, 'name', None),
+                    "type_name": getattr(element_model, 'type_name', None),
+                    "level": getattr(element_model, 'level', None),
+                    "description": getattr(element_model, 'description', None),
+                    "quantity": quantity_dict,
+                    "original_quantity": original_quantity_dict,
+                    "classification": classification_dict,
+                    "materials": materials_list,
+                    "properties": getattr(element_model, 'properties', {}),
+                    "is_manual": is_manual_input,
+                    "is_structural": getattr(element_model, 'is_structural', False), # Default to False
+                    "is_external": getattr(element_model, 'is_external', False),   # Default to False
+                    "status": "active", # Set status to active for all batch updates
+                    "updated_at": now,
+                    "global_id": getattr(element_model, 'global_id', None)
                 }
+                # Remove keys with None values before saving
+                db_doc = {k: v for k, v in db_doc.items() if v is not None}
 
-                # Send message to Kafka
-                message = json.dumps(notification)
-                self.producer.produce(self.topic, message, callback=self.delivery_report)
-                self.producer.poll(0)
-                self.producer.flush(timeout=5)
+                if is_create_operation:
+                    # INSERT new manual element
+                    new_object_id = ObjectId()
+                    db_doc['_id'] = new_object_id
+                    # Use the string representation of the new _id as the primary ifc_id for manual elements
+                    db_doc['ifc_id'] = str(new_object_id)
+                    # Assign GlobalId if not present
+                    if 'global_id' not in db_doc or not db_doc['global_id']:
+                        db_doc['global_id'] = f"MANUAL-{db_doc['ifc_id']}"
+                    db_doc['created_at'] = now
+                    # Remove temporary 'id' field if it exists from the original request
+                    if 'id' in db_doc: del db_doc['id'] 
 
-                return True
+                    operations.append(InsertOne(db_doc))
+                else:
+                    # UPDATE existing element (identified by 'id' which should be ifc_id)
+                    update_payload = db_doc.copy()
+                    # Don't try to set _id or created_at on update
+                    if '_id' in update_payload: del update_payload['_id']
+                    if 'created_at' in update_payload: del update_payload['created_at']
+                    if 'ifc_id' in update_payload: del update_payload['ifc_id'] # Filter is on ifc_id
+
+                    operations.append(UpdateOne(
+                        {"project_id": project_id, "ifc_id": element_id}, # Filter by ifc_id
+                        {"$set": update_payload},
+                        upsert=False # Do not insert if it doesn't exist
+                    ))
+
+                processed_count += 1
             except Exception as e:
-                logger.error(f"Error sending project approval notification to Kafka: {e}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error approving project elements: {e}")
-            return False
+                # Use getattr for safer access in error logging
+                error_id = getattr(element_model, 'id', 'N/A')
+                logger.error(f"Error preparing operation for element {error_id}: {e}", exc_info=True)
+                # Continue processing other elements
 
-def format_ifc_elements_for_qto(project_name: str, 
-                               filename: str, 
-                               file_id: str, 
-                               elements: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Format IFC elements data for QTO Kafka message.
-    
-    Args:
-        project_name: Name of the project or active project from sidebar dropdown
-        filename: Name of the IFC file
-        file_id: Unique identifier for the file
-        elements: List of IFC elements with property data
-        
-    Returns:
-        Dictionary formatted for QTO Kafka message
-    """
-    from datetime import datetime
-    
-    timestamp = datetime.now(timezone.utc).isoformat() + "Z"
-    
-    # Format the QTO message with timestamp and filename as file_id
-    qto_data = {
-        "project": project_name,
-        "filename": filename,
-        "timestamp": timestamp,
-        "file_id": f"{filename}_{timestamp}",  # Combine filename and timestamp
-        "elements": []
-    }
-    
-    for element in elements:
-        # Get element type
-        element_type = element.get("type", "").lower()
-        
-        # Check if element is structural based on type
-        is_structural = any(s in element_type for s in ["wall", "column", "beam", "slab", "footing"])
-        
-        # Check if element is external based on common property
-        is_external = False
-        if "properties" in element:
-            # Check for IsExternal property (variations of capitalization)
-            for prop_name, prop_value in element["properties"].items():
-                if prop_name.lower() == "isexternal" and str(prop_value).lower() in ["true", "1", "yes"]:
-                    is_external = True
-                    break
-        
-        # Get the original area - may be stored directly or in properties
-        original_area = element.get("original_area")
-        if original_area is None and "properties" in element and "original_area" in element["properties"]:
-            original_area = element["properties"]["original_area"]
-        
-        # Get area value
-        area_value = element.get("area", 0)
-        length_value = element.get("length", 0) # Get length value too
+        # Execute Batch Operation
+        if not operations:
+             logger.info("No element operations to perform for batch upsert.")
+             return {"success": True, "processed": 0, "created": 0, "updated": 0, "inserted_ids": []}
 
-        # Ensure numeric types, default to 0 if conversion fails
         try:
-            area_value = float(area_value) if area_value is not None else 0
-        except (ValueError, TypeError):
-            area_value = 0
-        try:
-            length_value = float(length_value) if length_value is not None else 0
-        except (ValueError, TypeError):
-            length_value = 0
+            result = self.db.elements.bulk_write(operations, ordered=False)
+            # Safely get counts and inserted_ids
+            insert_count = getattr(result, 'inserted_count', 0)
+            upserted_count = getattr(result, 'upserted_count', 0)
+            updated_count = getattr(result, 'modified_count', 0)
+            matched_count = getattr(result, 'matched_count', 0)
+            inserted_object_ids = getattr(result, 'inserted_ids', [])
+            # Convert ObjectIds to strings for the final return dict
+            inserted_str_ids = [str(oid) for oid in inserted_object_ids]
 
-        # Determine primary quantity based on element type
-        if element_type in ["ifcwallstandardcase", "ifcslab", "ifcfooting"]:
-            primary_quantity = area_value
-            quantity_key = "area"
-            quantity_unit = "m²"
-        elif element_type in ["ifcbeam", "ifccolumn"]:
-            primary_quantity = length_value
-            quantity_key = "length"
-            quantity_unit = "m"
-        else:
-            # Default fallback: prioritize area if available, otherwise length
-            if area_value is not None and area_value != 0:
-                 primary_quantity = area_value
-                 quantity_key = "area"
-                 quantity_unit = "m²"
-            elif length_value is not None and length_value != 0:
-                 primary_quantity = length_value
-                 quantity_key = "length"
-                 quantity_unit = "m"
-            else: # If neither is available, default to area 0
-                primary_quantity = 0 
-                quantity_key = "area" 
-                quantity_unit = "m²"
-                
-        # Get classification details (assuming they are extracted earlier or set to default)
-        # Note: Ensure these are correctly populated if needed. Placeholder defaults used here.
-        classification_id = element.get("classification_id", element.get("ebkph", "")) # Use ebkph as fallback
-        classification_name = element.get("classification_name", "")
-        classification_system = element.get("classification_system", "")
+            logger.info(
+                f"Bulk write result: matched={matched_count}, "
+                f"modified={updated_count}, upserted={upserted_count}, " # Removed upserted_ids as InsertOne is used
+                f"inserted={insert_count} (IDs: {inserted_str_ids})"
+            )
 
-        # Create the original_quantity object with both value and type fields
-        original_quantity_obj = None
-        if original_area is not None:
-            original_quantity_obj = {
-                "value": original_area,
-                "type": "area"
+            return {
+                "success": True,
+                "processed": processed_count,
+                "created": insert_count + upserted_count, 
+                "updated": updated_count, 
+                "inserted_ids": inserted_str_ids # Return list of string IDs
             }
-        elif element.get("original_length") is not None:
-            original_quantity_obj = {
-                "value": element.get("original_length"),
-                "type": "length"
-            }
-        
-        # Format element for QTO
-        formatted_element = {
-            "id": element.get("id", ""),
-            "name": element.get("name", ""), # Add instance name
-            "type_name": element.get("type_name"),  # Add type name
-            "category": element.get("type", "Unknown"),
-            "level": element.get("level", ""),
-            "area": area_value,  # Area extracted in main.py based on TARGET_QUANTITIES
-            "length": length_value,  # Include length from TARGET_QUANTITIES
-            "original_area": original_area,  # Include original_area in output
-            "original_quantity": original_quantity_obj,  # Include properly formatted original_quantity
-            "is_structural": is_structural,
-            "is_external": is_external,
-            "ebkph": classification_id,
-            "materials": [],
-            "classification": {
-                "id": classification_id,
-                "name": classification_name,
-                "system": classification_system
-            }
-        }
-        
-        # Simple fallback: If type_name is missing, use the element's name
-        # This matches previous behavior before recent changes
-        if not formatted_element["type_name"] and formatted_element["name"]:
-            formatted_element["type_name"] = formatted_element["name"]
-        
-        # Ensure area value is numeric (in case it was stored as string)
-        if isinstance(formatted_element["area"], str):
-            try:
-                formatted_element["area"] = float(formatted_element["area"])
-            except (ValueError, TypeError):
-                formatted_element["area"] = 0
-        
-        # If area is None, explicitly set to 0 to avoid null values
-        if formatted_element["area"] is None:
-            formatted_element["area"] = 0
-        
-        # Extract materials 
-        if "material_volumes" in element and element["material_volumes"]:
-            for material_name, material_data in element["material_volumes"].items():
-                material_entry = {
-                    "name": material_name,
-                    "unit": "m³"
+        except BulkWriteError as bwe:
+            logger.error(f"Bulk write error during batch upsert: {bwe.details}")
+            # Safely get counts and inserted IDs from the exception details if available
+            details = getattr(bwe, 'details', {})
+            created = details.get('nInserted', 0) + details.get('nUpserted', 0)
+            updated = details.get('nModified', 0)
+            # Note: bulk_write exception details might not contain 'inserted' list easily
+            inserted_ids_on_error = [str(oid) for oid in details.get('upserted', [])] if details.get('upserted') else []
+
+            return {
+                "success": False,
+                "message": f"Bulk write error occurred: {len(details.get('writeErrors', []))} errors.",
+                "details": details,
+                "processed": processed_count, # Might not be fully accurate on error
+                "created": created,
+                "updated": updated,
+                "inserted_ids": inserted_ids_on_error
                 }
-                
-                # Add volume if available
-                if "volume" in material_data:
-                    material_entry["volume"] = material_data.get("volume", 0)
-                
-                # Add fraction if available
-                if "fraction" in material_data:
-                    material_entry["fraction"] = material_data.get("fraction", 0)
-                
-                formatted_element["materials"].append(material_entry)
-        
-        # If no materials were found from material_volumes, check for materials array
-        if not formatted_element["materials"] and "materials" in element and element["materials"]:
-            formatted_element["materials"] = element["materials"]
-        
-        qto_data["elements"].append(formatted_element)
-        
-    return qto_data
+        except Exception as e:
+            logger.error(f"Unexpected error during batch upsert execution: {e}", exc_info=True)
+            return {"success": False, "message": f"Unexpected error: {e}", "processed": processed_count, "created": 0, "updated": 0, "inserted_ids": []}
 

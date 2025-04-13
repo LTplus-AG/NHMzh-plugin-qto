@@ -1,12 +1,23 @@
-/**
- * QTO API Client
- * Auto-generated TypeScript client for the QTO IFC Parser API
- */
+import { BatchElementData } from "../types/batchUpdateTypes";
+
+// <<< ADDED: Interface for nested quantity data >>>
+export interface QuantityData {
+  value?: number | null;
+  type?: "area" | "length" | "volume" | string | null; // Allow specific types + string
+  unit?: string | null;
+}
+
+// <<< ADDED: Interface for nested classification data >>>
+export interface ClassificationData {
+  id?: string | null;
+  name?: string | null;
+  system?: string | null;
+}
 
 // API response types based on the backend schema
 export interface IFCElement {
   id: string;
-  global_id: string;
+  global_id: string | null; // Allow null from backend
   type: string;
   name: string;
   type_name?: string | null;
@@ -20,16 +31,25 @@ export interface IFCElement {
       width?: number;
     }
   > | null;
-  volume?: {
-    net: number | null;
-    gross: number | null;
-  };
   level?: string | null;
+  // Flat classification fields (may be redundant if nested is always used)
   classification_id?: string | null;
   classification_name?: string | null;
   classification_system?: string | null;
-  // Additional properties for QTO formatted elements
+  // Nested Classification
+  classification?: ClassificationData | null; // <<< ADDED nested classification
+  // Flat quantity fields (keep for potential backward compatibility or direct use)
   area?: number | null;
+  volume?: number | null; // Add volume if backend sends it flat
+  length?: number | null;
+  // Nested quantity fields <<< UPDATED to use QuantityData >>>
+  quantity?: QuantityData | null;
+  original_quantity?: QuantityData | null;
+  // Flat original quantities (keep for potential backward compatibility)
+  original_area?: number | null;
+  original_volume?: number | null; // Add original volume if backend sends it flat
+  original_length?: number | null;
+  // Other fields
   category?: string;
   is_structural?: boolean;
   is_external?: boolean;
@@ -38,9 +58,10 @@ export interface IFCElement {
     name: string;
     volume?: number;
     unit?: string;
+    fraction?: number; // <<< ADD fraction if backend sends it
   }>;
-  length?: number | null;
   status?: "pending" | "active" | null;
+  is_manual?: boolean;
 }
 
 // <<< START NEW METADATA INTERFACE >>>
@@ -261,6 +282,98 @@ export class QTOApiClient {
     } catch (error) {
       console.error(
         `Error approving elements for project '${projectName}': ${error}`
+      );
+      throw error;
+    }
+  }
+
+  // <<< ADDED: Batch Update/Create Elements >>>
+  async batchUpdateElements(
+    projectName: string,
+    elements: BatchElementData[]
+  ): Promise<any> {
+    // Define a more specific return type if needed
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/projects/${encodeURIComponent(
+          projectName
+        )}/elements/batch-update`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ elements }), // Wrap elements in the expected request body structure
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to batch update elements for project '${projectName}': ${response.statusText} - ${errorText}`
+        );
+      }
+
+      const result = await response.json();
+      console.log(
+        `Successfully batch updated elements for project ${projectName}`
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        `Error batch updating elements for project '${projectName}': ${error}`
+      );
+      throw error;
+    }
+  }
+
+  // <<< ADDED: Get Target IFC Classes >>>
+  async getTargetIfcClasses(): Promise<string[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/ifc-classes`, {
+        method: "GET",
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to fetch target IFC classes: ${response.statusText} - ${errorText}`
+        );
+      }
+      const result = await response.json();
+      console.log("Successfully fetched target IFC classes:", result);
+      return result || []; // Return empty array if null/undefined
+    } catch (error) {
+      console.error("Error fetching target IFC classes:", error);
+      throw error;
+    }
+  }
+
+  // <<< ADDED: Delete Manual Element >>>
+  async deleteElement(projectName: string, elementId: string): Promise<any> {
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/projects/${encodeURIComponent(
+          projectName
+        )}/elements/${encodeURIComponent(elementId)}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to delete element ${elementId} from project '${projectName}': ${response.statusText} - ${errorText}`
+        );
+      }
+
+      // Return success indicator or the actual response data if needed
+      return response.status === 200
+        ? { success: true }
+        : await response.json();
+    } catch (error) {
+      console.error(
+        `Error deleting element ${elementId} from project '${projectName}': ${error}`
       );
       throw error;
     }
