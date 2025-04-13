@@ -7,7 +7,7 @@ import os
 import ifcopenshell
 import tempfile
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel, Field
 import uuid
 import traceback
@@ -17,7 +17,7 @@ from qto_producer import QTOKafkaProducer, format_ifc_elements_for_qto, MongoDBH
 import re
 # Import the new configuration
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId # Needed for fallback query
 from ifc_materials_parser import parse_element_materials # Import the new parser
 
@@ -89,42 +89,115 @@ else:
         "IfcWallStandardCase", "IfcWindow"
     ]
 
+# <<< Models moved before IFCElement definition >>>
+class ManualQuantityInput(BaseModel):
+    value: Optional[float] = None # Make value optional too, in case it's missing
+    type: Optional[str] = None    # Make type optional
+    unit: Optional[str] = None    # <<< UPDATED: Make unit optional
+
+class ClassificationNested(BaseModel):
+     id: Optional[str] = None
+     name: Optional[str] = None
+     system: Optional[str] = None
+
+class ManualMaterialInput(BaseModel):
+    name: str
+    fraction: float = Field(..., ge=0) # Allow 0 fraction
+
+class ManualClassificationInput(BaseModel): # Renamed from ClassificationNested for clarity in manual input context
+    id: Optional[str] = None
+    name: Optional[str] = None
+    system: Optional[str] = None
+
+# <<< This model definition comes AFTER the models it uses as type hints >>>
 class IFCElement(BaseModel):
     """IFC Element data model"""
     id: str
-    global_id: Optional[str] = None # Allow None initially from parsing
-    type: str # IFC Class (e.g., IfcWall)
-    name: str # Instance Name (e.g., Wall_001)
-    type_name: Optional[str] = None # Type Name (e.g., CW 200mm Concrete)
+    global_id: Optional[str] = None
+    type: str
+    name: str
+    type_name: Optional[str] = None
     description: Optional[str] = None
     properties: Dict[str, Any] = Field(default_factory=dict)
-    material_volumes: Optional[Dict[str, Dict[str, Any]]] = None
-    level: Optional[str] = None
-    classification_id: Optional[str] = None
-    classification_name: Optional[str] = None
-    classification_system: Optional[str] = None
-    # Main Quantities (potentially edited)
+    # <<< Keep original fields for data source >>>
     area: Optional[float] = None
     volume: Optional[float] = None
     length: Optional[float] = None
-    # Original Quantities (from initial parse)
     original_area: Optional[float] = None
     original_volume: Optional[float] = None
     original_length: Optional[float] = None
-    category: Optional[str] = None # Keep for compatibility if needed elsewhere
-    materials: Optional[List[Dict[str, Any]]] = Field(default_factory=list) # Add materials list
-    status: Optional[str] = None # Add status field (e.g., "pending", "active")
+    # <<< ADD nested quantity objects - uses ManualQuantityInput defined above >>>
+    quantity: Optional[ManualQuantityInput] = None
+    original_quantity: Optional[ManualQuantityInput] = None
+    # <<< Other fields >>>
+    level: Optional[str] = None
+    classification_id: Optional[str] = None # Keep flat if needed for some reason, but nested is primary
+    classification_name: Optional[str] = None
+    classification_system: Optional[str] = None
+    category: Optional[str] = None
+    materials: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    status: Optional[str] = None
+    is_manual: Optional[bool] = False
+    is_structural: Optional[bool] = None
+    is_external: Optional[bool] = None
 
-# <<< START NEW MODELS FOR UPDATE >>>
-class QuantityData(BaseModel):
-    value: Optional[float] = None
-    type: Optional[str] = None
-    unit: Optional[str] = None
+    material_volumes: Optional[Dict[str, Dict[str, Any]]] = None
 
+    # <<< Use ClassificationNested defined above >>>
+    classification: Optional[ClassificationNested] = None
+
+    ebkph: Optional[str] = None
+
+# <<< Models that use IFCElement or the basic input types can stay below >>>
 class ElementQuantityUpdate(BaseModel):
     element_id: str
-    new_quantity: QuantityData
-# <<< END NEW MODELS FOR UPDATE >>>
+    new_quantity: ManualQuantityInput # Uses the correctly ordered model
+
+class ManualElementInput(BaseModel):
+    name: str
+    type: str
+    level: Optional[str] = None
+    quantity: ManualQuantityInput # Uses the correctly ordered model
+    classification: Optional[ManualClassificationInput] = None # Uses the correctly ordered model
+    materials: List[ManualMaterialInput] = Field(default_factory=list) # Uses the correctly ordered model
+    description: Optional[str] = None
+
+class BatchElementData(BaseModel):
+    # Include all fields that might be sent from frontend for update/create
+    # Use Optional for fields that might not be present for every element
+    # Match the structure expected by the DB or that LocalIFCElement produces
+    id: str # Can be temp ID (e.g., manual_...) or existing DB ifc_id
+    global_id: Optional[str] = None
+    type: str
+    name: str
+    type_name: Optional[str] = None
+    description: Optional[str] = None
+    properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    # <<< Use specific Pydantic models for nested fields >>>
+    materials: Optional[List[ManualMaterialInput]] = Field(default_factory=list)
+    level: Optional[str] = None
+    quantity: Optional[ManualQuantityInput] = None # Uses the correctly ordered model
+    original_quantity: Optional[ManualQuantityInput] = None # Uses the correctly ordered model
+    classification: Optional[ManualClassificationInput] = None # Uses the correctly ordered model (matched name to ManualElementInput)
+    is_manual: Optional[bool] = False
+    # Optional: Add is_structural/is_external if needed from frontend
+    is_structural: Optional[bool] = None
+    is_external: Optional[bool] = None
+
+    class Config:
+        extra = 'ignore' # Ignore extra fields sent from frontend if any
+
+class BatchUpdateRequest(BaseModel):
+    elements: List[BatchElementData]
+
+class BatchUpdateResponse(BaseModel):
+    status: str
+    message: str
+    processed_count: int
+    created_count: int
+    updated_count: int
+    kafka_notification_sent: bool
+    elements: List[IFCElement] # Uses the correctly ordered model
 
 class QTOResponse(BaseModel):
     """Response model for QTO operation"""
@@ -184,6 +257,7 @@ class ElementInputData(BaseModel):
     category: Optional[str] = None
     is_structural: Optional[bool] = None
     is_external: Optional[bool] = None
+    is_manual: Optional[bool] = False # <<< ADDED: Flag for manually added elements
 
     class Config:
         extra = 'ignore'
@@ -519,7 +593,8 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                         "original_area": 0.0,
                         "original_volume": None,
                         "original_length": 0.0,
-                        "status": "pending"
+                        "status": "pending",
+                        "is_manual": False # <<< ADDED: Mark parsed elements as NOT manual
                     }
 
                     # Add building storey information
@@ -956,131 +1031,177 @@ async def get_project_elements(project_name: str):
     try:
         source = "elements_collection"
         logger.info(f"Fetching elements from elements collection for '{project_name}'")
-            
-        # Find project ID (case-insensitive, partial match)
-        project = mongodb.db.projects.find_one({"name": {"$regex": re.escape(project_name), "$options": "i"}})
-            
+
+        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
-            logger.warning(f"Project matching '{project_name}' not found in projects collection.")
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-            
         project_id = project["_id"]
         logger.info(f"Found project '{project.get('name')}' with ID: {project_id}")
-            
-        # Get raw elements
+
         elements_data = list(mongodb.db.elements.find({"project_id": project_id}))
         logger.info(f"Found {len(elements_data)} raw elements for project ID {project_id}")
-            
+
         if not elements_data:
-             logger.warning(f"No element data found for '{project_name}' in the elements collection.")
-             # Return empty list instead of 404, as the project exists but has no elements
              return []
 
-        # Adapt raw element structure to match IFCElement (if necessary)
         adapted_elements = []
         for elem in elements_data:
             # Convert ObjectId to string
             if "_id" in elem: elem["_id"] = str(elem["_id"])
             if "project_id" in elem: elem["project_id"] = str(elem["project_id"])
-            
-            # Map potential field name differences
+
+            # Initial mapping from DB fields to response model fields
             mapped_elem = {
-                "id": elem.get("ifc_id", str(elem.get("_id"))), # Use ifc_id if present, else _id
+                "id": elem.get("ifc_id", str(elem.get("_id"))),
                 "global_id": elem.get("global_id"),
-                "type": elem.get("ifc_class", "Unknown"), # Use ifc_class if present
+                "type": elem.get("ifc_class", "Unknown"),
                 "name": elem.get("name", "Unnamed"),
                 "type_name": elem.get("type_name"),
                 "description": elem.get("description"),
                 "properties": elem.get("properties", {}),
                 "material_volumes": elem.get("material_volumes"), # Keep for potential older data
-                "materials": elem.get("materials", []), # Ensure materials list exists
+                "materials": elem.get("materials", []),
                 "level": elem.get("level"),
-                "classification_id": None,
+                "status": elem.get("status", "pending"),
+                "is_manual": elem.get("is_manual", False),
+                "is_structural": elem.get("is_structural"), # Map structural
+                "is_external": elem.get("is_external"),   # Map external
+                "ebkph": elem.get("ebkph"),               # Map ebkph
+                "category": elem.get("category"),         # Map category
+                # Raw quantities from DB (used to build nested objects)
+                "area": elem.get("area"),
+                "length": elem.get("length"),
+                "volume": elem.get("volume"),
+                "original_area": elem.get("original_area"),
+                "original_length": elem.get("original_length"),
+                "original_volume": elem.get("original_volume"),
+                # Placeholders for nested objects
+                "quantity": None,
+                "original_quantity": None,
+                "classification": None,
+                "classification_id": None,      # <<< Keep flat fields for Pydantic model if needed
                 "classification_name": None,
                 "classification_system": None,
-                "area": None, # Initially None, potentially filled by quantity below
-                "volume": None, # Initially None, potentially filled by quantity below
-                "length": None, # Initially None, potentially filled by quantity below
-                # Map original quantities if they exist
-                "original_area": elem.get("original_area"), 
-                "original_volume": elem.get("original_volume"),
-                "original_length": elem.get("original_length"), 
-                "category": elem.get("category"), # Keep for compatibility
-                "status": elem.get("status", "pending") # Map status, default to pending if missing
             }
 
-            # Handle nested classification
-            if "classification" in elem and isinstance(elem["classification"], dict):
-                mapped_elem["classification_id"] = elem["classification"].get("id")
-                mapped_elem["classification_name"] = elem["classification"].get("name")
-                mapped_elem["classification_system"] = elem["classification"].get("system")
-            
-            # Handle nested quantity (assuming simple area/length)
-            if "quantity" in elem and isinstance(elem["quantity"], dict):
-                q_type = elem["quantity"].get("type")
-                q_value = elem["quantity"].get("value")
-                if q_value is not None:
-                    try:
-                        if q_type == "area":
-                            mapped_elem["area"] = float(q_value)
-                        elif q_type == "length":
-                            mapped_elem["length"] = float(q_value)
-                        elif q_type == "volume": # Map volume from quantity if present
-                            mapped_elem["volume"] = float(q_value)
-                    except (ValueError, TypeError):
-                         logger.warning(f"Could not convert quantity value '{q_value}' for element {mapped_elem['id']}")
-            
-            # Handle original_quantity separately if needed
-            if "original_quantity" in elem and isinstance(elem["original_quantity"], dict):
-                oq_type = elem["original_quantity"].get("type")
-                oq_value = elem["original_quantity"].get("value")
-                if oq_value is not None:
-                     try:
-                         if oq_type == "area":
-                             mapped_elem["original_area"] = float(oq_value)
-                         elif oq_type == "length":
-                            mapped_elem["original_length"] = float(oq_value)
-                         elif oq_type == "volume":
-                            mapped_elem["original_volume"] = float(oq_value)
-                     except (ValueError, TypeError):
-                         logger.warning(f"Could not convert original quantity value '{oq_value}' for element {mapped_elem['id']}")
+            # --- Build Nested Classification Object ---
+            db_classification = elem.get("classification")
+            if isinstance(db_classification, dict):
+                 # Populate flat fields (might be redundant if only nested is used)
+                 mapped_elem["classification_id"] = db_classification.get("id")
+                 mapped_elem["classification_name"] = db_classification.get("name")
+                 mapped_elem["classification_system"] = db_classification.get("system")
+                 # Create nested object
+                 mapped_elem["classification"] = {
+                     "id": db_classification.get("id"),
+                     "name": db_classification.get("name"),
+                     "system": db_classification.get("system"),
+                 }
+            else:
+                 # Fallback if classification is not a dict (or handle differently)
+                 logger.debug(f"Classification field for element {mapped_elem['id']} is not a dictionary: {db_classification}")
+
+
+            # --- Build Nested Quantity Objects ---
+            db_quantity = elem.get("quantity")
+            db_original_quantity = elem.get("original_quantity")
+
+            # Current Quantity
+            if isinstance(db_quantity, dict) and db_quantity.get("value") is not None:
+                mapped_elem["quantity"] = {
+                    "value": db_quantity.get("value"),
+                    "type": db_quantity.get("type"),
+                    "unit": db_quantity.get("unit")
+                }
+                 # Also populate flat fields if they exist in the model definition
+                if db_quantity.get("type") == "area": mapped_elem["area"] = db_quantity.get("value")
+                if db_quantity.get("type") == "length": mapped_elem["length"] = db_quantity.get("value")
+                if db_quantity.get("type") == "volume": mapped_elem["volume"] = db_quantity.get("value")
+            else:
+                 # Fallback: try to build from flat fields if nested is missing
+                 q_type = None
+                 q_value = None
+                 q_unit = None
+                 if mapped_elem["area"] is not None:
+                     q_type = "area"
+                     q_value = mapped_elem["area"]
+                     q_unit = "m²" # Assume default unit
+                 elif mapped_elem["length"] is not None:
+                     q_type = "length"
+                     q_value = mapped_elem["length"]
+                     q_unit = "m" # Assume default unit
+                 elif mapped_elem["volume"] is not None:
+                     q_type = "volume"
+                     q_value = mapped_elem["volume"]
+                     q_unit = "m³" # Assume default unit
+
+                 if q_type and q_value is not None:
+                      mapped_elem["quantity"] = {"value": q_value, "type": q_type, "unit": q_unit}
+
+
+            # Original Quantity
+            if isinstance(db_original_quantity, dict) and db_original_quantity.get("value") is not None:
+                mapped_elem["original_quantity"] = {
+                    "value": db_original_quantity.get("value"),
+                    "type": db_original_quantity.get("type"),
+                    "unit": db_original_quantity.get("unit")
+                }
+                 # Also populate flat fields if they exist in the model definition
+                if db_original_quantity.get("type") == "area": mapped_elem["original_area"] = db_original_quantity.get("value")
+                if db_original_quantity.get("type") == "length": mapped_elem["original_length"] = db_original_quantity.get("value")
+                if db_original_quantity.get("type") == "volume": mapped_elem["original_volume"] = db_original_quantity.get("value")
+            else:
+                # Fallback: try to build from flat original fields
+                 oq_type = None
+                 oq_value = None
+                 oq_unit = None
+                 if mapped_elem["original_area"] is not None:
+                     oq_type = "area"
+                     oq_value = mapped_elem["original_area"]
+                     oq_unit = "m²"
+                 elif mapped_elem["original_length"] is not None:
+                     oq_type = "length"
+                     oq_value = mapped_elem["original_length"]
+                     oq_unit = "m"
+                 elif mapped_elem["original_volume"] is not None:
+                     oq_type = "volume"
+                     oq_value = mapped_elem["original_volume"]
+                     oq_unit = "m³"
+
+                 if oq_type and oq_value is not None:
+                      mapped_elem["original_quantity"] = {"value": oq_value, "type": oq_type, "unit": oq_unit}
+
 
             adapted_elements.append(mapped_elem)
-        
-        elements_data = adapted_elements # Use the adapted data for validation
+
+        elements_data = adapted_elements
 
         # Validate and convert data to IFCElement models
         validated_elements = []
         validation_errors = 0
         logger.info(f"Starting validation/conversion for {len(elements_data)} elements from source: {source}")
-        
+
         for i, elem_data in enumerate(elements_data):
             try:
                 # Ensure required fields have defaults if missing before validation
-                if not elem_data.get("id"):
-                    elem_data["id"] = f"missing-id-{i}"
-                if not elem_data.get("type"):
-                     elem_data["type"] = "Unknown"
-                if not elem_data.get("name"):
-                    elem_data["name"] = f"Unnamed-{i}"
-                if "properties" not in elem_data or elem_data["properties"] is None:
-                     elem_data["properties"] = {} # Ensure properties is a dict
-                if "materials" not in elem_data or elem_data["materials"] is None:
-                     elem_data["materials"] = [] # Ensure materials is a list
-                
-                # Add other potential defaults if needed based on IFCElement definition
+                # (Already done partially above, but double-check key ones)
+                if not elem_data.get("id"): elem_data["id"] = f"missing-id-{i}"
+                if not elem_data.get("type"): elem_data["type"] = "Unknown"
+                if not elem_data.get("name"): elem_data["name"] = f"Unnamed-{i}"
+                if "properties" not in elem_data or elem_data["properties"] is None: elem_data["properties"] = {}
+                if "materials" not in elem_data or elem_data["materials"] is None: elem_data["materials"] = []
+                if "is_manual" not in elem_data: elem_data["is_manual"] = False
 
                 element_model = IFCElement(**elem_data)
                 validated_elements.append(element_model)
             except Exception as validation_error:
                 validation_errors += 1
                 logger.warning(f"Skipping element {i+1} in project '{project_name}' (source: {source}) due to validation error: {validation_error}. Data snippet: {str(elem_data)[:200]}...")
-        
+
         logger.info(f"Finished validation. Converted {len(validated_elements)} elements (skipped {validation_errors}) from {source} for project '{project_name}'.")
         return validated_elements
 
     except HTTPException as http_exc:
-        # Log specific HTTP errors like 404 before re-raising
         logger.warning(f"HTTPException occurred for project '{project_name}': {http_exc.status_code} - {http_exc.detail}")
         raise http_exc
     except Exception as e:
@@ -1248,6 +1369,331 @@ def health_check(request: Request):
 
     # Return JSONResponse with manual headers
     return JSONResponse(content=response_data, headers=headers)
+
+# <<< ADDED: Endpoint for Creating Manual Elements >>>
+@app.post("/projects/{project_name}/elements/manual", response_model=IFCElement)
+async def add_manual_element(project_name: str, element_data: ManualElementInput):
+    """Adds a new manually defined element to a project."""
+    if mongodb is None or mongodb.db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        # 1. Find Project ID
+        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        project_id = project["_id"]
+        logger.info(f"Found project '{project_name}' with ID: {project_id} for manual element addition.")
+
+        # 2. Validate Material Fractions (Sum should be close to 1 if materials exist)
+        if element_data.materials:
+            total_fraction = sum(mat.fraction for mat in element_data.materials)
+            if abs(total_fraction - 1.0) > 1e-6:
+                raise HTTPException(status_code=400, detail=f"Material fractions must sum to 1 (100%). Current sum: {total_fraction:.4f}")
+
+        # 3. Prepare Element Data for DB
+        manual_id = f"manual_{uuid.uuid4()}"
+        now = datetime.now(timezone.utc)
+
+        # Map ManualMaterialInput to the expected format in DB
+        db_materials = [
+            {
+                "name": mat.name,
+                "fraction": _round_value(mat.fraction, 5),
+                # Volume is not directly provided for manual, calculate if needed based on total?
+                # For now, omit volume unless calculable or provided differently.
+                "unit": element_data.quantity.unit # Assuming material unit relates to quantity unit for now
+            } for mat in element_data.materials
+        ]
+
+        element_to_save = {
+            "project_id": project_id,
+            "ifc_id": manual_id, # Use generated manual ID
+            "global_id": f"MANUAL-{manual_id}", # Create a pseudo GlobalId
+            "ifc_class": element_data.type,
+            "name": element_data.name,
+            "type_name": element_data.name, # Use name as type_name for manual
+            "level": element_data.level,
+            "description": element_data.description,
+            "quantity": {
+                "value": _round_value(element_data.quantity.value, 5),
+                "type": element_data.quantity.type,
+                "unit": element_data.quantity.unit
+            },
+            # For manual elements, original quantity is the same as initial quantity
+            "original_quantity": {
+                "value": _round_value(element_data.quantity.value, 5),
+                "type": element_data.quantity.type,
+                "unit": element_data.quantity.unit
+            },
+            # Default structural/external to False or based on type?
+            "is_structural": False,
+            "is_external": False,
+            "classification": element_data.classification.model_dump(exclude_none=True) if element_data.classification else None,
+            "materials": db_materials,
+            "properties": {}, # Manual elements might not have IFC properties
+            "status": "active", # Manual elements are considered active immediately
+            "is_manual": True, # Mark as manual
+            "created_at": now,
+            "updated_at": now
+        }
+
+        # 4. Save Element using save_element (or adapt save_elements_batch if preferred)
+        # Let's use insert_one directly for simplicity here
+        insert_result = mongodb.db.elements.insert_one(element_to_save)
+        if not insert_result.inserted_id:
+            raise HTTPException(status_code=500, detail="Failed to save manual element to database.")
+
+        logger.info(f"Successfully added manual element {manual_id} to project {project_name}")
+
+        # 5. Fetch and return the newly created element formatted as IFCElement
+        # We need to map the saved data back to the IFCElement model structure
+        created_element_data = element_to_save.copy()
+        created_element_data["_id"] = insert_result.inserted_id # Add the DB _id
+
+        # Map back to IFCElement (similar logic as in get_project_elements)
+        mapped_elem = {
+            "id": created_element_data.get("ifc_id"),
+            "global_id": created_element_data.get("global_id"),
+            "type": created_element_data.get("ifc_class"),
+            "name": created_element_data.get("name"),
+            "type_name": created_element_data.get("type_name"),
+            "description": created_element_data.get("description"),
+            "properties": created_element_data.get("properties", {}),
+            "materials": created_element_data.get("materials", []),
+            "level": created_element_data.get("level"),
+            "classification_id": None,
+            "classification_name": None,
+            "classification_system": None,
+            "area": None,
+            "length": None,
+            "volume": None,
+            "original_area": None,
+            "original_length": None,
+            "original_volume": None,
+            "status": created_element_data.get("status"),
+            "is_manual": created_element_data.get("is_manual")
+            # ... map quantity, original_quantity, classification etc. ...
+        }
+        if "classification" in created_element_data and created_element_data["classification"]:
+            mapped_elem["classification_id"] = created_element_data["classification"].get("id")
+            mapped_elem["classification_name"] = created_element_data["classification"].get("name")
+            mapped_elem["classification_system"] = created_element_data["classification"].get("system")
+
+        if "quantity" in created_element_data and created_element_data["quantity"]:
+            q_type = created_element_data["quantity"].get("type")
+            q_value = created_element_data["quantity"].get("value")
+            if q_type == "area": mapped_elem["area"] = q_value
+            elif q_type == "length": mapped_elem["length"] = q_value
+            elif q_type == "volume": mapped_elem["volume"] = q_value # Add volume if type matches
+
+        if "original_quantity" in created_element_data and created_element_data["original_quantity"]:
+            oq_type = created_element_data["original_quantity"].get("type")
+            oq_value = created_element_data["original_quantity"].get("value")
+            if oq_type == "area": mapped_elem["original_area"] = oq_value
+            elif oq_type == "length": mapped_elem["original_length"] = oq_value
+            elif oq_type == "volume": mapped_elem["original_volume"] = oq_value
+
+        # Validate and return using the IFCElement model
+        return IFCElement(**mapped_elem)
+
+    except HTTPException as http_exc:
+        logger.error(f"HTTP error adding manual element to {project_name}: {http_exc.detail}")
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error adding manual element to project {project_name}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error adding manual element: {str(e)}")
+
+# <<< ADDED: Endpoint for Batch Update/Create Elements >>>
+@app.post("/projects/{project_name}/elements/batch-update", response_model=BatchUpdateResponse) # <<< Use new Response Model
+async def batch_update_elements(project_name: str, request_data: BatchUpdateRequest):
+    """
+    Updates existing elements and creates new manual elements for a project.
+    Sets the status of all processed elements to 'active'.
+    """
+    if mongodb is None or mongodb.db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    processed_elements_from_db: List[Dict] = [] # To store raw docs from DB
+    updated_ifc_ids: List[str] = [] # Store ifc_ids of updated elements
+    created_element_docs: List[Dict] = [] # Store the docs we attempted to insert
+
+    try:
+        # 1. Find Project ID
+        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        project_id = project["_id"]
+        logger.info(f"Found project '{project_name}' with ID: {project_id} for batch update.")
+
+        # Store data for fetching later
+        elements_to_process = request_data.elements
+        for elem_data in elements_to_process:
+            if elem_data.is_manual and elem_data.id.startswith('manual_'):
+                # Prepare doc for insert (IDs will be generated by helper)
+                created_element_docs.append(elem_data)
+            else:
+                # Assume it's an update based on existing ifc_id
+                updated_ifc_ids.append(elem_data.id)
+
+        # 2. Call MongoDB helper to perform batch upsert
+        result = mongodb.batch_upsert_elements(project_id, elements_to_process)
+
+        if not result["success"]:
+            # Even on partial failure, try to fetch elements that *might* have succeeded
+            # For simplicity now, just raise error
+            raise HTTPException(status_code=500, detail=result.get("message", "Failed to process batch element update."))
+
+        logger.info(f"Batch update DB operation successful for project {project_name}. "
+                    f"Requested: {len(elements_to_process)}, Processed: {result.get('processed', 0)}, "
+                    f"Created: {result.get('created', 0)}, Updated: {result.get('updated', 0)}")
+
+        # 3. Fetch the final state of processed elements
+        final_element_ifc_ids = updated_ifc_ids + [str(oid) for oid in result.get('inserted_ids', [])]
+        if final_element_ifc_ids:
+            processed_elements_from_db = list(mongodb.db.elements.find({
+                "project_id": project_id,
+                "ifc_id": {"$in": final_element_ifc_ids}
+            }))
+            logger.info(f"Fetched {len(processed_elements_from_db)} updated/created elements from DB.")
+        else:
+            logger.info("No elements were marked for update or successfully inserted.")
+
+        # 4. Map DB documents to Pydantic IFCElement model
+        validated_elements: List[IFCElement] = []
+        for elem in processed_elements_from_db:
+            # (Use mapping logic similar to get_project_elements)
+            # Simplified mapping for brevity:
+            try:
+                mapped_elem = {
+                    "id": elem.get("ifc_id"), # Use the final ifc_id from DB
+                    "global_id": elem.get("global_id"),
+                    "type": elem.get("ifc_class"),
+                    "name": elem.get("name"),
+                    "type_name": elem.get("type_name"),
+                    "description": elem.get("description"),
+                    "properties": elem.get("properties", {}),
+                    "materials": elem.get("materials", []),
+                    "level": elem.get("level"),
+                    "classification_id": None,
+                    "classification_name": None,
+                    "classification_system": None,
+                    "area": None,
+                    "length": None,
+                    "volume": None,
+                    "original_area": None,
+                    "original_length": None,
+                    "original_volume": None,
+                    "status": elem.get("status"),
+                    "is_manual": elem.get("is_manual")
+                    # ... map quantity, original_quantity, classification etc. ...
+                }
+                # --- DETAILED MAPPING --- 
+                if elem.get("classification"): # Map classification
+                    mapped_elem["classification_id"] = elem["classification"].get("id")
+                    mapped_elem["classification_name"] = elem["classification"].get("name")
+                    mapped_elem["classification_system"] = elem["classification"].get("system")
+
+                if elem.get("quantity"): # Map current quantity
+                     q_type = elem["quantity"].get("type")
+                     q_value = elem["quantity"].get("value")
+                     # Assign to specific fields if needed by IFCElement model
+                     if q_type == "area": mapped_elem["area"] = q_value
+                     elif q_type == "length": mapped_elem["length"] = q_value
+                     elif q_type == "volume": mapped_elem["volume"] = q_value 
+                     # Also store the quantity object itself if IFCElement expects it
+                     mapped_elem["quantity"] = elem["quantity"] # <<< ADDED
+
+                if elem.get("original_quantity"): # Map original quantity
+                     oq_type = elem["original_quantity"].get("type")
+                     oq_value = elem["original_quantity"].get("value")
+                     if oq_type == "area": mapped_elem["original_area"] = oq_value
+                     elif oq_type == "length": mapped_elem["original_length"] = oq_value
+                     elif oq_type == "volume": mapped_elem["original_volume"] = oq_value
+                     # Also store the original_quantity object itself if IFCElement expects it
+                     mapped_elem["original_quantity"] = elem["original_quantity"] # <<< ADDED
+                 # --- END DETAILED MAPPING ---
+
+                validated_elements.append(IFCElement(**mapped_elem))
+            except Exception as map_error:
+                 logger.warning(f"Failed to map element {elem.get('ifc_id')} to Pydantic model: {map_error}")
+
+
+        # 5. Send Kafka Notification
+        kafka_producer = QTOKafkaProducer()
+        approve_success = kafka_producer.send_project_approved_notification(project_name, project_id)
+        if not approve_success:
+             logger.warning(f"Batch update DB successful, but Kafka notification failed for project {project_name}")
+
+        # 6. Return response including the elements
+        return BatchUpdateResponse(
+            status="success",
+            message=f"Batch update for project {project_name} successful.",
+            processed_count=result.get('processed', 0),
+            created_count=result.get('created', 0),
+            updated_count=result.get('updated', 0),
+            kafka_notification_sent=approve_success,
+            elements=validated_elements # <<< Include the list of elements
+        )
+
+    except HTTPException as http_exc:
+        logger.error(f"HTTP error during batch update for {project_name}: {http_exc.detail}")
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error processing batch update for project {project_name}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error during batch update: {str(e)}")
+
+# <<< ADDED: Endpoint to get target IFC classes >>>
+@app.get("/ifc-classes", response_model=List[str])
+async def get_ifc_classes():
+    """Returns the list of target IFC classes configured in the backend environment."""
+    # Ensure TARGET_IFC_CLASSES is accessible here (it should be as it's a global variable)
+    if not TARGET_IFC_CLASSES or not TARGET_IFC_CLASSES[0]:
+        logger.warning("TARGET_IFC_CLASSES environment variable not set or empty.")
+        return [] # Return empty list if not configured
+    return TARGET_IFC_CLASSES
+
+# <<< ADDED: Endpoint for Deleting a Manual Element >>>
+@app.delete("/projects/{project_name}/elements/{element_ifc_id}", response_model=Dict[str, Any])
+async def delete_manual_element(project_name: str, element_ifc_id: str):
+    """Deletes a specific manually added element from a project."""
+    if mongodb is None or mongodb.db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        # 1. Find Project ID
+        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        project_id = project["_id"]
+        logger.info(f"Found project '{project_name}' with ID: {project_id} for element deletion.")
+
+        # 2. Call MongoDB helper to delete the element
+        result = mongodb.delete_element(project_id, element_ifc_id)
+
+        if not result["success"]:
+            # Determine appropriate status code based on message
+            status_code = 404 if "not found" in result.get("message", "").lower() else 400
+            if "Only manually added" in result.get("message", ""):
+                status_code = 403 # Forbidden
+            raise HTTPException(status_code=status_code, detail=result.get("message", "Failed to delete element."))
+
+        # Return success message
+        return {
+            "status": "success",
+            "message": f"Element {element_ifc_id} deleted successfully from project {project_name}.",
+            "deleted_count": result.get('deleted_count', 0)
+        }
+
+    except HTTPException as http_exc:
+        logger.error(f"HTTP error deleting element {element_ifc_id} from {project_name}: {http_exc.detail}")
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error deleting element {element_ifc_id} from project {project_name}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error during element deletion: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

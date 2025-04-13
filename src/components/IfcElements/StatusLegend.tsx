@@ -14,6 +14,19 @@ const StatusLegend: React.FC<StatusLegendProps> = ({ presentStatuses }) => {
     )
     .map(([_, config]) => config);
 
+  // Optional: Sort to keep a consistent order
+  statusesToShow.sort((a, b) => {
+    const order: Record<string, number> = {
+      "Manuell (Lokal)": 0, // Keep explicit manual label if needed
+      "Ausstehend (IFC)": 1,
+      "Lokal Bearbeitet": 2,
+      Bestätigt: 3,
+      // Add other potential status labels if necessary
+    };
+    // Use a large number for statuses not in the explicit order
+    return (order[a.label] ?? 99) - (order[b.label] ?? 99);
+  });
+
   // Don't render the legend if no relevant statuses are present
   if (statusesToShow.length === 0) {
     return null;

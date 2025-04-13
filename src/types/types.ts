@@ -29,7 +29,7 @@ export interface IFCElement {
       width?: number;
     }
   > | null;
-  level?: string | null | undefined;
+  level?: string | null;
   classification_id?: string | null | undefined;
   classification_name?: string | null | undefined;
   classification_system?: string | null | undefined;
@@ -39,23 +39,18 @@ export interface IFCElement {
   original_area?: number | null | undefined;
   original_length?: number | null | undefined;
   original_volume?: number | null | undefined;
-  quantity?:
-    | {
-        value: number | null;
-        type: "area" | "length";
-        unit: string;
-      }
-    | null
-    | undefined;
-  original_quantity?:
-    | {
-        value: number | null;
-        type: "area" | "length";
-      }
-    | null
-    | undefined;
-  category?: string | null | undefined;
-  is_structural?: boolean | null | undefined;
+  quantity?: {
+    value: number | null;
+    type: string;
+    unit?: string | null;
+  } | null;
+  original_quantity?: {
+    value: number | null;
+    type: string;
+    unit?: string | null;
+  } | null;
+  category?: string;
+  is_structural?: boolean;
   is_external?: boolean | null | undefined;
   ebkph?: string | null | undefined;
   materials?:
@@ -79,6 +74,7 @@ export interface IFCElement {
   originalElementIds?: string[];
   hasPropertyDifferences?: boolean;
   status?: "pending" | "active" | null | undefined;
+  is_manual?: boolean;
 }
 
 export interface EBKPItem {

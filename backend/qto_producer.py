@@ -6,9 +6,10 @@ import socket
 import time
 from typing import Dict, Any, List
 import re
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne, InsertOne
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
+from pymongo.errors import BulkWriteError
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -262,23 +263,28 @@ class MongoDBHelper:
             return False
             
         try:
-            # First delete all existing elements for this project
-            delete_result = self.db.elements.delete_many({"project_id": project_id})
-            logger.info(f"Deleted {delete_result.deleted_count} existing elements for project {project_id}")
+            # First delete all existing non-manual elements for this project
+            # Add a filter to keep elements marked as manual
+            delete_filter = {
+                "project_id": project_id,
+                "is_manual": {"$ne": True} # Only delete elements that are NOT manual
+            }
+            delete_result = self.db.elements.delete_many(delete_filter)
+            logger.info(f"Deleted {delete_result.deleted_count} existing non-manual elements for project {project_id}")
             
-            # Now insert all new elements
+            # Now insert all new elements from the IFC file
             if elements:
-                # Add timestamps and ensure project_id is ObjectId
+                # Add timestamps, project_id, and mark as non-manual
                 for element in elements:
-                    if 'created_at' not in element:
-                        element['created_at'] = datetime.now(timezone.utc)
+                    element['created_at'] = datetime.now(timezone.utc) # Set creation time for new batch
                     element['updated_at'] = datetime.now(timezone.utc)
                     if isinstance(element.get('project_id'), str):
                         element['project_id'] = ObjectId(element['project_id'])
+                    element['is_manual'] = False # Explicitly mark elements from IFC as not manual
                 
                 # Insert all elements
                 result = self.db.elements.insert_many(elements)
-                logger.info(f"Inserted {len(result.inserted_ids)} new elements for project {project_id}")
+                logger.info(f"Inserted {len(result.inserted_ids)} new elements from IFC for project {project_id}")
             
             return True
                     
@@ -494,7 +500,206 @@ class MongoDBHelper:
         # Return True if there were no errors, even if some were skipped/not found
         return error_count == 0
 
-    # --- END NEW METHODS ---
+    def delete_element(self, project_id: ObjectId, element_ifc_id: str) -> Dict[str, Any]:
+        """Deletes a single element, ensuring it belongs to the project and is manual."""
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot delete element")
+            return {"success": False, "message": "Database not connected."}
+        
+        try:
+            # Find the element first to verify it's manual and belongs to the project
+            element_to_delete = self.db.elements.find_one({
+                "project_id": project_id,
+                "ifc_id": element_ifc_id
+            })
+
+            if not element_to_delete:
+                logger.warning(f"Element with ifc_id {element_ifc_id} not found in project {project_id} for deletion.")
+                return {"success": False, "message": "Element not found.", "deleted_count": 0}
+            
+            # <<< Important Check: Only allow deleting manual elements >>>
+            if not element_to_delete.get("is_manual", False):
+                 logger.warning(f"Attempted to delete non-manual element {element_ifc_id}. Operation forbidden.")
+                 return {"success": False, "message": "Only manually added elements can be deleted.", "deleted_count": 0}
+
+            # Proceed with deletion
+            result = self.db.elements.delete_one({
+                "_id": element_to_delete["_id"] # Delete by unique _id
+            })
+
+            if result.deleted_count == 1:
+                logger.info(f"Successfully deleted manual element {element_ifc_id} from project {project_id}")
+                return {"success": True, "deleted_count": 1}
+            else:
+                 # Should not happen if find_one succeeded, but good practice
+                 logger.error(f"Failed to delete element {element_ifc_id} even though it was found.")
+                 return {"success": False, "message": "Deletion failed after element was found.", "deleted_count": 0}
+
+        except Exception as e:
+            logger.error(f"Error deleting element {element_ifc_id}: {e}")
+            return {"success": False, "message": str(e), "deleted_count": 0}
+
+    # --- ADDED: Method for Batch Upsert --- #
+    def batch_upsert_elements(self, project_id: ObjectId, elements_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Performs a batch update/insert operation for elements.
+
+        - Updates existing elements based on 'id' (ifc_id).
+        - Inserts new manual elements (if 'id' starts with 'manual_').
+        - Sets status to 'active' for all processed elements.
+
+        Args:
+            project_id: ObjectId of the project.
+            elements_data: List of element dictionaries from the frontend.
+
+        Returns:
+            Dictionary with success status and counts (processed, created, updated).
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot perform batch upsert")
+            return {"success": False, "message": "Database not connected."}
+
+        operations = []
+        processed_count = 0
+        now = datetime.now(timezone.utc)
+        created_ids = [] # Keep track of newly created manual IDs
+        updated_ids = [] # Keep track of updated existing IDs
+
+        for element in elements_data:
+            try:
+                # <<< Use direct attribute access for Pydantic models >>>
+                element_id = element.id
+                if not element_id:
+                    logger.warning(f"Skipping element without ID in batch upsert: {element.name}")
+                    continue
+
+                is_manual_input = element.is_manual if element.is_manual is not None else False
+                is_create_operation = is_manual_input and isinstance(element_id, str) and element_id.startswith('manual_')
+
+                # Prepare the document data to be saved/updated
+                db_doc = {
+                    "project_id": project_id,
+                    "ifc_class": element.type,
+                    "name": element.name,
+                    "type_name": element.type_name,
+                    "level": element.level,
+                    "description": element.description,
+                    # Convert Pydantic models back to dicts for Mongo
+                    "quantity": element.quantity.model_dump(exclude_none=True) if element.quantity else None,
+                    "original_quantity": element.original_quantity.model_dump(exclude_none=True) if element.original_quantity else None,
+                    "classification": element.classification.model_dump(exclude_none=True) if element.classification else None,
+                    # Map materials list if present
+                    "materials": [mat.model_dump(exclude_none=True) for mat in element.materials] if element.materials else [],
+                    "properties": element.properties if element.properties else {},
+                    "is_manual": is_manual_input,
+                    "is_structural": element.is_structural if hasattr(element, 'is_structural') and element.is_structural is not None else False,
+                    "is_external": element.is_external if hasattr(element, 'is_external') and element.is_external is not None else False,
+                    "status": "active",
+                    "updated_at": now,
+                    "global_id": element.global_id
+                }
+                # Remove keys with None values
+                db_doc = {k: v for k, v in db_doc.items() if v is not None}
+
+                if is_create_operation:
+                    # INSERT new manual element
+                    # Generate a new ObjectId for the document itself
+                    new_object_id = ObjectId()
+                    db_doc['_id'] = new_object_id # Explicitly set the _id for insertion
+                    db_doc['ifc_id'] = str(new_object_id) # Use the string representation of the new _id as ifc_id
+                    db_doc['created_at'] = now
+                    
+                    # Remove the temporary ID if it was in the doc
+                    if 'id' in db_doc: del db_doc['id'] 
+
+                    # Use InsertOne operation now for clarity
+                    operations.append(InsertOne(db_doc))
+                    
+                    # # OLD UpdateOne approach (kept for reference)
+                    # # db_doc['ifc_id'] = element_id # Use the temporary ID as ifc_id
+                    # # Use UpdateOne with upsert=True and a filter likely not to match
+                    # set_payload = db_doc.copy()
+                    # if 'created_at' in set_payload: # Should not be needed now, but safe check
+                    #     del set_payload['created_at']
+                    # operations.append(UpdateOne(
+                    #     {"project_id": project_id, "ifc_id": element_id}, # Filter using the temp ID
+                    #     {"$set": set_payload, "$setOnInsert": {"created_at": now}}, # Use modified payload in $set
+                    #     upsert=True # This will cause an insert
+                    # ))
+                else:
+                    # UPDATE existing element (manual or IFC-derived)
+                    # Ensure created_at is not accidentally set during update
+                    update_payload = db_doc.copy()
+                    if 'created_at' in update_payload:
+                        del update_payload['created_at']
+
+                    operations.append(UpdateOne(
+                        {"project_id": project_id, "ifc_id": element_id},
+                        {"$set": update_payload} # Just update existing fields, don't upsert
+                    ))
+
+                processed_count += 1
+            except Exception as e:
+                logger.error(f"Error preparing operation for element {element.get('id', 'N/A')}: {e}")
+                # Continue processing other elements
+
+        # Execute Batch Operation
+        if not operations:
+             logger.info("No element operations to perform for batch upsert.")
+             return {"success": True, "processed": 0, "created": 0, "updated": 0}
+
+        insert_count = 0
+        updated_count = 0
+        try:
+            result = self.db.elements.bulk_write(operations, ordered=False) # ordered=False allows other ops to succeed if one fails
+            # Adjust count logic based on InsertOne and UpdateOne usage
+            insert_count = result.inserted_count
+            upserted_count = result.upserted_count 
+            updated_count = result.modified_count
+            matched_count = result.matched_count # Total matched by updates
+            # Safely get inserted_ids (list of ObjectIds)
+            inserted_object_ids = getattr(result, 'inserted_ids', []) # <<< Use getattr with default
+
+            logger.info(
+                f"Bulk write result: matched={matched_count}, "
+                f"modified={updated_count}, upserted={upserted_count} (IDs: {result.upserted_ids}), "
+                f"inserted={insert_count} (IDs: {inserted_object_ids})" # Log safely accessed IDs
+            )
+
+            return {
+                "success": True,
+                "processed": processed_count,
+                "created": insert_count + upserted_count, 
+                "updated": updated_count, 
+                "inserted_ids": inserted_object_ids # <<< Return the safely accessed list
+            }
+        except BulkWriteError as bwe:
+            logger.error(f"Bulk write error during batch upsert: {bwe.details}")
+            # Even with errors, some operations might have succeeded
+            created_count = bwe.details.get('nInserted', 0) + bwe.details.get('nUpserted', 0)
+            updated_count = bwe.details.get('nModified', 0) 
+            # Safely get inserted IDs even in error case if available
+            # The writeErrors might contain info, but result object itself might lack the attribute
+            inserted_object_ids_on_error = [] # Default to empty on error
+            if hasattr(bwe, 'details') and 'inserted' in bwe.details: # Check if 'inserted' key exists in details
+                 inserted_object_ids_on_error = bwe.details['inserted']
+            elif hasattr(result, 'inserted_ids'): # Fallback check on result object if available
+                 inserted_object_ids_on_error = getattr(result, 'inserted_ids', [])
+                 
+            return {
+                "success": False,
+                "message": f"Bulk write error occurred: {len(bwe.details.get('writeErrors', []))} errors.",
+                "details": bwe.details,
+                "processed": processed_count,
+                "created": created_count,
+                "updated": updated_count, 
+                "inserted_ids": inserted_object_ids_on_error # <<< Return safely accessed list
+                }
+        except Exception as e:
+            # Catch other potential errors, including the AttributeError if getattr fails (shouldn't now)
+            logger.error(f"Unexpected error during batch upsert execution: {e}")
+            return {"success": False, "message": f"Unexpected error: {e}"}
+
+    # --- END NEW METHOD --- #
 
 class QTOKafkaProducer:
     def __init__(self, bootstrap_servers=None, topic=None, max_retries=3, retry_delay=2):
@@ -841,80 +1046,79 @@ class QTOKafkaProducer:
             logger.error(f"Error flushing Kafka messages: {e}")
             return False
 
+    def send_project_approved_notification(self, project_name: str, project_id: ObjectId) -> bool:
+        """Sends the PROJECT_APPROVED Kafka notification."""
+        if self.producer is None:
+            logger.error("Kafka producer not initialized, cannot send approval notification")
+            return False
+        try:
+            notification = {
+                "eventType": "PROJECT_APPROVED",
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                "producer": "plugin-qto",
+                "payload": {
+                    "project": project_name,
+                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z", # Use current time for event
+                    "dbProjectId": str(project_id),
+                    "status": "active" # Explicitly state the new status
+                },
+                "metadata": {
+                    "version": "1.0",
+                    "correlationId": str(project_id) # Correlate with project DB ID
+                }
+            }
+            message = json.dumps(notification)
+            self.producer.produce(self.topic, message, callback=self.delivery_report)
+            # Removed poll(0) and flush() here, rely on endpoint flushing
+            # self.producer.poll(0)
+            # self.producer.flush(timeout=5)
+            logger.info(f"Produced PROJECT_APPROVED notification for project {project_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error producing project approval notification to Kafka: {e}")
+            return False
+
     def approve_project_elements(self, project_name: str) -> bool:
-        """Approves elements for a project and sends a confirmation notification.
+        """DEPRECATED? Sends approval notification. DB updates are handled by batch_upsert.
         
         Args:
             project_name: Name of the project to approve
             
         Returns:
-            Boolean indicating if the operation was successful
+            Boolean indicating if the notification was sent successfully
         """
-        if self.producer is None:
-            logger.error("Kafka producer not initialized, cannot send notification")
-            return False
-            
         # Initialize MongoDB helper
         mongodb = MongoDBHelper()
         
         # Find project by name
         try:
             if mongodb.db is None:
-                logger.error("MongoDB not connected, cannot approve project elements")
+                logger.error("MongoDB not connected, cannot send approval for project elements")
                 return False
             
-            logger.info(f"Looking for project with name: '{project_name}'")
-            project = mongodb.db.projects.find_one({"name": project_name})
+            logger.info(f"Looking for project with name: '{project_name}' to send approval notification")
+            project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+
             if not project:
-                # Try case-insensitive search as fallback
-                logger.warning(f"Project '{project_name}' not found with exact match, trying case-insensitive search")
-                project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
-                
-            if not project:
-                logger.error(f"Project '{project_name}' not found")
+                logger.error(f"Project '{project_name}' not found for sending approval notification")
                 return False
                 
             project_id = project["_id"]
             logger.info(f"Found project '{project_name}' with ID: {project_id}")
             
-            # Approve elements
-            success = mongodb.approve_project_elements(project_id)
-            if not success:
-                logger.error(f"Failed to approve elements for project '{project_name}'")
-                return False
-            
-            # Send confirmation notification
-            try:
-                # Create the notification message
-                notification = {
-                    "eventType": "PROJECT_APPROVED",
-                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-                    "producer": "plugin-qto",
-                    "payload": {
-                        "project": project_name,
-                        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-                        "dbProjectId": str(project_id),
-                        "status": "active"
-                    },
-                    "metadata": {
-                        "version": "1.0",
-                        "correlationId": str(project_id)
-                    }
-                }
+            # DB updates (like setting status=active) are now assumed to be handled
+            # by the batch_upsert_elements method before this Kafka notification is called.
 
-                # Send message to Kafka
-                message = json.dumps(notification)
-                self.producer.produce(self.topic, message, callback=self.delivery_report)
-                self.producer.poll(0)
+            # Send confirmation notification using the new dedicated function
+            kafka_success = self.send_project_approved_notification(project_name, project_id)
+            # Ensure message is sent before returning
+            if self.producer:
                 self.producer.flush(timeout=5)
 
-                return True
-            except Exception as e:
-                logger.error(f"Error sending project approval notification to Kafka: {e}")
-                return False
+            return kafka_success
                 
         except Exception as e:
-            logger.error(f"Error approving project elements: {e}")
+            logger.error(f"Error sending approval notification for project elements: {e}")
             return False
 
 def format_ifc_elements_for_qto(project_name: str, 

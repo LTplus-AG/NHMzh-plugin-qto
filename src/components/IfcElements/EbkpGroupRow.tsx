@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   TableRow,
   TableCell,
@@ -15,6 +15,7 @@ import {
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import EditIcon from "@mui/icons-material/Edit";
+import BuildIcon from "@mui/icons-material/Build";
 import { IFCElement } from "../../types/types";
 import ElementRow from "./ElementRow";
 import { EditedQuantity } from "./types";
@@ -25,6 +26,22 @@ interface EbkpGroup {
   name: string | null;
   elements: IFCElement[];
 }
+
+const checkPersistedEdit = (element: IFCElement): boolean => {
+  const currentVal = element.quantity?.value;
+  const originalVal = element.original_quantity?.value;
+  if (
+    currentVal !== null &&
+    currentVal !== undefined &&
+    !isNaN(currentVal) &&
+    originalVal !== null &&
+    originalVal !== undefined &&
+    !isNaN(originalVal)
+  ) {
+    return Math.abs(currentVal - originalVal) > 1e-9;
+  }
+  return false;
+};
 
 interface EbkpGroupRowProps {
   group: EbkpGroup;
@@ -40,6 +57,8 @@ interface EbkpGroupRowProps {
     newValue: string
   ) => void;
   getElementDisplayStatus: (element: IFCElement) => ElementDisplayStatus;
+  handleEditManualClick: (element: IFCElement) => void;
+  openDeleteConfirm: (element: IFCElement) => void;
 }
 
 const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
@@ -51,32 +70,77 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
   editedElements,
   handleQuantityChange,
   getElementDisplayStatus,
+  handleEditManualClick,
+  openDeleteConfirm,
 }) => {
-  // Check if any element in the group has been edited
-  const hasEditedElements = group.elements.some((el) => editedElements[el.id]);
+  // Check if any element in the group has been edited LOCALLY (unsaved)
+  const hasEditedElements = useMemo(
+    () => group.elements.some((el) => editedElements[el.id]),
+    [group.elements, editedElements]
+  );
+  const hasManualElements = useMemo(
+    () => group.elements.some((el) => el.is_manual),
+    [group.elements]
+  ); // Check for manual elements
 
-  // Aggregate status for the group
+  // Check if any element in the group has PERSISTED edits
+  const hasPersistedEdits = useMemo(
+    () => group.elements.some((el) => checkPersistedEdit(el)),
+    [group.elements]
+  );
+
+  // Aggregate status for the group based on new priorities
   const aggregateStatus = React.useMemo(() => {
-    let hasPending = false;
     let hasEdited = false;
+    let hasPending = false;
+    let hasLocalManual = false;
+    let hasActive = false;
+
     for (const element of group.elements) {
       const status = getElementDisplayStatus(element);
-      if (status === "pending") {
-        hasPending = true;
-        break; // Pending takes highest precedence
-      }
       if (status === "edited") {
         hasEdited = true;
+        break; // Edited is highest priority for the group dot
+      }
+      if (status === "pending") {
+        hasPending = true;
+      }
+      if (status === "manual") {
+        // Check for locally added manual
+        hasLocalManual = true;
+      }
+      if (status === "active") {
+        hasActive = true;
       }
     }
-    if (hasPending) return "pending";
-    if (hasEdited) return "edited";
-    return "active";
-  }, [group.elements, getElementDisplayStatus]);
 
-  // Get the color for the aggregate status
-  const statusColor = STATUS_CONFIG[aggregateStatus].color;
-  const statusLabel = STATUS_CONFIG[aggregateStatus].label;
+    // Determine final status based on priority
+    if (hasEdited) return "edited";
+    if (hasPending) return "pending";
+    if (hasLocalManual) return "manual"; // Show manual orange if present and nothing higher priority
+    if (hasActive) return "active";
+
+    // Default if group is empty or only contains elements that somehow don't match above
+    return "active";
+  }, [group.elements, editedElements, getElementDisplayStatus]); // Ensure correct dependencies
+
+  // Get the color and label for the aggregate status
+  const statusConfig = STATUS_CONFIG[aggregateStatus];
+  const statusColor = statusConfig.color;
+  let statusLabel = statusConfig.label; // Use let to allow modification
+
+  // Append manual info to tooltip if needed
+  if (hasManualElements) {
+    statusLabel += ` (enthält manuelle Elemente)`;
+  }
+
+  // Determine if ANY edit icon should be shown
+  const showEditIcon = hasEditedElements || hasPersistedEdits;
+  const editIconTooltip = hasEditedElements
+    ? "Gruppe enthält lokal bearbeitete (ungespeicherte) Elemente"
+    : hasPersistedEdits
+    ? "Gruppe enthält Elemente mit überschriebenen Mengen"
+    : ""; // Should not happen if showEditIcon is true
 
   return (
     <React.Fragment>
@@ -86,7 +150,7 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
           cursor: "pointer",
           backgroundColor: isExpanded
             ? "rgba(0, 0, 255, 0.04)"
-            : hasEditedElements
+            : hasEditedElements || hasPersistedEdits
             ? "rgba(255, 152, 0, 0.08)"
             : "inherit",
         }}
@@ -106,15 +170,33 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
         </TableCell>
         <TableCell>
           <strong>{group.code}</strong>
-          {hasEditedElements && (
-            <EditIcon
-              fontSize="small"
-              sx={{
-                ml: 1,
-                verticalAlign: "middle",
-                color: "warning.main",
-              }}
-            />
+          {/* Manual Indicator */}
+          {hasManualElements && (
+            <Tooltip title="Gruppe enthält manuelle Elemente">
+              <BuildIcon
+                fontSize="inherit" // Smaller size within the cell
+                sx={{
+                  ml: 1,
+                  verticalAlign: "middle",
+                  color: "action.active",
+                  fontSize: "1.1rem", // Slightly larger than in ElementRow maybe
+                }}
+              />
+            </Tooltip>
+          )}
+          {/* Edit Indicator */}
+          {showEditIcon && (
+            <Tooltip title={editIconTooltip}>
+              <EditIcon
+                fontSize="inherit"
+                sx={{
+                  ml: hasManualElements ? 0.5 : 1, // Adjust spacing if manual icon is also present
+                  verticalAlign: "middle",
+                  color: "warning.main",
+                  fontSize: "1.1rem",
+                }}
+              />
+            </Tooltip>
           )}
         </TableCell>
         <TableCell>{group.name}</TableCell>
@@ -175,6 +257,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                         handleQuantityChange={handleQuantityChange}
                         getElementDisplayStatus={getElementDisplayStatus}
                         isParentGroupExpanded={isExpanded}
+                        handleEditManualClick={handleEditManualClick}
+                        openDeleteConfirm={openDeleteConfirm}
                       />
                     ))}
                   </TableBody>

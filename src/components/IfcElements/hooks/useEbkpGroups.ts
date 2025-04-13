@@ -2,261 +2,284 @@ import { useMemo } from "react";
 import { IFCElement } from "../../../types/types";
 import { EbkpGroup } from "../types";
 
+// Helper to get a consistent classification key for filtering/grouping
+const getClassificationKey = (el: IFCElement): string | null => {
+  const classification = el.classification;
+  if (classification?.id && classification?.system) {
+    return `${classification.system}-${classification.id}`;
+  } else if (classification?.name && classification?.system) {
+    // Fallback for potential cases where only name/system exists
+    return `${classification.system}-${classification.name}`;
+  }
+  return null;
+};
+
 export const useEbkpGroups = (
   elements: IFCElement[],
   classificationFilter: string[],
   viewType: string = "individual"
 ) => {
-  // Get unique classification IDs
+  console.log("[useEbkpGroups] Input elements:", elements);
+  console.log("[useEbkpGroups] Classification Filter:", classificationFilter);
+  console.log("[useEbkpGroups] View Type:", viewType);
+
+  // Get unique classification IDs (from all elements, including manual)
   const uniqueClassifications = useMemo(() => {
-    const classifications = elements
-      .filter(
-        (el) =>
-          el.classification_id ||
-          el.classification_name ||
-          el.classification_system
-      )
-      .map((el) => ({
-        id: (el.classification_id as string) || "",
-        name: (el.classification_name as string) || "",
-        system: el.classification_system || "",
-      }));
+    const uniqueItems = new Map<
+      string,
+      { id: string; name: string; system: string }
+    >();
 
-    // Remove duplicates by combining system and id/name
-    const uniqueItems = new Map();
-    classifications.forEach((cls) => {
-      const key = cls.id
-        ? `${cls.system}-${cls.id}`
-        : `${cls.system}-${cls.name.substring(0, 20)}`;
-
-      if (!uniqueItems.has(key)) {
-        uniqueItems.set(key, cls);
+    elements.forEach((el) => {
+      const key = getClassificationKey(el); // Use helper on the original element
+      if (key && !uniqueItems.has(key) && el.classification) {
+        // Store the necessary details from the nested classification object
+        uniqueItems.set(key, {
+          id: el.classification.id || "",
+          name: el.classification.name || "",
+          system: el.classification.system || "",
+        });
       }
     });
 
-    return Array.from(uniqueItems.values()).sort((a, b) =>
-      (a.id || a.name).localeCompare(b.id || b.name)
-    );
+    // Convert map values to array and sort
+    return Array.from(uniqueItems.values()).sort((a, b) => {
+      const displayA = `${a.system}-${a.id || a.name}`;
+      const displayB = `${b.system}-${b.id || b.name}`;
+      return displayA.localeCompare(displayB);
+    });
   }, [elements]);
 
-  // Apply filter and group by EBKP
+  // Apply filter and group
   const ebkpGroups = useMemo(() => {
-    console.log(`useEbkpGroups running with viewType: ${viewType}`);
+    console.log(`useEbkpGroups processing with viewType: ${viewType}`);
 
-    // First filter by classification presence - only show elements with BOTH id and name
-    const elementsWithValidClassification = elements.filter(
-      (el) =>
-        el.classification_id &&
-        el.classification_name &&
-        el.classification_system === "EBKP"
-    );
+    // 1. Separate manual and IFC elements
+    const manualElements = elements.filter((el) => el.is_manual);
+    const ifcElements = elements.filter((el) => !el.is_manual);
 
-    // Then apply any user-selected filter
-    const filteredElements =
-      classificationFilter.length === 0
-        ? elementsWithValidClassification
-        : elementsWithValidClassification.filter((el) => {
-            // Construct the value string for the element's classification
-            const elementFilterValue = el.classification_id
-              ? `${el.classification_system}-${el.classification_id}`
-              : `${el.classification_system}-${el.classification_name}`; // Fallback if ID is missing
+    // 2. Apply user's classificationFilter to BOTH lists
+    let elementsToGroup: IFCElement[] = [];
+    if (classificationFilter.length === 0) {
+      // No filter active: include ALL manual elements and ALL IFC elements
+      // (No strict EBKP pre-filtering on IFC elements anymore)
+      elementsToGroup = [...ifcElements, ...manualElements];
+    } else {
+      // Filter active: check both lists
+      const filterSet = new Set(classificationFilter); // Use Set for faster lookups
 
-            // Check if this element's classification value is included in the filter array
-            return classificationFilter.includes(elementFilterValue);
-          });
-
-    // Group by EBKP code
-    const groupedElements = new Map<string, EbkpGroup>();
-
-    filteredElements.forEach((element) => {
-      if (!element.classification_id) return;
-
-      const ebkpCode = element.classification_id;
-
-      if (!groupedElements.has(ebkpCode)) {
-        groupedElements.set(ebkpCode, {
-          code: ebkpCode,
-          name: element.classification_name || null,
-          elements: [],
-        });
-      }
-
-      groupedElements.get(ebkpCode)?.elements.push(element);
-    });
-
-    // If viewType is 'individual', return the groups as is
-    if (viewType === "individual") {
-      // Convert to array and sort by EBKP code
-      return Array.from(groupedElements.values()).sort((a, b) =>
-        a.code.localeCompare(b.code)
-      );
-    }
-
-    // For 'grouped' viewType, further group elements within each EBKP group by type_name
-    const groupedByType = new Map<string, EbkpGroup>();
-
-    // Process each EBKP group
-    groupedElements.forEach((ebkpGroup) => {
-      const ebkpCode = ebkpGroup.code;
-      const ebkpName = ebkpGroup.name;
-
-      // Create an entry for this EBKP code if it doesn't exist
-      if (!groupedByType.has(ebkpCode)) {
-        groupedByType.set(ebkpCode, {
-          code: ebkpCode,
-          name: ebkpName,
-          elements: [],
-        });
-      }
-
-      // Group elements by type_name AND level within this EBKP group
-      const typeGroups = new Map<string, IFCElement[]>();
-      ebkpGroup.elements.forEach((element) => {
-        const typeName = element.type_name || element.type || "Unknown Type";
-        const level = element.level || "Unknown Level";
-        // Create a combined key using both type_name and level
-        const groupKey = `${typeName}|${level}`;
-
-        if (!typeGroups.has(groupKey)) {
-          typeGroups.set(groupKey, []);
-        }
-        typeGroups.get(groupKey)?.push(element);
+      const filteredIfc = ifcElements.filter((el) => {
+        const key = getClassificationKey(el);
+        return key ? filterSet.has(key) : false;
       });
 
-      // Debug typeGroups
-      console.log(
-        `EBKP ${ebkpCode} has ${typeGroups.size} type groups:`,
-        Array.from(typeGroups.keys()).map((key) => ({
-          groupKey: key,
-          count: typeGroups.get(key)?.length || 0,
-        }))
-      );
+      const filteredManual = manualElements.filter((el) => {
+        const key = getClassificationKey(el);
+        // Include manual if its classification matches OR if it has no classification (user might want to see unclassified manual items? TBD)
+        // For now, let's only include if it matches the filter explicitly
+        return key ? filterSet.has(key) : false;
+      });
 
-      // Process each type group to create merged elements
-      typeGroups.forEach((elements, groupKey) => {
-        if (elements.length === 0) return;
+      elementsToGroup = [...filteredIfc, ...filteredManual];
+    }
 
-        // Extract type name and level from the group key
-        const [typeName, level] = groupKey.split("|");
+    // 3. Group the filtered elements
+    const groupedElements = new Map<string, EbkpGroup>();
+    const NO_CLASS_GROUP_CODE = "_NO_CLASS_"; // Special internal code for display
 
-        // Create the base merged element from the first element
-        const mergedElement: IFCElement = { ...elements[0] };
+    elementsToGroup.forEach((element) => {
+      let groupCode: string;
+      let groupName: string | null;
+      let displayCode: string; // Code shown in the UI row
 
-        // Add identifier to indicate this is a grouped element
-        mergedElement.id = `group-${ebkpCode}-${typeName.replace(
-          /\s+/g,
-          "-"
-        )}-${level.replace(/\s+/g, "-")}`;
-        mergedElement.name = typeName;
-        mergedElement.type_name = typeName;
-        mergedElement.level = level;
-        mergedElement.groupedElements = elements.length;
+      const classKey = getClassificationKey(element);
 
-        // Check if all elements have identical properties
-        let hasPropertyDifferences = false;
+      if (classKey) {
+        // Element has classification (could be manual or IFC)
+        groupCode = classKey; // Group by the unique system-id/name key
+        groupName = `${element.classification?.system || "System?"} - ${
+          element.classification?.name || "Name?"
+        }`;
+        displayCode =
+          element.classification?.id ||
+          element.classification?.name ||
+          groupCode; // Show ID or Name preferably
+      } else {
+        // Element has no classification (could be manual or IFC)
+        groupCode = NO_CLASS_GROUP_CODE; // Use the same internal key
+        groupName = "Ohne Klassifikation";
+        displayCode = "Ohne"; // Display code for the row
+      }
 
-        // Only check for differences if there's more than one element
-        if (elements.length > 1) {
-          // Compare is_structural, is_external across all elements
-          const firstElement = elements[0];
-          for (let i = 1; i < elements.length; i++) {
-            if (
-              elements[i].is_structural !== firstElement.is_structural ||
-              elements[i].is_external !== firstElement.is_external
-            ) {
-              hasPropertyDifferences = true;
-              break;
-            }
-          }
+      if (!groupedElements.has(groupCode)) {
+        groupedElements.set(groupCode, {
+          code: displayCode,
+          name: groupName,
+          elements: [],
+        });
+      }
+      groupedElements.get(groupCode)?.elements.push(element);
+    });
+
+    // 4. Apply 'grouped' view logic (merging within groups) if needed
+    let finalGroups = Array.from(groupedElements.values());
+
+    if (viewType === "grouped") {
+      const groupedByType = new Map<string, EbkpGroup>();
+
+      finalGroups.forEach((group) => {
+        const originalGroupCode = group.code; // The display code
+        const originalGroupName = group.name;
+        const groupKeyForMap =
+          Array.from(groupedElements.keys()).find(
+            (key) => groupedElements.get(key) === group
+          ) || originalGroupCode; // Find the unique map key
+
+        if (!groupedByType.has(groupKeyForMap)) {
+          groupedByType.set(groupKeyForMap, {
+            code: originalGroupCode,
+            name: originalGroupName,
+            elements: [],
+          });
         }
 
-        // Store property difference flag
-        mergedElement.hasPropertyDifferences = hasPropertyDifferences;
+        // Group elements by type_name AND level within this group
+        const typeGroups = new Map<string, IFCElement[]>();
+        group.elements.forEach((element) => {
+          // *** Do NOT merge manual elements ***
+          if (element.is_manual) {
+            // Add manual elements directly without merging
+            groupedByType.get(groupKeyForMap)?.elements.push(element);
+            return;
+          }
 
-        // Sum up quantities
-        mergedElement.area = elements.reduce(
-          (sum, el) => sum + (el.area || 0),
-          0
-        );
-        mergedElement.length = elements.reduce(
-          (sum, el) => sum + (el.length || 0),
-          0
-        );
-        mergedElement.volume = elements.reduce(
-          (sum, el) => sum + (el.volume || 0),
-          0
-        );
+          // Proceed with merging logic for non-manual elements
+          const typeName = element.type_name || element.type || "Unknown Type";
+          const level = element.level || "Unknown Level";
+          const mergeKey = `${typeName}|${level}`;
 
-        // Merge materials - sum up volumes with the same name
-        const materialMap = new Map<string, any>();
-        let totalVolume = 0;
+          if (!typeGroups.has(mergeKey)) {
+            typeGroups.set(mergeKey, []);
+          }
+          typeGroups.get(mergeKey)?.push(element);
+        });
 
-        // First pass: Sum up all volumes
-        elements.forEach((el) => {
-          if (el.materials) {
-            el.materials.forEach((mat) => {
-              const name = mat.name;
-              if (!materialMap.has(name)) {
-                materialMap.set(name, { ...mat, volume: 0 });
+        // Process each type group to create merged elements
+        typeGroups.forEach((elementsInTypeGroup, mergeKey) => {
+          if (elementsInTypeGroup.length === 0) return;
+
+          const [typeName, level] = mergeKey.split("|");
+
+          if (elementsInTypeGroup.length === 1) {
+            // If only one element, add it directly without creating a group ID
+            groupedByType
+              .get(groupKeyForMap)
+              ?.elements.push(elementsInTypeGroup[0]);
+          } else {
+            // Create merged element if more than one
+            const mergedElement: IFCElement = { ...elementsInTypeGroup[0] }; // Base on first
+            mergedElement.id = `group-${groupKeyForMap}-${typeName.replace(
+              /\s+/g,
+              "-"
+            )}-${level.replace(/\s+/g, "-")}`;
+            mergedElement.name = typeName;
+            mergedElement.type_name = typeName;
+            mergedElement.level = level;
+            mergedElement.groupedElements = elementsInTypeGroup.length;
+            mergedElement.originalElementIds = elementsInTypeGroup.map(
+              (el) => el.id
+            );
+
+            // Aggregate quantities, check for property differences, merge materials (existing logic)
+            let hasPropertyDifferences = false;
+            const firstElement = elementsInTypeGroup[0];
+            for (let i = 1; i < elementsInTypeGroup.length; i++) {
+              if (
+                elementsInTypeGroup[i].is_structural !==
+                  firstElement.is_structural ||
+                elementsInTypeGroup[i].is_external !== firstElement.is_external
+              ) {
+                hasPropertyDifferences = true;
+                break;
               }
+            }
+            mergedElement.hasPropertyDifferences = hasPropertyDifferences;
 
-              const existingMat = materialMap.get(name);
-              if (mat.volume !== undefined && mat.volume !== null) {
-                existingMat.volume = (existingMat.volume || 0) + mat.volume;
-                totalVolume += mat.volume;
+            mergedElement.area = elementsInTypeGroup.reduce(
+              (sum, el) => sum + (el.area || 0),
+              0
+            );
+            mergedElement.length = elementsInTypeGroup.reduce(
+              (sum, el) => sum + (el.length || 0),
+              0
+            );
+            mergedElement.volume = elementsInTypeGroup.reduce(
+              (sum, el) => sum + (el.volume || 0),
+              0
+            );
+
+            // Merge materials (existing logic)
+            const materialMap = new Map<string, any>();
+            let totalVolume = 0;
+            elementsInTypeGroup.forEach((el) => {
+              if (el.materials) {
+                el.materials.forEach((mat) => {
+                  const name = mat.name;
+                  if (!materialMap.has(name)) {
+                    materialMap.set(name, { ...mat, volume: 0 });
+                  }
+                  const existingMat = materialMap.get(name);
+                  if (mat.volume !== undefined && mat.volume !== null) {
+                    existingMat.volume = (existingMat.volume || 0) + mat.volume;
+                    totalVolume += mat.volume;
+                  }
+                });
               }
             });
+            const materials = Array.from(materialMap.values());
+            if (totalVolume > 0) {
+              materials.forEach((material) => {
+                if (material.volume !== undefined) {
+                  material.fraction = material.volume / totalVolume;
+                }
+              });
+            } else {
+              const equalFraction = 1.0 / Math.max(1, materials.length);
+              materials.forEach((material) => {
+                material.fraction = equalFraction;
+              });
+            }
+            mergedElement.materials = materials;
+
+            groupedByType.get(groupKeyForMap)?.elements.push(mergedElement);
           }
         });
-
-        // Second pass: Calculate new fractions based on volumes
-        const materials = Array.from(materialMap.values());
-
-        if (totalVolume > 0) {
-          // If we have volumes, calculate fractions based on volume proportions
-          materials.forEach((material) => {
-            if (material.volume !== undefined) {
-              material.fraction = material.volume / totalVolume;
-            }
-          });
-        } else {
-          // If no volumes, distribute fractions evenly
-          const equalFraction = 1.0 / Math.max(1, materials.length);
-          materials.forEach((material) => {
-            material.fraction = equalFraction;
-          });
-        }
-
-        mergedElement.materials = materials;
-
-        // Store all original element IDs
-        mergedElement.originalElementIds = elements.map((el) => el.id);
-
-        // Add to the EBKP group
-        groupedByType.get(ebkpCode)?.elements.push(mergedElement);
       });
-    });
 
-    // Convert to array and sort by EBKP code
-    const result = Array.from(groupedByType.values()).sort((a, b) =>
-      a.code.localeCompare(b.code)
-    );
-
-    // Log the total count of grouped elements
-    if (viewType === "grouped") {
-      const totalGroupedElements = result.reduce((sum, group) => {
-        const groupedCount = group.elements.filter(
-          (el) => el.groupedElements && el.groupedElements > 1
-        ).length;
-        return sum + groupedCount;
-      }, 0);
-
-      console.log(
-        `Created ${totalGroupedElements} grouped elements across ${result.length} EBKP groups`
-      );
+      finalGroups = Array.from(groupedByType.values());
     }
 
-    return result;
+    // 5. Final sorting (No Classification first, then by code)
+    finalGroups.sort((a, b) => {
+      const codeA =
+        Array.from(groupedElements.keys()).find(
+          (key) => groupedElements.get(key) === a
+        ) || a.code; // Get original key
+      const codeB =
+        Array.from(groupedElements.keys()).find(
+          (key) => groupedElements.get(key) === b
+        ) || b.code; // Get original key
+
+      if (codeA === NO_CLASS_GROUP_CODE && codeB !== NO_CLASS_GROUP_CODE)
+        return -1;
+      if (codeA !== NO_CLASS_GROUP_CODE && codeB === NO_CLASS_GROUP_CODE)
+        return 1;
+      // Sort the rest by the display code (e.g., EBKP ID or Name)
+      return a.code.localeCompare(b.code);
+    });
+
+    console.log("[useEbkpGroups] Output groups:", finalGroups);
+    return finalGroups;
   }, [elements, classificationFilter, viewType]);
 
   const hasEbkpGroups = ebkpGroups.length > 0;
