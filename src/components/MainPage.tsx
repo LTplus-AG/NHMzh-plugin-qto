@@ -251,16 +251,28 @@ const MainPage = () => {
             classification_id: apiElement.classification_id,
             classification_name: apiElement.classification_name,
             classification_system: apiElement.classification_system,
-            // Get current quantity directly
-            quantity: apiElement.quantity,
+            // Map quantity only if it exists and has a valid type
+            quantity:
+              apiElement.quantity &&
+              typeof apiElement.quantity.type === "string"
+                ? {
+                    type: apiElement.quantity.type, // Type is guaranteed string here
+                    value: apiElement.quantity.value ?? null, // Default undefined value to null
+                    unit: apiElement.quantity.unit,
+                  }
+                : null, // Set to null if quantity or type is missing/invalid
             original_quantity: (apiElement as any).original_quantity ?? null, // Default to null if missing
             area: apiElement.area,
             length: apiElement.length,
+            // Check if volume is an object and has 'net' property before accessing it
             volume:
               typeof apiElement.volume === "object" &&
-              apiElement.volume !== null
-                ? apiElement.volume.net
-                : apiElement.volume,
+              apiElement.volume !== null &&
+              "net" in apiElement.volume
+                ? (apiElement.volume as { net: number }).net
+                : typeof apiElement.volume === "number"
+                ? apiElement.volume
+                : null, // Default to null if it's not an object with 'net' or a number
             category: apiElement.category,
             is_structural: apiElement.is_structural,
             is_external: apiElement.is_external,
