@@ -60,7 +60,5 @@ docker-compose.override.yml
 *.bak
 Thumbs.db
 .tsbuildinfo.node
-.env.fastbim
-.env.development
-.env.production
+.env*
 oldenv

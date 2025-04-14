@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => {
     build: {
       target: "esnext",
       minify: mode === "production",
+      cssCodeSplit: false,
       rollupOptions: {
         output: {
           format: "esm",

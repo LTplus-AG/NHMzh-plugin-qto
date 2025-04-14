@@ -115,11 +115,6 @@ const MainPage = () => {
     return Array.from(materialNames).sort(); // Return sorted array
   }, [ifcElements]);
 
-  console.log(
-    "[MainPage Render] uniqueClassifications:",
-    uniqueClassifications
-  );
-
   useEffect(() => {
     checkBackendConnectivity();
   }, []);
@@ -153,10 +148,8 @@ const MainPage = () => {
       setProjectsError(null);
       try {
         const projects = await apiClient.listProjects();
-        console.log("[MainPage] Fetched projects from API:", projects);
         const fetchedProjects = projects || [];
         setProjectList(fetchedProjects);
-        console.log("[MainPage] Updated projectList state:", fetchedProjects);
       } catch (error) {
         console.error("Error fetching project list:", error);
         setProjectsError("Could not load project list.");
@@ -177,15 +170,8 @@ const MainPage = () => {
     ) {
       const defaultProject = projectList[0];
       setSelectedProject(defaultProject);
-      console.log(
-        "[MainPage Effect] Setting default selectedProject to:",
-        defaultProject
-      );
     } else if (projectList.length === 0 && selectedProject !== "") {
       setSelectedProject("");
-      console.log(
-        "[MainPage Effect] Resetting selectedProject as projectList is empty."
-      );
     }
   }, [projectList]);
 
@@ -209,35 +195,13 @@ const MainPage = () => {
       const elementsFromApi: ApiIFCElement[] =
         await apiClient.getProjectElements(projectName);
 
-      // <<< ADDED: Log raw API data >>>
-      console.log(
-        "[fetchProjectElements] Received data from API:",
-        elementsFromApi.slice(0, 5) // Log first 5 elements for inspection
-      );
-
       if (elementsFromApi.length === 0) {
-        console.log(
-          `No elements found for project '${projectName}'. Using previously loaded data if available.`
-        );
         setIfcLoading(false);
         return; // <<< Return early if no elements fetched
       }
 
       const mappedElements: LocalIFCElement[] = elementsFromApi.map(
-        (apiElement: ApiIFCElement, index: number): LocalIFCElement => {
-          // <<< ADDED: Log mapping details for first few elements >>>
-          if (index < 3) {
-            console.log(
-              `[fetchProjectElements] Mapping API element ${index} (ID: ${apiElement.id}):`,
-              apiElement
-            );
-            console.log(
-              `  - API original_quantity:`,
-              (apiElement as any).original_quantity
-            );
-            console.log(`  - API quantity:`, apiElement.quantity);
-          }
-
+        (apiElement: ApiIFCElement, _index: number): LocalIFCElement => {
           return {
             id: apiElement.id,
             global_id: apiElement.global_id,
@@ -251,17 +215,16 @@ const MainPage = () => {
             classification_id: apiElement.classification_id,
             classification_name: apiElement.classification_name,
             classification_system: apiElement.classification_system,
-            // Map quantity only if it exists and has a valid type
             quantity:
               apiElement.quantity &&
               typeof apiElement.quantity.type === "string"
                 ? {
-                    type: apiElement.quantity.type, // Type is guaranteed string here
-                    value: apiElement.quantity.value ?? null, // Default undefined value to null
+                    type: apiElement.quantity.type,
+                    value: apiElement.quantity.value ?? null,
                     unit: apiElement.quantity.unit,
                   }
-                : null, // Set to null if quantity or type is missing/invalid
-            original_quantity: (apiElement as any).original_quantity ?? null, // Default to null if missing
+                : null,
+            original_quantity: (apiElement as any).original_quantity ?? null,
             area: apiElement.area,
             length: apiElement.length,
             // Check if volume is an object and has 'net' property before accessing it
@@ -272,7 +235,7 @@ const MainPage = () => {
                 ? (apiElement.volume as { net: number }).net
                 : typeof apiElement.volume === "number"
                 ? apiElement.volume
-                : null, // Default to null if it's not an object with 'net' or a number
+                : null,
             category: apiElement.category,
             is_structural: apiElement.is_structural,
             is_external: apiElement.is_external,
@@ -285,31 +248,16 @@ const MainPage = () => {
             },
             status: apiElement.status,
             is_manual: apiElement.is_manual,
-            // Add other fields as needed
           };
         }
       );
 
-      // <<< ADDED: Log mapped data >>>
-      console.log(
-        "[fetchProjectElements] Mapped elements:",
-        mappedElements.slice(0, 5) // Log first 5 mapped elements
-      );
-
       setIfcElements(mappedElements);
       if (mappedElements.length === 0) {
-        console.log(`No elements found for project '${projectName}'.`);
       }
     } catch (error: any) {
       if (error instanceof Error && error.message.includes("Not Found")) {
-        console.log(
-          `Parsed element data for project '${projectName}' not found. Using previously loaded data if available.`
-        );
       } else {
-        console.error(
-          `Error fetching elements for project ${projectName}:`,
-          error
-        );
         setIfcError(
           `Could not load elements for project ${projectName}. Please check backend connection and logs.`
         );
@@ -348,111 +296,96 @@ const MainPage = () => {
     }
 
     try {
-      // 1. Prepare data for batch update
+      // --- REVERTED: Prepare data for batch update endpoint ---
       const batchData: BatchElementData[] = [];
 
-      // Process all current elements (IFC-derived and locally added manual ones)
+      // Process ALL current elements (IFC-derived and locally added manual ones)
       for (const element of ifcElements) {
         const isEdited = editedElements.hasOwnProperty(element.id);
 
-        // Determine current and original quantities to send
+        // Determine current quantity to send
         let currentQuantity: any = null;
-        let originalQuantityForPayload: any = null;
+        const config = quantityConfig[element.type] || {
+          key: "area",
+          unit: "m²",
+        }; // Default config
 
         if (isEdited) {
           const editData = editedElements[element.id];
-          const config = quantityConfig[element.type] || {
-            key: "area",
-            unit: "m²",
-          }; // Get config once
-
-          // Determine current quantity with unit
           if (editData.newQuantity) {
-            // Check if newQuantity exists in editData
             currentQuantity = {
-              value: editData.newQuantity.value, // Get value
-              type: editData.newQuantity.type, // Get type
-              unit: config.unit, // Add unit from config
+              value: editData.newQuantity.value,
+              type: editData.newQuantity.type,
+              unit: config.unit ?? "?", // Ensure unit is string
             };
           } else {
-            // Fallback for older edit structure (newArea/newLength)
+            // Fallback for older structure
             currentQuantity = {
               value:
                 config.key === "area" ? editData.newArea : editData.newLength,
               type: config.key,
-              unit: config.unit,
+              unit: config.unit ?? "?", // Ensure unit is string
             };
           }
+          // Ensure value is a number
+          if (currentQuantity && typeof currentQuantity.value === "string") {
+            const parsedValue = parseFloat(currentQuantity.value);
+            currentQuantity.value = !isNaN(parsedValue) ? parsedValue : null;
+          } else if (
+            currentQuantity &&
+            typeof currentQuantity.value !== "number"
+          ) {
+            currentQuantity.value = null; // Default invalid non-strings to null
+          }
+        } else {
+          // Use the element's current quantity if not edited
+          currentQuantity = element.quantity;
+        }
 
-          // Determine original quantity with unit
+        // Determine original quantity (important for batch update)
+        // Use the original_quantity from the element itself,
+        // or reconstruct if it was potentially edited (fallback, less ideal)
+        let originalQuantityForPayload = element.original_quantity;
+        if (!originalQuantityForPayload && isEdited) {
+          const editData = editedElements[element.id];
           if (editData.originalQuantity) {
-            // Check if originalQuantity exists in editData
             originalQuantityForPayload = {
               value: editData.originalQuantity.value,
               type: editData.originalQuantity.type,
-              unit: config.unit,
+              unit: config.unit ?? "?", // Ensure unit is string
             };
           } else {
-            // Fallback for older edit structure (originalArea/originalLength)
+            // Fallback if originalQuantity not in editData
             originalQuantityForPayload = {
               value:
-                config.key === "area"
+                (config.key === "area"
                   ? editData.originalArea
-                  : editData.originalLength,
+                  : editData.originalLength) ?? null, // Handle potential undefined
               type: config.key,
-              unit: config.unit,
+              unit: config.unit ?? "?", // Ensure unit is string
             };
           }
-
-          // Ensure current quantity value is a valid number
-          if (currentQuantity && typeof currentQuantity.value === "string") {
-            const parsedValue = parseFloat(currentQuantity.value);
-            if (isNaN(parsedValue) || parsedValue <= 0) {
-              // Handle invalid number (maybe set to null or default, or keep as is depending on backend expectation)
-              console.warn(
-                `Invalid edited quantity value for ${element.id}: ${currentQuantity.value}`
-              );
-              // Optionally, you could set currentQuantity.value = null here if the backend expects it
-            } else {
-              currentQuantity.value = parsedValue;
-            }
-          } else if (
-            currentQuantity &&
-            (currentQuantity.value === null || currentQuantity.value <= 0)
-          ) {
-            console.warn(
-              `Null or non-positive edited quantity value for ${element.id}`
-            );
-          }
-        } else {
-          // For elements NOT locally edited (existing non-edited or new manual)
-          currentQuantity = element.quantity;
-          originalQuantityForPayload = element.original_quantity;
-          // Check validity of non-edited quantity
-          if (
-            !currentQuantity ||
-            currentQuantity.value === null ||
-            currentQuantity.value <= 0
-          ) {
-            console.warn(
-              `Invalid or missing quantity for non-edited element ${element.id}, sending as is.`,
-              currentQuantity
-            );
-          }
+        } else if (!originalQuantityForPayload && !isEdited) {
+          // If original is missing even on non-edited, try to use current quantity
+          originalQuantityForPayload = element.quantity;
         }
 
-        // Skip element entirely ONLY if quantity object itself is missing after processing
-        // (Shouldn't happen with current logic but safe check)
-        if (!currentQuantity) {
+        // Skip element if current quantity is fundamentally invalid/missing
+        if (
+          !currentQuantity ||
+          currentQuantity.value === null ||
+          currentQuantity.value === undefined
+        ) {
           console.warn(
-            `Skipping element ${element.id} due to missing quantity object.`
+            `Skipping element ${element.id} in batch due to invalid/missing current quantity:`,
+            currentQuantity
           );
           continue;
         }
 
-        // Push ALL elements to the batch
+        // Construct the full element data for the batch
         batchData.push({
-          id: element.id,
+          id: element.id, // Will be manual_... for new elements
           global_id: element.global_id,
           type: element.type,
           name: element.name,
@@ -460,17 +393,31 @@ const MainPage = () => {
           description: element.description,
           properties: element.properties,
           materials: element.materials?.map((m) => ({
+            // Ensure materials format is correct
             name: m.name,
             fraction: m.fraction ?? 0,
             unit: m.unit,
             volume: m.volume,
           })),
           level: element.level,
-          quantity: currentQuantity, // Send determined quantity
-          original_quantity: originalQuantityForPayload, // Send determined original quantity
+          quantity: {
+            // Ensure structure is correct
+            value: currentQuantity.value,
+            type: currentQuantity.type,
+            unit: currentQuantity.unit,
+          },
+          original_quantity: originalQuantityForPayload
+            ? {
+                // Ensure structure is correct
+                value: originalQuantityForPayload.value ?? null, // Ensure null if value missing
+                type: originalQuantityForPayload.type,
+                unit: originalQuantityForPayload.unit ?? "?", // Ensure unit is string
+              }
+            : null,
           classification: element.classification
             ? {
-                id: element.classification.id ?? null, // Default undefined to null
+                // Ensure structure is correct
+                id: element.classification.id ?? null,
                 name: element.classification.name ?? null,
                 system: element.classification.system ?? null,
               }
@@ -478,43 +425,39 @@ const MainPage = () => {
           is_manual: element.is_manual,
           is_structural: element.is_structural,
           is_external: element.is_external,
+          // Status will be set to 'active' by the backend batch endpoint
         });
       }
+      // --- End Modification ---
 
-      if (batchData.length === 0) {
-        console.log("ifcElements array was empty, nothing to send.");
-        setKafkaError("Keine Elemente zum Speichern vorhanden.");
-        setPreviewDialogOpen(false);
-        setIsPreviewDialogSending(false);
-        resetEdits();
-        return;
-      }
-
-      // 2. Call the new batch update API endpoint
+      // 2. Call the BATCH UPDATE API endpoint
+      console.log(
+        `Sending ${batchData.length} elements to /batch-update endpoint...`
+      );
       const response = await apiClient.batchUpdateElements(
         selectedProject,
         batchData
       );
 
       // 3. Handle response and update UI
-      if (response) {
+      if (response && response.success === true) {
         setKafkaSuccess(true);
         setPreviewDialogOpen(false);
-        resetEdits();
+        resetEdits(); // Clear local edits
+        // Fetching elements again will get the now 'active' elements, including newly created manual ones
         fetchProjectElements(selectedProject);
-        console.log(
-          "Batch update successful, re-fetching elements...",
-          response
-        );
       } else {
-        // Handle cases where API call might have failed structurally (should be caught by catch block though)
-        setKafkaError("Fehler bei der Stapelverarbeitung.");
+        setKafkaError(
+          `Fehler bei der Stapelverarbeitung: ${
+            response?.message || "Unknown error"
+          }`
+        );
         setIsPreviewDialogSending(false);
       }
     } catch (error) {
-      console.error("Error approving elements:", error);
+      console.error("Error during batch element update:", error);
       setKafkaError(
-        `Failed to approve elements: ${
+        `Failed to save/update elements: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
@@ -546,11 +489,8 @@ const MainPage = () => {
   };
 
   const handleEditManualClick = (element: LocalIFCElement) => {
-    console.log("Editing manual element:", element);
-    // Set the element to be edited (ensure structure matches form needs if necessary)
-    // The form initializer now handles mapping LocalIFCElement to ManualElementInput
     setEditingElement(element);
-    setShowManualForm(true); // Open the form dialog
+    setShowManualForm(true);
   };
 
   const handleManualSubmit = async (
@@ -559,7 +499,6 @@ const MainPage = () => {
   ) => {
     if (!selectedProject) return;
 
-    // <<< ADDED: Calculate material volumes based on totalVolume and fractions >>>
     let processedMaterials: LocalIFCElement["materials"] = [];
     if (
       data.materials.length > 0 &&
@@ -569,44 +508,37 @@ const MainPage = () => {
       processedMaterials = data.materials.map((m) => ({
         name: m.name,
         fraction: m.fraction,
-        volume: data.totalVolume! * m.fraction, // Non-null assertion ok due to check above
-        unit: "m³", // Assign unit
+        volume: data.totalVolume! * m.fraction,
+        unit: "m³",
       }));
     } else {
-      // If no materials or no volume, map without volume/unit (or keep empty array)
       processedMaterials = data.materials.map((m) => ({
         name: m.name,
         fraction: m.fraction,
-        // volume: undefined, // Explicitly undefined or just omit
-        // unit: undefined,
+        volume: undefined,
+        unit: undefined,
       }));
     }
-    // <<< END OF VOLUME CALCULATION >>>
 
     if (editingId) {
-      // We are editing an existing element
-      console.log(`Updating element with ID: ${editingId}`, data);
       setIfcElements((prev) =>
         prev.map((el) =>
           el.id === editingId
             ? {
-                // Update the existing element, keeping its ID
-                ...el, // Keep existing non-form fields like global_id, status etc.
+                ...el,
                 name: data.name,
                 type: data.type,
                 level: data.level,
                 quantity: data.quantity,
                 classification: data.classification,
-                materials: processedMaterials, // <<< Use processed materials with volumes
+                materials: processedMaterials,
                 description: data.description,
-                // Recalculate area/length based on updated quantity
                 area:
                   data.quantity.type === "area" ? data.quantity.value : null,
                 length:
                   data.quantity.type === "length" ? data.quantity.value : null,
                 volume:
                   data.quantity.type === "volume" ? data.quantity.value : null,
-                // Keep original_* fields as they were unless specifically editing them is allowed
               }
             : el
         )
@@ -623,9 +555,9 @@ const MainPage = () => {
         description: data.description,
         level: data.level,
         quantity: data.quantity,
-        original_quantity: data.quantity, // Original is same as initial for new manual
+        original_quantity: data.quantity,
         classification: data.classification,
-        materials: processedMaterials, // <<< Use processed materials with volumes
+        materials: processedMaterials,
         properties: {},
         is_manual: true,
         status: "pending",
@@ -641,7 +573,6 @@ const MainPage = () => {
         is_external: false,
       };
       setIfcElements((prev) => [...prev, newManualElement]);
-      console.log("Locally added manual element:", newManualElement);
     }
 
     setShowManualForm(false);
@@ -673,25 +604,18 @@ const MainPage = () => {
     const idToDelete = elementToDelete.id;
     const isLocalUnsaved = idToDelete.startsWith("manual_");
 
-    console.log(
-      `Attempting to delete element: ${idToDelete} (Local unsaved: ${isLocalUnsaved})`
-    );
     setKafkaSuccess(null);
     setKafkaError(null);
 
     if (isLocalUnsaved) {
-      // Just remove from local state, no API call needed
       setIfcElements((prev) => prev.filter((el) => el.id !== idToDelete));
-      console.log(`Locally removed unsaved manual element: ${idToDelete}`);
       closeDeleteConfirm();
-      // Optionally show a specific success message for local removal
     } else {
       // Element exists in DB, proceed with API call
       try {
         await apiClient.deleteElement(selectedProject, idToDelete);
         setIfcElements((prev) => prev.filter((el) => el.id !== idToDelete));
-        setKafkaSuccess(true); // Show DB delete success message
-        console.log(`Successfully deleted element via API: ${idToDelete}`);
+        setKafkaSuccess(true);
       } catch (error) {
         console.error(`Error deleting element ${idToDelete}:`, error);
         setKafkaError(

@@ -19,9 +19,6 @@ export const useEbkpGroups = (
   classificationFilter: string[],
   viewType: string = "individual"
 ) => {
-  console.log("[useEbkpGroups] Input elements:", elements);
-  console.log("[useEbkpGroups] Classification Filter:", classificationFilter);
-  console.log("[useEbkpGroups] View Type:", viewType);
 
   // Get unique classification IDs (from all elements, including manual)
   const uniqueClassifications = useMemo(() => {
@@ -52,7 +49,6 @@ export const useEbkpGroups = (
 
   // Apply filter and group
   const ebkpGroups = useMemo(() => {
-    console.log(`useEbkpGroups processing with viewType: ${viewType}`);
 
     // 1. Separate manual and IFC elements
     const manualElements = elements.filter((el) => el.is_manual);
@@ -278,7 +274,6 @@ export const useEbkpGroups = (
       return a.code.localeCompare(b.code);
     });
 
-    console.log("[useEbkpGroups] Output groups:", finalGroups);
     return finalGroups;
   }, [elements, classificationFilter, viewType]);
 

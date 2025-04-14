@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request, Form, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Request, Form, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -12,8 +12,9 @@ import uuid
 import traceback
 import sys
 from functools import lru_cache
-from qto_producer import MongoDBHelper # Removed QTOKafkaProducer, format_ifc_elements_for_qto
+from qto_producer import MongoDBHelper # Removed QTOKafkaProducer import
 import re
+from pymongo.database import Database # <<< Import Database type
 # Import the new configuration
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 from datetime import datetime, timezone
@@ -43,7 +44,17 @@ logger.info(f"Using ifcopenshell version: {ifcopenshell.version}")
 logger.info(f"Python version: {sys.version}")
 
 # Initialize MongoDB connection at startup
-mongodb = None
+mongodb: Optional[MongoDBHelper] = None # Type hint for clarity
+
+# <<< Dependency Function >>>
+async def get_db() -> Database:
+    """FastAPI dependency to get the MongoDB database instance."""
+    if mongodb is None or mongodb.db is None:
+        # This should ideally not happen if startup was successful, but handles edge cases
+        logger.error("Database dependency requested, but connection is not available.")
+        raise HTTPException(status_code=503, detail="Database service not available.")
+    return mongodb.db
+# <<< End Dependency Function >>>
 
 def init_mongodb():
     """Initialize MongoDB connection and create necessary collections"""
@@ -398,9 +409,8 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                     "type_name": None,
                     "description": element.Description if hasattr(element, "Description") and element.Description else None,
                     "properties": {},
-                    "classification_id": None,
-                    "classification_name": None,
-                    "classification_system": None,
+                    # Use nested structure for classification
+                    "classification": None, # <<< ADDED: For nested object
                     "area": 0.0,
                     "volume": None, # Will be populated by get_volume_from_properties
                     "length": 0.0,
@@ -594,6 +604,19 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                     element_data["classification_name"] = temp_classification_name
                     element_data["classification_system"] = temp_classification_system
 
+                # --- Create Nested Classification Object --- <<< RE-ADDED >>>
+                # Pop the temporary flat fields and create the nested object if data exists
+                c_id = element_data.pop("classification_id", None)
+                c_name = element_data.pop("classification_name", None)
+                c_system = element_data.pop("classification_system", None)
+                if c_id or c_name or c_system:
+                    element_data["classification"] = {
+                        "id": c_id,
+                        "name": c_name,
+                        "system": c_system
+                    }
+                # else: element_data["classification"] remains None (as initialized)
+
                 # --- Get Element's Total Volume ---
                 element_volume_dict = get_volume_from_properties(element)
                 element_total_volume = None
@@ -764,24 +787,51 @@ async def upload_ifc(
                 logger.error(f"Error converting element {getattr(elem_model, 'id', '?')} to dict: {dump_error}")
                 # Optionally skip this element or add placeholder
 
-        # --- Save Parsed Data to MongoDB --- << NEW
+        # --- Save Parsed Data to MongoDB --- << MODIFIED: Save to Elements Collection >>
         if mongodb is not None and mongodb.db is not None:
-            logger.info(f"Saving {len(element_dicts)} parsed elements to MongoDB for project '{project}', filename '{filename}'")
-            save_success = mongodb.save_parsed_data(project, filename, element_dicts)
-            if not save_success:
-                # Log error but potentially continue to Kafka if needed?
-                # Or raise exception? For now, log and continue.
-                logger.error("Failed to save parsed data to MongoDB.")
-                # Consider raising HTTPException(500, "Failed to save processing results")
+            # 1. Find or create the project and get its ID
+            project_data = {
+                "name": project,
+                "metadata": { # Include basic metadata
+                     "filename": filename,
+                     "upload_timestamp": timestamp # Use the timestamp from the request form
+                }
+                # Add other relevant project-level info if needed
+            }
+            project_id = mongodb.save_project(project_data)
+
+            if not project_id:
+                logger.error(f"Failed to find or create project '{project}' in MongoDB. Cannot save elements.")
+                raise HTTPException(status_code=500, detail="Failed to process project entry in database.")
+
+            # 2. Save the parsed elements to the elements collection for this project
+            logger.info(f"Saving/Updating {len(element_dicts)} parsed elements via batch upsert for project '{project}' (ID: {project_id})")
+            # Call batch_upsert_elements for update/insert behavior
+            # Note: Pass the element dictionaries directly
+            upsert_result = mongodb.batch_upsert_elements(project_id=project_id, elements_data=element_dicts)
+
+            # Check the success field from the result dictionary
+            if not upsert_result.get("success"): 
+                logger.error(f"Failed batch upsert elements for project '{project}'. Details: {upsert_result.get('message')}")
+                # Use message from result if available
+                error_detail = upsert_result.get("message", "Failed to save element processing results to database.")
+                raise HTTPException(500, detail=error_detail)
+            else:
+                logger.info(
+                    f"Batch upsert successful for project {project}. "
+                    f"Processed: {upsert_result.get('processed', 0)}, "
+                    f"Created: {upsert_result.get('created', 0)}, "
+                    f"Updated: {upsert_result.get('updated', 0)}"
+                )
         else:
-            logger.warning("MongoDB not connected. Parsed data not saved.")
-            # Consider raising HTTPException(503, "Database unavailable, cannot save results")
+            logger.warning("MongoDB not connected. Parsed elements not saved.")
+            raise HTTPException(status_code=503, detail="Database unavailable, cannot save results") # Raise error if DB is down
 
         return ProcessResponse(
-            message="IFC file processed successfully",
+            message="IFC file processed and elements saved/updated successfully", # Updated message
             project=project,
             filename=filename,
-            element_count=len(parsed_elements)
+            element_count=len(parsed_elements) # Keep original parsed count for response
         )
     
     except HTTPException:
@@ -820,33 +870,30 @@ async def upload_ifc(
                 logger.warning(f"Error removing temp file during final cleanup: {str(cleanup_error)}")
 
 @app.get("/projects/", response_model=List[str])
-async def list_projects():
-    """Returns a list of available project names from the parsed data.""" # Docstring updated
-    if mongodb is None or mongodb.db is None:
-        raise HTTPException(status_code=503, detail="Database not available")
+async def list_projects(db: Database = Depends(get_db)): # <<< Inject DB
+    """Returns a list of available project names from the parsed data."""
     try:
-        # Use the new MongoDBHelper method
-        project_names = mongodb.list_distinct_projects()
-        return project_names
+        # Use the injected db object
+        collection = db.projects
+        distinct_projects = collection.distinct("name")
+        return distinct_projects
     except Exception as e:
         logger.error(f"Error listing projects from DB: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving project list")
 
 @app.get("/projects/{project_name}/elements/", response_model=List[IFCElement])
-async def get_project_elements(project_name: str):
+async def get_project_elements(project_name: str, db: Database = Depends(get_db)): # <<< Inject DB
     """Retrieves element data for a given project name directly from the elements collection."""
-    if mongodb is None or mongodb.db is None:
-        raise HTTPException(status_code=503, detail="Database not available")
-
     try:
-        source = "elements_collection"
-
-        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        # 1. Fetch Project ID using injected db
+        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
 
-        elements_data = list(mongodb.db.elements.find({"project_id": project_id}))
+        # 2. Fetch Raw Element Data from DB using injected db
+        elements_cursor = db.elements.find({"project_id": project_id})
+        elements_data = list(elements_cursor)
 
         if not elements_data:
              return []
@@ -1010,25 +1057,22 @@ async def get_project_elements(project_name: str):
         logger.warning(f"HTTPException occurred for project '{project_name}': {http_exc.status_code} - {http_exc.detail}")
         raise http_exc
     except Exception as e:
-        logger.error(f"Unexpected error retrieving elements for project '{project_name}': {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Unexpected error retrieving elements for project '{project_name}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error retrieving project elements: {str(e)}")
 
 @app.get("/projects/{project_name}/metadata/", response_model=Dict[str, Any])
-async def get_project_metadata(project_name: str):
+async def get_project_metadata(project_name: str, db: Database = Depends(get_db)): # <<< Inject DB
     """Retrieves metadata for a specific project."""
-    if mongodb is None or mongodb.db is None:
-        raise HTTPException(status_code=503, detail="Database not available")
     try:
-        # Find project (case-insensitive)
-        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        # Find project (case-insensitive) using injected db
+        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
         project_id = project["_id"]
-        
-        # Get element count from the elements collection for this project_id
-        element_count = mongodb.db.elements.count_documents({"project_id": project_id})
+
+        # Get element count from the elements collection for this project_id using injected db
+        element_count = db.elements.count_documents({"project_id": project_id})
 
         # Extract metadata, handling potential missing fields
         metadata = project.get("metadata", {})
@@ -1051,56 +1095,62 @@ async def get_project_metadata(project_name: str):
 @app.post("/projects/{project_name}/approve/", response_model=Dict[str, Any])
 async def approve_project(
     project_name: str,
-    updates: Optional[List[ElementQuantityUpdate]] = None # <<< ACCEPT updates in body
+    updates: Optional[List[ElementQuantityUpdate]] = None, # <<< ACCEPT updates in body
+    db: Database = Depends(get_db) # <<< Inject DB
 ):
     """
-    Updates element quantities based on provided edits AND approves the project's elements 
+    Updates element quantities based on provided edits AND approves the project's elements
     by updating their status to 'active'.
-    
+
     Args:
         project_name: Name of the project to approve
         updates: Optional list of elements with their new quantities.
-    
+
     Returns:
         Dictionary with operation status
     """
+    # global mongodb # No longer needed
     try:
         logger.info(f"Received approval request for project: '{project_name}'")
         if updates:
             logger.info(f"Approval request includes {len(updates)} quantity updates.")
-        # --- Find Project ID (needed for both update and approve) --- 
-        if mongodb is None or mongodb.db is None:
-            raise HTTPException(status_code=503, detail="Database not available")
 
-        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        # <<< REMOVED Check/Re-initialize MongoDB Connection block >>>
+
+        # --- Find Project ID (needed for both update and approve) ---
+        # Use injected db
+        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
 
         # --- Apply Quantity Updates (if any) --- 
         if updates:
-            update_success = mongodb.update_element_quantities(project_id, updates)
+            # !!! IMPORTANT: Need to pass the db instance to the helper method if it uses it !!!
+            # Assuming MongoDBHelper methods accept a db instance or continue using the global one internally
+            # For now, assuming internal usage of the global `mongodb` is okay within the helper methods,
+            # otherwise, the helper methods would need refactoring too.
+            # Let's stick to the current approach for now, but this is a potential point of failure/refinement.
+            update_success = mongodb.update_element_quantities(project_id, updates) # Still uses global mongodb instance
             if not update_success:
-                 # Log the error but proceed with approval for now? Or fail?
-                 # Let's fail for now to be explicit.
                  logger.error(f"Failed to apply quantity updates for project '{project_name}'. Aborting approval.")
                  raise HTTPException(status_code=500, detail="Failed to save quantity updates.")
 
         # --- Approve Project Status & Send Kafka Notification --- 
-        approve_success = True # Assume success if we reached here without errors
+        logger.info(f"Calling approve_project_elements for project ID: {project_id}")
+        # Assuming internal usage of the global `mongodb` is okay within the helper methods
+        approve_success = mongodb.approve_project_elements(project_id)
 
         if approve_success:
-            # logger.info(f"Successfully approved elements status for project '{project_name}'") # Reduce noise
             return {
                 "status": "success",
                 "message": f"Project {project_name} elements updated and approved successfully",
                 "project": project_name
             }
         else:
-            # If updates were applied but status approval failed, this is problematic
             logger.error(f"Applied quantity updates BUT failed to approve elements status for project '{project_name}'")
             raise HTTPException(
-                status_code=500, 
+                status_code=500,
                 detail=f"Failed to finalize approval status update for project {project_name}"
             )
     except HTTPException as http_exc:
@@ -1121,7 +1171,7 @@ def health_check(request: Request):
     
     Returns the status of the service, Kafka connection, and other diagnostics.
     """
-    kafka_status = "unknown"
+    kafka_status = "unknown" # Set default status as producer check is removed
     mongodb_status = "unknown"
     origin = request.headers.get("origin")
     allowed = origin in cors_origins if cors_origins != ["*"] else True
@@ -1137,18 +1187,6 @@ def health_check(request: Request):
         logger.warning(f"MongoDB health check failed: {str(e)}")
         mongodb_status = "disconnected"
     
-    # Determine Kafka status (simplified check focusing on producer init)
-    try:
-        # Attempt to create a temporary producer to check connectivity
-        # Note: This has a slight overhead but is more reliable than just checking a flag
-        temp_producer = QTOKafkaProducer(max_retries=1, retry_delay=1)
-        kafka_status = "connected" if temp_producer.producer else "disconnected"
-        # Clean up the temporary producer reference
-        del temp_producer
-    except Exception as e:
-        logger.warning(f"Kafka health check failed during temp producer init: {str(e)}")
-        kafka_status = "disconnected"
-
     # Prepare response data
     response_data = {
         "status": "healthy", 
@@ -1173,14 +1211,11 @@ def health_check(request: Request):
 
 # <<< ADDED: Endpoint for Creating Manual Elements >>>
 @app.post("/projects/{project_name}/elements/manual", response_model=IFCElement)
-async def add_manual_element(project_name: str, element_data: ManualElementInput):
+async def add_manual_element(project_name: str, element_data: ManualElementInput, db: Database = Depends(get_db)): # <<< Inject DB
     """Adds a new manually defined element to a project."""
-    if mongodb is None or mongodb.db is None:
-        raise HTTPException(status_code=503, detail="Database not available")
-
     try:
-        # 1. Find Project ID
-        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        # 1. Find Project ID using injected db
+        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
@@ -1238,62 +1273,35 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
             "updated_at": now
         }
 
-        # 4. Save Element using save_element (or adapt save_elements_batch if preferred)
-        # Let's use insert_one directly for simplicity here
-        insert_result = mongodb.db.elements.insert_one(element_to_save)
+        # 4. Save Element using insert_one directly on injected db
+        insert_result = db.elements.insert_one(element_to_save)
         if not insert_result.inserted_id:
             raise HTTPException(status_code=500, detail="Failed to save manual element to database.")
+        
+        # 5. Fetch and return (using the prepared dict, no DB fetch needed here)
+        # Map back to IFCElement (using the data we just prepared/inserted)
+        created_element_data = element_to_save.copy() # Start with the data we inserted
+        created_element_data["_id"] = insert_result.inserted_id # Use the actual inserted ID
 
-
-        # 5. Fetch and return the newly created element formatted as IFCElement
-        # We need to map the saved data back to the IFCElement model structure
-        created_element_data = element_to_save.copy()
-        created_element_data["_id"] = insert_result.inserted_id # Add the DB _id
-
-        # Map back to IFCElement (similar logic as in get_project_elements)
+        # Simplified mapping for response (adapt as needed based on IFCElement model)
         mapped_elem = {
-            "id": created_element_data.get("ifc_id"),
+            "id": created_element_data.get("ifc_id"), 
             "global_id": created_element_data.get("global_id"),
             "type": created_element_data.get("ifc_class"),
             "name": created_element_data.get("name"),
             "type_name": created_element_data.get("type_name"),
             "description": created_element_data.get("description"),
             "properties": created_element_data.get("properties", {}),
-            "materials": created_element_data.get("materials", []),
+            "materials": created_element_data.get("materials", []), 
             "level": created_element_data.get("level"),
-            "classification_id": None,
-            "classification_name": None,
-            "classification_system": None,
-            "area": None,
-            "length": None,
-            "volume": None,
-            "original_area": None,
-            "original_length": None,
-            "original_volume": None,
+            "classification": created_element_data.get("classification"), # Pass the nested object
+            "quantity": created_element_data.get("quantity"),             # Pass the nested object
+            "original_quantity": created_element_data.get("original_quantity"), # Pass the nested object
             "status": created_element_data.get("status"),
             "is_manual": created_element_data.get("is_manual")
-            # ... map quantity, original_quantity, classification etc. ...
+            # Add flat quantity fields if IFCElement still requires them
+            # "area": ..., "length": ..., etc.
         }
-        if "classification" in created_element_data and created_element_data["classification"]:
-            mapped_elem["classification_id"] = created_element_data["classification"].get("id")
-            mapped_elem["classification_name"] = created_element_data["classification"].get("name")
-            mapped_elem["classification_system"] = created_element_data["classification"].get("system")
-
-        if "quantity" in created_element_data and created_element_data["quantity"]:
-            q_type = created_element_data["quantity"].get("type")
-            q_value = created_element_data["quantity"].get("value")
-            if q_type == "area": mapped_elem["area"] = q_value
-            elif q_type == "length": mapped_elem["length"] = q_value
-            elif q_type == "volume": mapped_elem["volume"] = q_value # Add volume if type matches
-
-        if "original_quantity" in created_element_data and created_element_data["original_quantity"]:
-            oq_type = created_element_data["original_quantity"].get("type")
-            oq_value = created_element_data["original_quantity"].get("value")
-            if oq_type == "area": mapped_elem["original_area"] = oq_value
-            elif oq_type == "length": mapped_elem["original_length"] = oq_value
-            elif oq_type == "volume": mapped_elem["original_volume"] = oq_value
-            # Also store the original_quantity object itself if IFCElement expects it
-            mapped_elem["original_quantity"] = created_element_data["original_quantity"] # <<< ADDED
 
         # Validate and return using the IFCElement model
         return IFCElement(**mapped_elem)
@@ -1306,187 +1314,12 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error adding manual element: {str(e)}")
 
-# <<< ADDED: Endpoint for Batch Update/Create Elements >>>
-@app.post("/projects/{project_name}/elements/batch-update", response_model=BatchUpdateResponse) # <<< Use new Response Model
-async def batch_update_elements(project_name: str, request_data: BatchUpdateRequest):
-    """
-    Updates existing elements and creates new manual elements for a project.
-    Sets the status of all processed elements to 'active'.
-    """
-    if mongodb is None or mongodb.db is None:
-        raise HTTPException(status_code=503, detail="Database not available")
-
-    processed_elements_from_db: List[Dict] = [] # To store raw docs from DB
-    updated_ifc_ids: List[str] = [] # Store ifc_ids of updated elements
-    created_element_docs: List[Dict] = [] # Store the docs we attempted to insert
-
-    try:
-        # 1. Find Project ID
-        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-        project_id = project["_id"]
-
-        # Store data for fetching later
-        elements_to_process = request_data.elements
-        for elem_data in elements_to_process:
-            if elem_data.is_manual and elem_data.id.startswith('manual_'):
-                # Prepare doc for insert (IDs will be generated by helper)
-                created_element_docs.append(elem_data)
-            else:
-                # Assume it's an update based on existing ifc_id
-                updated_ifc_ids.append(elem_data.id)
-
-        # 2. Call MongoDB helper to perform batch upsert
-        result = mongodb.batch_upsert_elements(project_id, elements_to_process)
-
-        if not result["success"]:
-            # Even on partial failure, try to fetch elements that *might* have succeeded
-            # For simplicity now, just raise error
-            raise HTTPException(status_code=500, detail=result.get("message", "Failed to process batch element update."))
-
-
-        # 3. Fetch the final state of processed elements
-        final_element_ifc_ids = updated_ifc_ids + [str(oid) for oid in result.get('inserted_ids', [])]
-        if final_element_ifc_ids:
-            processed_elements_from_db = list(mongodb.db.elements.find({
-                "project_id": project_id,
-                "ifc_id": {"$in": final_element_ifc_ids}
-            }))
-        else:
-            logger.info("No elements were marked for update or successfully inserted.")
-
-        # 4. Map DB documents to Pydantic IFCElement model
-        validated_elements: List[IFCElement] = []
-        for elem in processed_elements_from_db:
-            # (Use mapping logic similar to get_project_elements)
-            # Simplified mapping for brevity:
-            try:
-                mapped_elem = {
-                    "id": elem.get("ifc_id"), # Use the final ifc_id from DB
-                    "global_id": elem.get("global_id"),
-                    "type": elem.get("ifc_class"),
-                    "name": elem.get("name"),
-                    "type_name": elem.get("type_name"),
-                    "description": elem.get("description"),
-                    "properties": elem.get("properties", {}),
-                    "materials": elem.get("materials", []),
-                    "level": elem.get("level"),
-                    "classification_id": None,
-                    "classification_name": None,
-                    "classification_system": None,
-                    "area": None,
-                    "length": None,
-                    "volume": None,
-                    "original_area": None,
-                    "original_length": None,
-                    "original_volume": None,
-                    "status": elem.get("status"),
-                    "is_manual": elem.get("is_manual")
-                    # ... map quantity, original_quantity, classification etc. ...
-                }
-                # --- DETAILED MAPPING --- 
-                if elem.get("classification"): # Map classification
-                    mapped_elem["classification_id"] = elem["classification"].get("id")
-                    mapped_elem["classification_name"] = elem["classification"].get("name")
-                    mapped_elem["classification_system"] = elem["classification"].get("system")
-
-                if elem.get("quantity"): # Map current quantity
-                     q_type = elem["quantity"].get("type")
-                     q_value = elem["quantity"].get("value")
-                     # Assign to specific fields if needed by IFCElement model
-                     if q_type == "area": mapped_elem["area"] = q_value
-                     elif q_type == "length": mapped_elem["length"] = q_value
-                     elif q_type == "volume": mapped_elem["volume"] = q_value 
-                     # Also store the quantity object itself if IFCElement expects it
-                     mapped_elem["quantity"] = elem["quantity"] # <<< ADDED
-
-                if elem.get("original_quantity"): # Map original quantity
-                     oq_type = elem["original_quantity"].get("type")
-                     oq_value = elem["original_quantity"].get("value")
-                     if oq_type == "area": mapped_elem["original_area"] = oq_value
-                     elif oq_type == "length": mapped_elem["original_length"] = oq_value
-                     elif oq_type == "volume": mapped_elem["original_volume"] = oq_value
-                     # Also store the original_quantity object itself if IFCElement expects it
-                     mapped_elem["original_quantity"] = elem["original_quantity"] # <<< ADDED
-                 # --- END DETAILED MAPPING ---
-
-                validated_elements.append(IFCElement(**mapped_elem))
-            except Exception as map_error:
-                 logger.warning(f"Failed to map element {elem.get('ifc_id')} to Pydantic model: {map_error}")
-
-
-        return BatchUpdateResponse(
-            status="success",
-            message=f"Batch update for project {project_name} successful.",
-            processed_count=result.get('processed', 0),
-            created_count=result.get('created', 0),
-            updated_count=result.get('updated', 0),
-            elements=validated_elements # <<< Include the list of elements
-        )
-
-    except HTTPException as http_exc:
-        logger.error(f"HTTP error during batch update for {project_name}: {http_exc.detail}")
-        raise http_exc
-    except Exception as e:
-        logger.error(f"Error processing batch update for project {project_name}: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Internal server error during batch update: {str(e)}")
-
-# <<< ADDED: Endpoint to get target IFC classes >>>
-@app.get("/ifc-classes", response_model=List[str])
-async def get_ifc_classes():
-    """Returns the list of target IFC classes configured in the backend environment."""
-    # Ensure TARGET_IFC_CLASSES is accessible here (it should be as it's a global variable)
-    if not TARGET_IFC_CLASSES or not TARGET_IFC_CLASSES[0]:
-        logger.warning("TARGET_IFC_CLASSES environment variable not set or empty.")
-        return [] # Return empty list if not configured
-    return TARGET_IFC_CLASSES
-
-# <<< ADDED: Endpoint for Deleting a Manual Element >>>
-@app.delete("/projects/{project_name}/elements/{element_ifc_id}", response_model=Dict[str, Any])
-async def delete_manual_element(project_name: str, element_ifc_id: str):
-    """Deletes a specific manually added element from a project."""
-    if mongodb is None or mongodb.db is None:
-        raise HTTPException(status_code=503, detail="Database not available")
-
-    try:
-        # 1. Find Project ID
-        project = mongodb.db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-        project_id = project["_id"]
-
-        # 2. Call MongoDB helper to delete the element
-        result = mongodb.delete_element(project_id, element_ifc_id)
-
-        if not result["success"]:
-            # Determine appropriate status code based on message
-            status_code = 404 if "not found" in result.get("message", "").lower() else 400
-            if "Only manually added" in result.get("message", ""):
-                status_code = 403 # Forbidden
-            raise HTTPException(status_code=status_code, detail=result.get("message", "Failed to delete element."))
-
-        # Return success message
-        return {
-            "status": "success",
-            "message": f"Element {element_ifc_id} deleted successfully from project {project_name}.",
-            "deleted_count": result.get('deleted_count', 0)
-        }
-
-    except HTTPException as http_exc:
-        logger.error(f"HTTP error deleting element {element_ifc_id} from {project_name}: {http_exc.detail}")
-        raise http_exc
-    except Exception as e:
-        logger.error(f"Error deleting element {element_ifc_id} from project {project_name}: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Internal server error during element deletion: {str(e)}")
-
 @app.post("/projects/{project_name}/elements/batch-update", status_code=status.HTTP_200_OK)
-async def batch_update_elements(project_name: str, request_data: BatchUpdateRequest):
-    mongodb = MongoDBHelper()
+async def batch_update_elements(project_name: str, request_data: BatchUpdateRequest, db: Database = Depends(get_db)): # <<< Inject DB
+    # mongodb = MongoDBHelper() # Don't create a new instance
     try:
-        project = mongodb.find_project_by_name(project_name)
+        # Find project using injected db
+        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
@@ -1495,7 +1328,7 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
         elements_dict_list = [element.model_dump(exclude_unset=True) for element in request_data.elements]
 
         # Perform the batch upsert using MongoDBHelper
-        # Pass the list of dictionaries
+        # Assuming batch_upsert_elements uses the global mongodb instance internally
         result = mongodb.batch_upsert_elements(project_id, elements_dict_list)
 
         if result.get("success"):
@@ -1504,14 +1337,54 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                 f"Requested: {len(request_data.elements)}, DB Processed: {result.get('processed', 0)}, "
                 f"Created: {result.get('created', 0)}, Updated: {result.get('updated', 0)}"
             )
-
-            # Fetch the updated/created elements if needed (optional, depends on frontend needs)
+            # Fetch the updated/created elements using injected db
             inserted_ids = result.get("inserted_ids", [])
+            updated_elements = []
             if inserted_ids:
-                 updated_elements_cursor = mongodb.db.elements.find({"_id": {"$in": inserted_ids}})
-                 updated_elements = list(updated_elements_cursor)
+                 # Convert string IDs back to ObjectIds if needed, or adjust query
+                 object_ids_to_find = []
+                 ifc_ids_to_find = []
+                 for id_val in inserted_ids:
+                     try:
+                         object_ids_to_find.append(ObjectId(id_val))
+                     except:
+                         ifc_ids_to_find.append(id_val)
+                 
+                 query_filter = {"project_id": project_id, "$or": []}
+                 if object_ids_to_find:
+                     query_filter["$or"].append({"_id": {"$in": object_ids_to_find}})
+                 if ifc_ids_to_find:
+                     query_filter["$or"].append({"ifc_id": {"$in": ifc_ids_to_find}})
 
-            return {"message": "Batch update successful", **result}
+                 if query_filter["$or"]:
+                     updated_elements_cursor = db.elements.find(query_filter)
+                     updated_elements = list(updated_elements_cursor)
+                 else: 
+                     logger.info("No valid inserted IDs found to fetch.")
+            
+            # Map DB response to Pydantic (similar to get_project_elements)
+            response_elements = []
+            for elem in updated_elements:
+                try:
+                    # Simplified mapping - copy relevant fields
+                    mapped_resp_elem = {
+                        "id": elem.get("ifc_id", str(elem.get("_id"))),
+                        "global_id": elem.get("global_id"),
+                        "type": elem.get("ifc_class"),
+                        "name": elem.get("name"),
+                        "level": elem.get("level"),
+                        "status": elem.get("status"),
+                        "is_manual": elem.get("is_manual"),
+                        "quantity": elem.get("quantity"),
+                        "classification": elem.get("classification")
+                        # Add other fields as needed by BatchElementData or response model
+                    }
+                    # Validate against BatchElementData if needed, or directly add dict
+                    response_elements.append(BatchElementData(**mapped_resp_elem)) # Assuming BatchElementData is the target
+                except Exception as map_error:
+                     logger.warning(f"Failed to map element {elem.get('ifc_id')} for batch response: {map_error}")
+
+            return {"message": "Batch update successful", **result, "elements": response_elements} # Include mapped elements
         else:
             # Handle DB operation failure
             error_message = result.get("message", "Unknown error during batch update")
@@ -1525,33 +1398,88 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
         # Catch Pydantic validation errors (which are VAEs) and other exceptions
         logger.error(f"Error processing batch update for project {project_name}: {e}", exc_info=True)
         # Log the full traceback
-        logger.error("Traceback:", exc_info=True)
+        # logger.error("Traceback:", exc_info=True) # Already done with exc_info=True
         raise HTTPException(status_code=500, detail=f"Internal server error during batch update: {e}")
 
 @app.delete("/projects/{project_name}/elements/{element_id}", status_code=status.HTTP_200_OK)
-async def delete_element_endpoint(project_name: str, element_id: str):
-    mongodb = MongoDBHelper()
+async def delete_element_endpoint(project_name: str, element_id: str, db: Database = Depends(get_db)): # <<< Inject DB
+    # mongodb = MongoDBHelper() # Don't create a new instance
     try:
-        project = mongodb.find_project_by_name(project_name)
+        # Find project using injected db
+        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
         logger.info(f"Found project '{project_name}' with ID: {project_id} for element deletion.")
 
+        # Assuming delete_element uses the global mongodb instance internally
         success = mongodb.delete_element(project_id, element_id)
 
-        if success:
+        if success: # delete_element now returns dict, check 'success' key
              return {"message": f"Element {element_id} deleted successfully from project {project_name}"}
         else:
-             # Log as warning, return 404 to client
-             logger.warning(f"Attempted to delete element {element_id} from {project_name}, but it was not found or not manual.")
-             raise HTTPException(status_code=404, detail="Element not found")
+             # If delete_element returned success=False, raise appropriate error
+             logger.warning(f"Attempted to delete element {element_id} from {project_name}, but DB operation failed or element not found/not manual.")
+             # Use the message from the helper if available
+             detail_msg = success.get("message", "Element not found or could not be deleted.")
+             status_code = 404 if "not found" in detail_msg.lower() else 400
+             if "Only manually added" in detail_msg:
+                 status_code = 403 # Forbidden
+             raise HTTPException(status_code=status_code, detail=detail_msg)
 
     except HTTPException as http_exc:
          raise http_exc # Re-raise specific HTTP errors
     except Exception as e:
          logger.error(f"Error deleting element {element_id} from {project_name}: {e}", exc_info=True)
          raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
+# <<< ADDED: Endpoint for Deleting a Manual Element (The one that had the syntax error) >>>
+@app.delete("/projects/{project_name}/elements/{element_ifc_id}", response_model=Dict[str, Any])
+async def delete_manual_element(project_name: str, element_ifc_id: str, db: Database = Depends(get_db)): # <<< Inject DB
+    """Deletes a specific manually added element from a project."""
+    try:
+        # 1. Find Project ID using injected db
+        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+        project_id = project["_id"]
+
+        # 2. Call MongoDB helper to delete the element
+        # Assuming delete_element uses the global mongodb instance internally
+        result = mongodb.delete_element(project_id, element_ifc_id)
+
+        if not result.get("success"): # Check success key in result dict
+            # Determine appropriate status code based on message
+            message = result.get("message", "Failed to delete element.")
+            status_code = 404 if "not found" in message.lower() else 400
+            if "Only manually added" in message:
+                status_code = 403 # Forbidden
+            raise HTTPException(status_code=status_code, detail=message)
+
+        # Return success message
+        return {
+            "status": "success",
+            "message": f"Element {element_ifc_id} deleted successfully from project {project_name}.",
+            "deleted_count": result.get('deleted_count', 0)
+        }
+    except HTTPException as http_exc:
+        logger.error(f"HTTP error deleting element {element_ifc_id} from {project_name}: {http_exc.detail}")
+        raise http_exc
+    except Exception as e:
+        logger.error(f"Error deleting element {element_ifc_id} from project {project_name}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error during element deletion: {str(e)}")
+
+# <<< ADDED: Endpoint to get target IFC classes >>>
+@app.get("/ifc-classes", response_model=List[str])
+async def get_ifc_classes():
+    """Returns the list of target IFC classes configured in the backend environment."""
+    # Ensure TARGET_IFC_CLASSES is accessible here (it should be as it's a global variable)
+    if not TARGET_IFC_CLASSES or not TARGET_IFC_CLASSES[0] or TARGET_IFC_CLASSES == ['']:
+        logger.warning("TARGET_IFC_CLASSES environment variable not set or empty.")
+        return [] # Return empty list if not configured or only contains empty string
+    return TARGET_IFC_CLASSES
+# <<< END ADDED >>>
 
 if __name__ == "__main__":
     import uvicorn

@@ -154,9 +154,14 @@ class MongoDBHelper:
             
             if existing_project:
                 # Update existing project
+                # Ensure _id is not part of the $set payload
+                update_data = project_data.copy()
+                if '_id' in update_data:
+                    del update_data['_id'] 
+                    
                 update_result = self.db.projects.update_one(
                     {"_id": existing_project["_id"]},
-                    {"\$set": project_data}
+                    {"$set": update_data}
                 )
                 if update_result.modified_count > 0:
                     logger.info(f"Updated existing project: {existing_project['_id']}")
@@ -278,17 +283,23 @@ class MongoDBHelper:
             # Now insert all new elements from the IFC file
             if elements:
                 # Add timestamps, project_id, and mark as non-manual
+                now = datetime.now(timezone.utc) # Define timestamp for the batch
+                elements_to_insert = []
                 for element in elements:
-                    element['created_at'] = datetime.now(timezone.utc) # Set creation time for new batch
-                    element['updated_at'] = datetime.now(timezone.utc)
-                    if isinstance(element.get('project_id'), str):
-                        element['project_id'] = ObjectId(element['project_id'])
+                    element['project_id'] = project_id # <<< Assign the correct project_id
+                    element['created_at'] = now # Set creation time for new batch
+                    element['updated_at'] = now
+                    # Remove project_id if it was incorrectly a string before (shouldn't happen now)
+                    # if isinstance(element.get('project_id'), str):
+                    #    del element['project_id'] # Remove incorrect string id
                     element['is_manual'] = False # Explicitly mark elements from IFC as not manual
+                    elements_to_insert.append(element)
                 
                 # Insert all elements
-                result = self.db.elements.insert_many(elements)
-                if result.inserted_ids:
-                    logger.info(f"Inserted {len(result.inserted_ids)} new elements from IFC for project {project_id}")
+                if elements_to_insert:
+                     result = self.db.elements.insert_many(elements_to_insert)
+                     if result.inserted_ids:
+                         logger.info(f"Inserted {len(result.inserted_ids)} new elements from IFC for project {project_id}")
             
             return True
                     
@@ -566,43 +577,43 @@ class MongoDBHelper:
         processed_count = 0
         now = datetime.now(timezone.utc)
 
-        for element_model in elements_data:
+        for element_model in elements_data: # element_model is actually a DICT here
             element_id = None # Initialize for error logging
             try:
-                # <<< Ensure we are working with Pydantic model attributes >>>
-                element_id = element_model.id # Use attribute access
+                # <<< Ensure we are working with dictionary keys >>>
+                element_id = element_model.get('id') # Use .get() for safer access
                 if not element_id:
-                    logger.warning(f"Skipping element without ID in batch upsert: {getattr(element_model, 'name', 'N/A')}")
+                    logger.warning(f"Skipping element without ID in batch upsert: {element_model.get('name', 'N/A')}")
                     continue
 
-                is_manual_input = getattr(element_model, 'is_manual', False) # Default to False
+                is_manual_input = element_model.get('is_manual', False) # Default to False
                 is_create_operation = is_manual_input and isinstance(element_id, str) and element_id.startswith('manual_')
 
-                # Prepare the document data to be saved/updated using .model_dump()
-                # Handle potential nested Pydantic models
-                quantity_dict = element_model.quantity.model_dump(exclude_none=True) if element_model.quantity and hasattr(element_model.quantity, 'model_dump') else None
-                original_quantity_dict = element_model.original_quantity.model_dump(exclude_none=True) if element_model.original_quantity and hasattr(element_model.original_quantity, 'model_dump') else None
-                classification_dict = element_model.classification.model_dump(exclude_none=True) if element_model.classification and hasattr(element_model.classification, 'model_dump') else None
-                materials_list = [mat.model_dump(exclude_none=True) for mat in element_model.materials if hasattr(mat, 'model_dump')] if element_model.materials else []
+                # Prepare the document data to be saved/updated using dictionary values
+                # Handle potential nested DICTIONARIES (not Pydantic models at this stage)
+                quantity_dict = element_model.get('quantity')
+                original_quantity_dict = element_model.get('original_quantity')
+                classification_dict = element_model.get('classification')
+                materials_list = element_model.get('materials', []) # Default to empty list
 
                 db_doc = {
                     "project_id": project_id,
-                    "ifc_class": getattr(element_model, 'type', None) or getattr(element_model, 'ifc_class', None), # Handle alias
-                    "name": getattr(element_model, 'name', None),
-                    "type_name": getattr(element_model, 'type_name', None),
-                    "level": getattr(element_model, 'level', None),
-                    "description": getattr(element_model, 'description', None),
-                    "quantity": quantity_dict,
-                    "original_quantity": original_quantity_dict,
-                    "classification": classification_dict,
-                    "materials": materials_list,
-                    "properties": getattr(element_model, 'properties', {}),
+                    "ifc_class": element_model.get('type') or element_model.get('ifc_class'), # Handle alias from dict
+                    "name": element_model.get('name'),
+                    "type_name": element_model.get('type_name'),
+                    "level": element_model.get('level'),
+                    "description": element_model.get('description'),
+                    "quantity": quantity_dict, # Already a dict or None
+                    "original_quantity": original_quantity_dict, # Already a dict or None
+                    "classification": classification_dict, # Already a dict or None
+                    "materials": materials_list, # Already a list or []
+                    "properties": element_model.get('properties', {}),
                     "is_manual": is_manual_input,
-                    "is_structural": getattr(element_model, 'is_structural', False), # Default to False
-                    "is_external": getattr(element_model, 'is_external', False),   # Default to False
+                    "is_structural": element_model.get('is_structural', False), # Default to False
+                    "is_external": element_model.get('is_external', False),   # Default to False
                     "status": "active", # Set status to active for all batch updates
                     "updated_at": now,
-                    "global_id": getattr(element_model, 'global_id', None)
+                    "global_id": element_model.get('global_id')
                 }
                 # Remove keys with None values before saving
                 db_doc = {k: v for k, v in db_doc.items() if v is not None}
@@ -637,8 +648,8 @@ class MongoDBHelper:
 
                 processed_count += 1
             except Exception as e:
-                # Use getattr for safer access in error logging
-                error_id = getattr(element_model, 'id', 'N/A')
+                # Use .get for safer access in error logging
+                error_id = element_model.get('id', 'N/A')
                 logger.error(f"Error preparing operation for element {error_id}: {e}", exc_info=True)
                 # Continue processing other elements
 
