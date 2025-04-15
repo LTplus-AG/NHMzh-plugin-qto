@@ -16,7 +16,7 @@ import { log } from "./utils/logger";
  */
 export async function setupKafkaConsumer(): Promise<Consumer> {
   const kafka = new Kafka({
-    clientId: "viz-ifc-consumer",
+    clientId: "qto-ifc-consumer",
     brokers: [getEnv("KAFKA_BROKER")],
 
     // Custom log creator to log Kafka messages to align with the logger in this service
@@ -38,7 +38,7 @@ export async function setupKafkaConsumer(): Promise<Consumer> {
       },
   });
 
-  const consumer = kafka.consumer({ groupId: "viz-ifc-consumer-group" });
+  const consumer = kafka.consumer({ groupId: "qto-ifc-consumer-group" });
 
   try {
     log.debug("Connecting to Kafka");
