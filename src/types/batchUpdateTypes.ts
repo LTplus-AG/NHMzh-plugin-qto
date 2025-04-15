@@ -1,11 +1,15 @@
 // Corresponds to BatchElementData in backend/main.py
 
 // Re-use existing types if possible, or define specifically for the batch payload
-import {
-  ManualClassificationInput,
-  ManualMaterialInput,
-  ManualQuantityInput,
-} from "./manualTypes";
+import { ManualClassificationInput, ManualQuantityInput } from "./manualTypes";
+
+// <<< ADDED: Specific type for material data in batch requests >>>
+export interface BatchMaterialData {
+  name: string;
+  fraction: number;
+  volume: number | null; // Reflects calculated volume
+  unit: string; // Reflects calculated unit ('m³')
+}
 
 /**
  * Represents the data structure for a single element within a batch update request.
@@ -21,7 +25,7 @@ export interface BatchElementData {
   properties?: Record<string, any> | null;
   level?: string | null;
   classification?: ManualClassificationInput | null;
-  materials?: ManualMaterialInput[] | null;
+  materials?: BatchMaterialData[] | null; // <<< USE NEW TYPE
   quantity?: ManualQuantityInput | null;
   original_quantity?: ManualQuantityInput | null;
   area?: number | null;
