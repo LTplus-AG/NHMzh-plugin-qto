@@ -625,41 +625,69 @@ class MongoDBHelper:
                 # Default status to active if not provided
                 element_status = element_dict.get('status', 'active')
 
+                # Determine the primary quantity based on original_quantity or quantity
+                main_quantity_to_save = element_dict.get('original_quantity') or element_dict.get('quantity')
+                original_quantity_input = element_dict.get('original_quantity') # Keep original for flat fields
+
                 db_doc_set = {
-                    "project_id": project_id, # Ensure project_id is set
+                    "project_id": project_id,
                     "ifc_class": element_dict.get('type') or element_dict.get('ifc_class'),
                     "name": element_dict.get('name'),
                     "type_name": element_dict.get('type_name'),
                     "level": element_dict.get('level'),
                     "description": element_dict.get('description'),
-                    "quantity": element_dict.get('quantity'),
-                    "original_quantity": element_dict.get('original_quantity'), # Keep original if provided
                     "classification": element_dict.get('classification'),
                     "materials": element_dict.get('materials', []),
                     "properties": element_dict.get('properties', {}),
-                    "is_manual": element_dict.get('is_manual', True), # Default to True for this endpoint
+                    "is_manual": element_dict.get('is_manual', True),
                     "is_structural": element_dict.get('is_structural'),
                     "is_external": element_dict.get('is_external'),
                     "status": element_status,
                     "updated_at": now,
                     "global_id": element_dict.get('global_id')
                 }
-                # Remove keys with None values from $set payload
+
+                # --- Add Flat Quantities to $set --- 
+                flat_quantities = {}
+                if isinstance(main_quantity_to_save, dict):
+                    q_type = main_quantity_to_save.get('type')
+                    q_value = main_quantity_to_save.get('value')
+                    if q_type == 'area' and isinstance(q_value, (int, float)):
+                        flat_quantities['area'] = q_value
+                    elif q_type == 'length' and isinstance(q_value, (int, float)):
+                        flat_quantities['length'] = q_value
+                    elif q_type == 'volume' and isinstance(q_value, (int, float)):
+                        flat_quantities['volume'] = q_value
+                
+                flat_original_quantities = {}
+                if isinstance(original_quantity_input, dict):
+                    oq_type = original_quantity_input.get('type')
+                    oq_value = original_quantity_input.get('value')
+                    if oq_type == 'area' and isinstance(oq_value, (int, float)):
+                        flat_original_quantities['original_area'] = oq_value
+                    elif oq_type == 'length' and isinstance(oq_value, (int, float)):
+                        flat_original_quantities['original_length'] = oq_value
+                    elif oq_type == 'volume' and isinstance(oq_value, (int, float)):
+                        flat_original_quantities['original_volume'] = oq_value
+                
+                # Merge flat quantities into db_doc_set
+                db_doc_set.update(flat_quantities)
+                # db_doc_set.update(flat_original_quantities) # <<< REMOVE originals from $set
+
+                # Remove keys with None values from final $set payload
                 db_doc_set = {k: v for k, v in db_doc_set.items() if v is not None}
 
-                # <<< FIX: Remove original_quantity from $set to avoid conflict >>>
-                db_doc_set.pop('original_quantity', None)
-
-                # Fields to set only on insert (creation)
+                # --- Fields to set only on insert (creation) --- 
                 db_doc_on_insert = {
                      "created_at": now,
-                     # Set original quantity on insert if not provided explicitly
-                     # Note: We use element_dict here because db_doc_set might have had original_quantity removed already
-                     "original_quantity": element_dict.get('original_quantity') or element_dict.get('quantity'),
-                     "ifc_id": element_ifc_id # Ensure ifc_id is set on insert
+                     "ifc_id": element_ifc_id, # Ensure ifc_id is set on insert
+                     # --- Add FLAT original quantities to $setOnInsert --- 
+                     **flat_original_quantities # Unpack the calculated flat originals
                  }
+                # Remove None values from on_insert
+                db_doc_on_insert = {k: v for k, v in db_doc_on_insert.items() if v is not None}
+
                 # Generate pseudo GlobalId on insert if missing
-                # (Adjusted this logic slightly as well for clarity)
                 global_id_to_set = element_dict.get('global_id')
                 if not global_id_to_set:
                     db_doc_on_insert['global_id'] = f"MANUAL-{element_ifc_id}"
@@ -687,6 +715,7 @@ class MongoDBHelper:
              return {"success": True, "processed": 0, "created": 0, "updated": 0, "upserted_ids": []}
 
         try:
+            logger.info(f"Attempting bulk_write with {len(operations)} operations for project {project_id}.") # <<< ADD Log Before Call
             result = self.db.elements.bulk_write(operations, ordered=False)
             # Safely get counts and upserted IDs
             upserted_count = getattr(result, 'upserted_count', 0)
@@ -717,7 +746,9 @@ class MongoDBHelper:
                 "upserted_ids": upserted_str_ids # Return list of string ObjectIDs for created docs
             }
         except BulkWriteError as bwe:
-            logger.error(f"Bulk write error during batch upsert (manual): {bwe.details}")
+            # <<< Enhance Logging >>>
+            logger.error(f"Bulk write error during batch upsert (manual): {bwe}")
+            logger.error(f"Bulk write error DETAILS: {bwe.details}")
             details = getattr(bwe, 'details', {})
             # Extract counts from error details
             created = details.get('nUpserted', 0)

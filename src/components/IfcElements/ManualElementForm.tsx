@@ -29,6 +29,8 @@ import { ebkpData, EbkpDataItem } from "../../data/ebkpData.ts";
 import {
   ManualClassificationInput,
   ManualElementInput,
+  ManualMaterialInput,
+  ManualQuantityInput,
 } from "../../types/manualTypes";
 import { IFCElement as LocalIFCElement } from "../../types/types";
 
@@ -50,7 +52,11 @@ interface ClassificationOption {
 }
 
 interface ManualElementFormProps {
-  onSubmit: (data: ManualElementInput, editingId: string | null) => void;
+  onSubmit: (
+    data: ManualElementInput,
+    editingId: string | null,
+    originalStep2Quantity: ManualQuantityInput | null
+  ) => void;
   onCancel: () => void;
   isLoading?: boolean;
   initialData?: LocalIFCElement | null;
@@ -546,14 +552,26 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
       quantity: { ...formData.quantity, value: finalQuantityValue },
       classification: formData.classification,
       materials: [],
-      totalVolume: null,
       description: formData.description,
     };
-    onSubmit(dataToSubmit, initialData?.id || null);
+    onSubmit(dataToSubmit, initialData?.id || null, {
+      ...formData.quantity,
+      value: finalQuantityValue,
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Store the Step 2 quantity before potential modification
+    const originalStep2Quantity: ManualQuantityInput = {
+      ...formData.quantity,
+      value:
+        typeof formData.quantity.value === "number"
+          ? formData.quantity.value
+          : null,
+    };
+
     if (
       !isStep1Valid ||
       !isStep2Valid ||
@@ -568,57 +586,67 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
       return;
     }
 
-    const finalQuantityValue =
-      typeof formData.quantity.value === "number"
-        ? formData.quantity.value
-        : null;
+    // --- MODIFIED: Prepare data based on whether materials exist ---
+    let finalQuantity: ManualQuantityInput;
+    let finalMaterials: ManualMaterialInput[] = [];
     const finalClassificationData = formData.classification;
     const finalTotalVolume = totalVolume; // Already validated by isStep3Valid
 
-    // Ensure final materials sent ONLY have name and CORRECT fraction
-    let finalMaterialsForSubmit: {
-      name: string;
-      fraction: number;
-      volume: number;
-      unit: string;
-    }[] = [];
-    if (typeof finalTotalVolume === "number" && finalTotalVolume > 0) {
-      finalMaterialsForSubmit = formData.materials.map((m) => ({
-        name: m.name,
-        fraction: m.fraction,
-        volume: m.volume ?? m.fraction * finalTotalVolume,
+    if (
+      typeof finalTotalVolume === "number" &&
+      finalTotalVolume > 0 &&
+      formData.materials.length > 0
+    ) {
+      // Case 1: Materials exist, use totalVolume for quantity
+      finalQuantity = {
+        type: "volume",
         unit: "m³",
+        value: finalTotalVolume,
+      };
+
+      // Prepare materials with only name and fraction
+      finalMaterials = formData.materials.map((m) => ({
+        name: m.name,
+        fraction: m.fraction, // Fraction is already calculated and validated
       }));
-      // Final check on fractions before submit
-      const recalcFractionSum = finalMaterialsForSubmit.reduce(
+
+      // Final check on fractions before submit (redundant if validation works, but safe)
+      const recalcFractionSum = finalMaterials.reduce(
         (sum, m) => sum + m.fraction,
         0
       );
       if (Math.abs(recalcFractionSum - 1.0) > 1e-5) {
-        console.error("Final calculated fractions error!");
+        console.error("Final calculated fractions do not sum to 1!");
         setMaterialFractionError(
-          "Fraktionen ergeben keine korrekte Summe (100%)."
+          "Materialanteile ergeben keine 100%. Bitte prüfen."
         );
-        setMaterialVolumeError(""); // Clear volume error if fraction error occurs
-        return;
+        setMaterialVolumeError(""); // Clear volume error
+        return; // Stop submission
       }
     } else {
-      console.error("Cannot finalize materials without valid total volume");
-      return;
+      // Case 2: No materials (or invalid totalVolume, shouldn't happen due to isStep3Valid check)
+      // Use the quantity entered in Step 2
+      const finalStep2QuantityValue =
+        typeof formData.quantity.value === "number"
+          ? formData.quantity.value
+          : null;
+      finalQuantity = { ...formData.quantity, value: finalStep2QuantityValue };
+      finalMaterials = []; // No materials to submit
     }
+    // --- END MODIFICATION ---
 
     onSubmit(
       {
         name: formData.name,
         type: formData.type,
         level: formData.level,
-        quantity: { ...formData.quantity, value: finalQuantityValue },
+        quantity: finalQuantity, // Use the determined quantity
         classification: finalClassificationData,
-        materials: finalMaterialsForSubmit, // Use the processed list
-        totalVolume: finalTotalVolume,
+        materials: finalMaterials, // Use the processed list (name/fraction only)
         description: formData.description,
       },
-      initialData?.id || null
+      initialData?.id || null,
+      originalStep2Quantity // <<< ADDED: Pass original quantity
     );
   };
 

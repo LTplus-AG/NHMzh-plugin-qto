@@ -41,27 +41,29 @@ interface ElementRowProps {
 }
 
 const getQuantityValue = (
-  element: any,
+  element: IFCElement,
   quantityType: "area" | "length"
 ): number | null | undefined => {
-  // First try the new schema: element.quantity.value
+  // 1. Prioritize direct top-level properties first
+  if (quantityType === "area" && typeof element.area === "number") {
+    return element.area;
+  }
+  if (quantityType === "length" && typeof element.length === "number") {
+    return element.length;
+  }
+
+  // 2. Fallback: Check the element.quantity object if top-level fails
   if (
     element.quantity &&
     typeof element.quantity === "object" &&
-    element.quantity.type === quantityType
+    element.quantity.type === quantityType &&
+    typeof element.quantity.value === "number"
   ) {
     return element.quantity.value;
   }
 
-  // Fallback to the old schema: element.area or element.length
-  if (quantityType === "area" && element.area !== undefined) {
-    return element.area;
-  }
-  if (quantityType === "length" && element.length !== undefined) {
-    return element.length;
-  }
-
-  return undefined; // Or 0, depending on desired behavior
+  // 3. If neither is found, return undefined (or null/0 as desired)
+  return undefined;
 };
 
 // <<< ADDED: Helper to check for persisted quantity difference >>>
@@ -97,6 +99,12 @@ const ElementRow: React.FC<ElementRowProps> = ({
   handleEditManualClick, // <<< Destructure prop
   openDeleteConfirm, // <<< Destructure prop
 }) => {
+  // <<< ADD Log for the entire element object >>>
+  console.log(
+    `ElementRow (${element.id}): Received element data:`,
+    JSON.stringify(element, null, 2)
+  );
+
   const category = element.category || element.type;
   const level = element.level || "unbekannt";
   const uniqueKey = `${groupCode}-${elementIndex}-${element.id.substring(
@@ -104,10 +112,33 @@ const ElementRow: React.FC<ElementRowProps> = ({
     8
   )}`;
 
-  // Determine the primary quantity key and unit based on IFC type
-  const config = quantityConfig[element.type] || { key: "area", unit: "m²" }; // Default to area
-  const primaryQuantityKey = config.key;
-  const unit = config.unit;
+  // --- Determine Quantity Key and Unit to Display/Edit ---
+  let displayQuantityKey: "area" | "length" = "area"; // Default
+  let displayUnit: string = "m²"; // Default
+
+  const originalType = element.original_quantity?.type;
+  const currentType = element.quantity?.type;
+  const defaultTypeConfig = quantityConfig[element.type] || {
+    key: "area",
+    unit: "m²",
+  };
+
+  // 1. Prioritize original_quantity type if it's area or length
+  if (originalType === "area" || originalType === "length") {
+    displayQuantityKey = originalType;
+    displayUnit = originalType === "area" ? "m²" : "m";
+  }
+  // 2. Else, use current quantity type if it's area or length
+  else if (currentType === "area" || currentType === "length") {
+    displayQuantityKey = currentType;
+    displayUnit = currentType === "area" ? "m²" : "m";
+  }
+  // 3. Else, fall back to default based on IFC type
+  else {
+    displayQuantityKey = defaultTypeConfig.key;
+    displayUnit = defaultTypeConfig.unit;
+  }
+  // --- End Quantity Key/Unit Determination ---
 
   // Determine display status
   const displayStatus = getElementDisplayStatus(element);
@@ -133,22 +164,23 @@ const ElementRow: React.FC<ElementRowProps> = ({
         return editedElement.originalQuantity.value;
       }
       // Fallback to old schema fields
-      return primaryQuantityKey === "area"
+      return displayQuantityKey === "area"
         ? editedElement.originalArea
         : editedElement.originalLength;
     }
 
-    // Get from non-edited element (new schema)
+    // Get from non-edited element (original_quantity or original_area)
     if (
       element.original_quantity &&
-      typeof element.original_quantity === "object"
+      typeof element.original_quantity === "object" &&
+      element.original_quantity.type === displayQuantityKey // Check type matches
     ) {
       return element.original_quantity.value;
     }
-
-    // Fallback for non-edited (old schema)
-    // Note: original_area was the only field for this in the old schema
-    return element.original_area;
+    // Fallback for non-edited (old schema or if type doesn't match)
+    if (displayQuantityKey === "area") return element.original_area;
+    if (displayQuantityKey === "length") return element.original_length; // Assuming original_length might exist
+    return element.original_area; // Final fallback to original_area
   };
 
   const originalQuantityValue = getOriginalQuantityValue();
@@ -178,13 +210,13 @@ const ElementRow: React.FC<ElementRowProps> = ({
       }
       // Fallback to older properties if new one isn't populated by the hook yet
       else if (
-        primaryQuantityKey === "area" &&
+        displayQuantityKey === "area" &&
         editedElement.newArea !== undefined &&
         editedElement.newArea !== null
       ) {
         valueFromEditState = editedElement.newArea;
       } else if (
-        primaryQuantityKey === "length" &&
+        displayQuantityKey === "length" &&
         editedElement.newLength !== undefined &&
         editedElement.newLength !== null
       ) {
@@ -214,25 +246,28 @@ const ElementRow: React.FC<ElementRowProps> = ({
         // If it wasn't empty string or a number, return original value (e.g. during partial input like "1.")
         // Fallthrough will handle this by returning the original value below
       }
+      // <<< ADDED FALLBACK >>>
+      // If editedElement exists but didn't yield a valid value, fall through to show base element value
+      // (This handles the case right after adding a manual element where edit state might exist but be empty)
     }
 
-    // If no transient edit state, show the value from the main element prop
-    const valueToFormat = getQuantityValue(element, primaryQuantityKey); // Use helper
-    if (valueToFormat === null || valueToFormat === undefined) return "";
-    return formatNumber(valueToFormat);
+    // If no transient edit state OR if editedElement fallback occurs, show the value from the main element prop
+    const valueToFormat = getQuantityValue(element, displayQuantityKey);
+    let finalDisplayValue = "";
+    if (valueToFormat !== null && valueToFormat !== undefined) {
+      finalDisplayValue = formatNumber(valueToFormat);
+    }
+
+    // <<< Re-enable Log >>>
+    console.log(
+      `ElementRow (${element.id}): getDisplayValue calculated: '${finalDisplayValue}' from valueToFormat: ${valueToFormat}`
+    );
+
+    return finalDisplayValue;
   };
 
-  // <<< ADDED: Logging before return >>>
-  console.log(`Element ID: ${element.id}`);
-  console.log(`  isLocallyEdited: ${isLocallyEdited}`);
-  console.log(`  element.quantity:`, element.quantity);
-  console.log(`  element.original_quantity:`, element.original_quantity);
-  console.log(`  isPersistedEdit (calculated): ${isPersistedEdit}`);
-  console.log(
-    `  Apply Highlight (local || persisted): ${
-      isLocallyEdited || isPersistedEdit
-    }`
-  );
+  // <<< Calculate display value outside the return statement >>>
+  const displayValue = getDisplayValue();
 
   return (
     <React.Fragment>
@@ -394,7 +429,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
                       step: "0.001",
                       style: { textAlign: "right" }, // Align text right
                     }}
-                    value={getDisplayValue()} // Display formatted value
+                    value={displayValue} // <<< NEW: Use pre-calculated variable
                     disabled={true}
                     onClick={(e) => e.stopPropagation()}
                     sx={{
@@ -425,12 +460,13 @@ const ElementRow: React.FC<ElementRowProps> = ({
             ) : (
               <TextField
                 size="small"
-                type="number"
+                type="text"
+                inputMode="decimal"
                 inputProps={{
                   step: "0.001",
                   style: { textAlign: "right" }, // Align text right
                 }}
-                value={getDisplayValue()} // Display formatted value
+                value={displayValue} // <<< NEW: Use pre-calculated variable
                 onChange={(e) => {
                   // If this is a grouped element, don't allow direct editing
                   if (element.groupedElements && element.groupedElements > 1) {
@@ -439,7 +475,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
 
                   handleQuantityChange(
                     element.id,
-                    primaryQuantityKey,
+                    displayQuantityKey,
                     originalQuantityValue, // Pass the determined original value
                     e.target.value
                   );
@@ -464,7 +500,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
                           : undefined,
                     },
                   },
-                  // Hide number input spinners
+                  // Hide number input spinners (less relevant for type="text", but keep for safety)
                   "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
                     {
                       WebkitAppearance: "none",
@@ -477,7 +513,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
               />
             )}
             <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
-              {unit}
+              {displayUnit}
             </Typography>
           </Box>
           {/* Show original value only when there is an UNSAVED local edit */}
@@ -491,7 +527,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
                 fontSize: "0.7rem",
               }}
             >
-              (Original: {formatNumber(originalQuantityValue)} {unit})
+              (Original: {formatNumber(originalQuantityValue)} {displayUnit})
             </Typography>
           )}
         </TableCell>

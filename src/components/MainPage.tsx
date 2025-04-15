@@ -30,7 +30,7 @@ import IfcElementsList from "./IfcElementsList";
 import { QtoPreviewDialog } from "./QtoPreviewDialog";
 import React from "react";
 import ManualElementForm from "./IfcElements/ManualElementForm";
-import { ManualElementInput, ManualMaterialInput } from "../types/manualTypes";
+import { ManualElementInput, ManualQuantityInput } from "../types/manualTypes";
 import { v4 as uuidv4 } from "uuid";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { BatchElementData } from "../types/batchUpdateTypes";
@@ -438,36 +438,79 @@ const MainPage = () => {
 
   const handleManualSubmit = async (
     data: ManualElementInput,
-    editingId: string | null
+    editingId: string | null,
+    originalStep2Quantity: ManualQuantityInput | null
   ) => {
     if (!selectedProject) return;
     setManualFormLoading(true);
     setKafkaSuccess(null);
     setKafkaError(null);
 
-    // <<< Explicitly type processedMaterials >>>
-    let processedMaterials: ManualMaterialInput[] = [];
+    // --- Prepare data for API ---
+    let area: number | null = null;
+    let length: number | null = null;
+    let volume: number | null = null;
+    let apiMaterials: {
+      name: string;
+      fraction: number;
+      volume: number | null;
+      unit: string;
+    }[] = [];
+    const apiQuantity = data.quantity; // Primary quantity from form (might be volume)
 
-    if (
-      data.materials.length > 0
-      // && typeof data.totalVolume === "number" && // Volume/Unit are not part of ManualMaterialInput
-      // data.totalVolume > 0
-    ) {
-      // <<< CHANGED: Map to ManualMaterialInput structure (name, fraction only) >>>
-      processedMaterials = data.materials.map((m) => ({
-        name: m.name,
-        fraction: m.fraction ?? 0,
-        volume: m.volume ?? null,
-        unit: m.unit ?? (m.volume ? "m³" : undefined),
-      }));
-      // } else { // Simplified: Always map, even if totalVolume isn't used
-      //   processedMaterials = data.materials.map((m) => ({
-      //     name: m.name,
-      //     fraction: m.fraction ?? 0, // Default null/undefined fraction to 0
-      //     // volume: undefined, // REMOVED
-      //     // unit: undefined, // REMOVED
-      //   }));
+    // Set top-level area/length based on the *original* Step 2 quantity
+    if (originalStep2Quantity) {
+      if (
+        originalStep2Quantity.type === "area" &&
+        typeof originalStep2Quantity.value === "number"
+      ) {
+        area = originalStep2Quantity.value;
+      } else if (
+        originalStep2Quantity.type === "length" &&
+        typeof originalStep2Quantity.value === "number"
+      ) {
+        length = originalStep2Quantity.value;
+      }
     }
+
+    // Determine volume and materials based on the *final* submitted data
+    if (data.materials && data.materials.length > 0) {
+      // Materials exist, the primary quantity (`apiQuantity`) is volume
+      volume = typeof apiQuantity.value === "number" ? apiQuantity.value : null;
+      if (volume !== null && volume > 0) {
+        apiMaterials = data.materials.map((mat) => ({
+          name: mat.name,
+          fraction: mat.fraction,
+          volume: volume !== null ? mat.fraction * volume : null,
+          unit: "m³",
+        }));
+      } else {
+        apiMaterials = data.materials.map((mat) => ({
+          name: mat.name,
+          fraction: mat.fraction,
+          volume: null,
+          unit: "m³",
+        }));
+      }
+    } // No else needed here, volume remains null if no materials
+
+    // --- Determine original area/length for NEW elements ---
+    let original_area: number | null = null;
+    let original_length: number | null = null;
+    if (!editingId && originalStep2Quantity) {
+      if (
+        originalStep2Quantity.type === "area" &&
+        typeof originalStep2Quantity.value === "number"
+      ) {
+        original_area = originalStep2Quantity.value;
+      } else if (
+        originalStep2Quantity.type === "length" &&
+        typeof originalStep2Quantity.value === "number"
+      ) {
+        original_length = originalStep2Quantity.value;
+      }
+    }
+    // --- End data preparation ---
 
     const elementDataForApi: BatchElementData = {
       id: editingId || `manual_${uuidv4()}`,
@@ -476,17 +519,23 @@ const MainPage = () => {
         : `MANUAL-${editingId || "new"}`,
       type: data.type,
       name: data.name,
-      type_name: data.name,
+      type_name: data.name, // Use name as type_name for manual elements
       description: data.description,
       level: data.level,
-      quantity: data.quantity,
-      original_quantity: editingId ? undefined : data.quantity,
+      // --- Fields derived above ---
+      quantity: apiQuantity,
+      area: area,
+      length: length,
+      materials: apiMaterials,
+      // --- End derived fields ---
+      original_quantity: editingId ? undefined : originalStep2Quantity,
+      original_area: editingId ? undefined : original_area,
+      original_length: editingId ? undefined : original_length,
       classification: data.classification,
-      materials: processedMaterials,
-      properties: {},
+      properties: {}, // Start with empty properties for manual elements
       is_manual: true,
-      is_structural: false,
-      is_external: false,
+      is_structural: false, // Default values for manual elements
+      is_external: false, // Default values for manual elements
     };
 
     try {
@@ -502,7 +551,56 @@ const MainPage = () => {
         setKafkaSuccess(true);
         setShowManualForm(false);
         setEditingElement(null);
-        fetchProjectElements(selectedProject);
+
+        // --- Update Local State Directly ---
+        const newOrUpdatedElement: LocalIFCElement = {
+          // Map fields from elementDataForApi to LocalIFCElement structure
+          id: elementDataForApi.id,
+          global_id: elementDataForApi.global_id,
+          type: elementDataForApi.type,
+          name: elementDataForApi.name,
+          type_name: elementDataForApi.type_name,
+          description: elementDataForApi.description,
+          properties: elementDataForApi.properties ?? {},
+          level: elementDataForApi.level,
+          classification: elementDataForApi.classification, // Assuming structure matches
+          materials:
+            elementDataForApi.materials?.map((m) => ({
+              // Ensure materials match LocalIFCElement structure
+              name: m.name,
+              fraction: m.fraction,
+              volume: m.volume,
+              unit: m.unit,
+            })) ?? [],
+          quantity: elementDataForApi.quantity, // Assuming structure matches
+          original_quantity: elementDataForApi.original_quantity,
+          area: elementDataForApi.area, // <<< Ensure these are included
+          length: elementDataForApi.length,
+          volume: null, // Keep top-level volume null as per previous request
+          original_area: elementDataForApi.original_area, // <<< Ensure these are included
+          original_length: elementDataForApi.original_length,
+          is_manual: true,
+          status: "active", // Assume successful save means active
+          category: elementDataForApi.type, // Use type as category for manual? Or leave undefined?
+          is_structural: elementDataForApi.is_structural ?? false,
+          is_external: elementDataForApi.is_external ?? false,
+          ebkph: elementDataForApi.classification?.id, // Extract from classification if possible
+        };
+
+        setIfcElements((prevElements) => {
+          if (editingId) {
+            // Update existing element
+            return prevElements.map((el) =>
+              el.id === editingId ? newOrUpdatedElement : el
+            );
+          } else {
+            // Add new element
+            return [...prevElements, newOrUpdatedElement];
+          }
+        });
+
+        // --- Remove Refetch ---
+        // fetchProjectElements(selectedProject); // <<< REMOVED
       } else {
         console.error("Failed to save manual element:", response?.message);
         setKafkaError(
