@@ -228,84 +228,102 @@ class MongoDBHelper:
             logger.error(f"Error getting element from MongoDB: {e}")
             return None
 
-    def delete_project_elements(self, project_id: ObjectId) -> bool:
-        """Delete all elements for a project.
-        
+    def delete_project_elements(self, project_id: ObjectId, keep_manual: bool = False) -> Dict[str, Any]:
+        """Delete elements for a project, optionally keeping manual ones.
+
         Args:
             project_id: ObjectId of the project
-            
+            keep_manual: If True, only delete elements where is_manual is not True.
+
         Returns:
-            Boolean indicating if deletion was successful
+            Dictionary with success status and deletion count.
         """
         if self.db is None:
             logger.error("MongoDB not connected, cannot delete elements")
-            return False
-            
+            return {"success": False, "message": "Database not connected.", "deleted_count": 0}
+
         try:
             # Convert string ID to ObjectId if needed
             if isinstance(project_id, str):
                 project_id = ObjectId(project_id)
-                
-            # Delete all elements for this project
-            result = self.db.elements.delete_many({"project_id": project_id})
-            if result.deleted_count > 0:
-                logger.info(f"Deleted {result.deleted_count} elements for project {project_id}")
-                return True
+
+            # Build the filter based on whether to keep manual elements
+            delete_filter = {"project_id": project_id}
+            if keep_manual:
+                delete_filter["is_manual"] = {"$ne": True}
+                log_msg_suffix = " non-manual"
+            else:
+                log_msg_suffix = "" # Delete all
+
+            # Delete elements matching the filter
+            result = self.db.elements.delete_many(delete_filter)
+            deleted_count = result.deleted_count
+            logger.info(f"Deleted {deleted_count}{log_msg_suffix} elements for project {project_id}")
+            return {"success": True, "deleted_count": deleted_count}
         except Exception as e:
             logger.error(f"Error deleting project elements: {e}")
-            return False
+            return {"success": False, "message": str(e), "deleted_count": 0}
 
-    def save_elements_batch(self, elements: List[Dict[str, Any]], project_id: ObjectId) -> bool:
-        """Save multiple elements, replacing all existing elements for the project.
-        Since we're not using a replica set, we'll do this without transactions.
-        
+    def replace_project_elements(self, project_id: ObjectId, elements_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Replaces all non-manual elements for a project with the provided list.
+        Designed for handling uploads of newly parsed IFC data.
+
         Args:
-            elements: List of element dictionaries to save
-            project_id: ObjectId of the project
-            
+            project_id: ObjectId of the project.
+            elements_data: List of element dictionaries to insert.
+
         Returns:
-            Boolean indicating if save was successful
+            Dictionary with success status and insert count.
         """
         if self.db is None:
-            logger.error("MongoDB not connected, cannot save elements")
-            return False
-            
+            logger.error("MongoDB not connected, cannot replace project elements")
+            return {"success": False, "message": "Database not connected.", "inserted_count": 0}
+
         try:
-            # First delete all existing non-manual elements for this project
-            # Add a filter to keep elements marked as manual
-            delete_filter = {
-                "project_id": project_id,
-                "is_manual": {"$ne": True} # Only delete elements that are NOT manual
-            }
-            delete_result = self.db.elements.delete_many(delete_filter)
-            logger.info(f"Deleted {delete_result.deleted_count} existing non-manual elements for project {project_id}")
-            
-            # Now insert all new elements from the IFC file
-            if elements:
-                # Add timestamps, project_id, and mark as non-manual
-                now = datetime.now(timezone.utc) # Define timestamp for the batch
-                elements_to_insert = []
-                for element in elements:
-                    element['project_id'] = project_id # <<< Assign the correct project_id
-                    element['created_at'] = now # Set creation time for new batch
-                    element['updated_at'] = now
-                    # Remove project_id if it was incorrectly a string before (shouldn't happen now)
-                    # if isinstance(element.get('project_id'), str):
-                    #    del element['project_id'] # Remove incorrect string id
-                    element['is_manual'] = False # Explicitly mark elements from IFC as not manual
-                    elements_to_insert.append(element)
-                
-                # Insert all elements
-                if elements_to_insert:
-                     result = self.db.elements.insert_many(elements_to_insert)
-                     if result.inserted_ids:
-                         logger.info(f"Inserted {len(result.inserted_ids)} new elements from IFC for project {project_id}")
-            
-            return True
-                    
+            # 1. Delete existing non-manual elements for the project
+            delete_result = self.delete_project_elements(project_id, keep_manual=True)
+            if not delete_result["success"]:
+                # Propagate the error message from the delete operation
+                return {"success": False, "message": f"Failed to delete existing elements: {delete_result.get('message', 'Unknown error')}", "inserted_count": 0}
+
+            # 2. Insert the new elements if the list is not empty
+            if not elements_data:
+                logger.info(f"No new elements provided to insert for project {project_id} after deletion.")
+                return {"success": True, "message": "Existing non-manual elements deleted, no new elements to insert.", "inserted_count": 0}
+
+            now = datetime.now(timezone.utc)
+            elements_to_insert = []
+            for element in elements_data:
+                # Ensure basic fields and timestamps are set correctly
+                element['project_id'] = project_id
+                element['created_at'] = now # Mark creation time for this batch
+                element['updated_at'] = now
+                element['is_manual'] = False # Mark elements from IFC as not manual
+                element['status'] = "pending" # Newly uploaded elements start as pending
+                # Remove _id if it somehow exists in the input data
+                element.pop('_id', None)
+                elements_to_insert.append(element)
+
+            if not elements_to_insert: # Should not happen if elements_data was not empty, but safety check
+                 logger.warning(f"Prepared list for insertion is empty for project {project_id}, although input was not.")
+                 return {"success": True, "message": "Internal preparation resulted in empty list.", "inserted_count": 0}
+
+            # Perform the bulk insert
+            insert_result = self.db.elements.insert_many(elements_to_insert, ordered=False)
+            inserted_count = len(insert_result.inserted_ids)
+            logger.info(f"Inserted {inserted_count} new elements from IFC for project {project_id}")
+
+            return {"success": True, "inserted_count": inserted_count}
+
+        except BulkWriteError as bwe:
+            # Handle potential errors during insert_many
+            logger.error(f"Bulk write error during replace_project_elements (insert phase): {bwe.details}")
+            # We might have partially deleted elements, state is inconsistent.
+            return {"success": False, "message": f"Bulk write error during insertion: {bwe.details}", "inserted_count": 0}
         except Exception as e:
-            logger.error(f"Error in save_elements_batch: {e}")
-            return False
+            logger.error(f"Unexpected error in replace_project_elements for project {project_id}: {e}", exc_info=True)
+            return {"success": False, "message": f"Unexpected error: {str(e)}", "inserted_count": 0}
 
     # --- NEW METHODS for Parsed Data ---
     def save_parsed_data(self, project_name: str, filename: str, elements: List[Dict[str, Any]]) -> bool:
@@ -522,28 +540,36 @@ class MongoDBHelper:
             return {"success": False, "message": "Database not connected."}
         
         try:
+            # logger.info(f"Attempting to delete element with ifc_id: '{element_ifc_id}' in project_id: {project_id}") # <<< Logging
             # Find the element first to verify it's manual and belongs to the project
             element_to_delete = self.db.elements.find_one({
                 "project_id": project_id,
                 "ifc_id": element_ifc_id
             })
+            # logger.info(f"Result of find_one for element '{element_ifc_id}': {'Found' if element_to_delete else 'Not Found'}") # <<< Logging
 
             if not element_to_delete:
                 logger.warning(f"Element with ifc_id {element_ifc_id} not found in project {project_id} for deletion.")
                 return {"success": False, "message": "Element not found.", "deleted_count": 0}
             
             # <<< Important Check: Only allow deleting manual elements >>>
-            if not element_to_delete.get("is_manual", False):
+            is_manual_flag = element_to_delete.get("is_manual", False) # <<< Logging
+            # logger.info(f"Element '{element_ifc_id}' found. is_manual flag: {is_manual_flag}") # <<< Logging
+            if not is_manual_flag:
                  logger.warning(f"Attempted to delete non-manual element {element_ifc_id}. Operation forbidden.")
                  return {"success": False, "message": "Only manually added elements can be deleted.", "deleted_count": 0}
 
             # Proceed with deletion
+            element_db_id = element_to_delete["_id"] # <<< Logging
+            # logger.info(f"Proceeding to delete element with database _id: {element_db_id}") # <<< Logging
             result = self.db.elements.delete_one({
-                "_id": element_to_delete["_id"] # Delete by unique _id
+                "_id": element_db_id # Delete by unique _id
             })
+            delete_count = result.deleted_count # <<< Logging
+            # logger.info(f"Result of delete_one operation: deleted_count={delete_count}") # <<< Logging
 
-            if result.deleted_count == 1:
-                logger.info(f"Successfully deleted manual element {element_ifc_id} from project {project_id}")
+            if delete_count == 1:
+                logger.info(f"Successfully deleted manual element {element_ifc_id} (DB ID: {element_db_id}) from project {project_id}")
                 return {"success": True, "deleted_count": 1}
             else:
                  # Should not happen if find_one succeeded, but good practice
@@ -554,153 +580,161 @@ class MongoDBHelper:
             logger.error(f"Error deleting element {element_ifc_id}: {e}")
             return {"success": False, "message": str(e), "deleted_count": 0}
 
-    # --- ADDED: Method for Batch Upsert --- #
-    def batch_upsert_elements(self, project_id: ObjectId, elements_data: List[Any]) -> Dict[str, Any]: # Changed type hint to List[Any] to handle potential dicts
-        """Performs a batch update/insert operation for elements.
+    # --- Method Renamed & Refined for Manual Updates/Creates --- #
+    def batch_upsert_manual_elements(self, project_id: ObjectId, elements_data: List[Any]) -> Dict[str, Any]:
+        """Performs a batch update/insert operation primarily for manual elements.
 
-        - Updates existing elements based on 'id' (ifc_id).
-        - Inserts new manual elements (if 'id' starts with 'manual_').
-        - Sets status to 'active' for all processed elements.
+        - Updates existing elements based on 'ifc_id'.
+        - Inserts new elements if 'ifc_id' is provided and does not exist (upsert=True).
+        - Can handle elements marked as manual or not, but intended for UI-driven updates.
+        - Sets status to 'active' for all processed elements by default (can be overridden in input).
 
         Args:
             project_id: ObjectId of the project.
-            elements_data: List of element Pydantic models (BatchElementData).
+            elements_data: List of element dictionaries or Pydantic models (BatchElementData).
 
         Returns:
-            Dictionary with success status and counts (processed, created, updated).
+            Dictionary with success status and counts (processed, created, updated, upserted).
         """
         if self.db is None:
-            logger.error("MongoDB not connected, cannot perform batch upsert")
+            logger.error("MongoDB not connected, cannot perform batch upsert for manual elements")
             return {"success": False, "message": "Database not connected."}
 
         operations = []
         processed_count = 0
+        ids_to_return = [] # Store IDs of created/updated elements
         now = datetime.now(timezone.utc)
 
-        for element_model in elements_data: # element_model is actually a DICT here
-            element_id = None # Initialize for error logging
+        for element_input in elements_data:
+            element_dict = {}
+            if hasattr(element_input, 'model_dump'): # Check if it's a Pydantic model
+                element_dict = element_input.model_dump(exclude_unset=True, exclude_none=True)
+            elif isinstance(element_input, dict):
+                element_dict = element_input.copy() # Work with a copy
+            else:
+                logger.warning(f"Skipping unrecognized element data type in batch: {type(element_input)}")
+                continue
+
+            element_ifc_id = element_dict.get('id') or element_dict.get('ifc_id') # Allow 'id' or 'ifc_id'
+            if not element_ifc_id:
+                logger.warning(f"Skipping element without 'id' or 'ifc_id' in batch upsert: {element_dict.get('name', 'N/A')}")
+                continue
+
             try:
-                # <<< Ensure we are working with dictionary keys >>>
-                element_id = element_model.get('id') # Use .get() for safer access
-                if not element_id:
-                    logger.warning(f"Skipping element without ID in batch upsert: {element_model.get('name', 'N/A')}")
-                    continue
+                # Prepare the document data to be saved/updated
+                # Default status to active if not provided
+                element_status = element_dict.get('status', 'active')
 
-                is_manual_input = element_model.get('is_manual', False) # Default to False
-                is_create_operation = is_manual_input and isinstance(element_id, str) and element_id.startswith('manual_')
-
-                # Prepare the document data to be saved/updated using dictionary values
-                # Handle potential nested DICTIONARIES (not Pydantic models at this stage)
-                quantity_dict = element_model.get('quantity')
-                original_quantity_dict = element_model.get('original_quantity')
-                classification_dict = element_model.get('classification')
-                materials_list = element_model.get('materials', []) # Default to empty list
-
-                db_doc = {
-                    "project_id": project_id,
-                    "ifc_class": element_model.get('type') or element_model.get('ifc_class'), # Handle alias from dict
-                    "name": element_model.get('name'),
-                    "type_name": element_model.get('type_name'),
-                    "level": element_model.get('level'),
-                    "description": element_model.get('description'),
-                    "quantity": quantity_dict, # Already a dict or None
-                    "original_quantity": original_quantity_dict, # Already a dict or None
-                    "classification": classification_dict, # Already a dict or None
-                    "materials": materials_list, # Already a list or []
-                    "properties": element_model.get('properties', {}),
-                    "is_manual": is_manual_input,
-                    "is_structural": element_model.get('is_structural', False), # Default to False
-                    "is_external": element_model.get('is_external', False),   # Default to False
-                    "status": "active", # Set status to active for all batch updates
+                db_doc_set = {
+                    "project_id": project_id, # Ensure project_id is set
+                    "ifc_class": element_dict.get('type') or element_dict.get('ifc_class'),
+                    "name": element_dict.get('name'),
+                    "type_name": element_dict.get('type_name'),
+                    "level": element_dict.get('level'),
+                    "description": element_dict.get('description'),
+                    "quantity": element_dict.get('quantity'),
+                    "original_quantity": element_dict.get('original_quantity'), # Keep original if provided
+                    "classification": element_dict.get('classification'),
+                    "materials": element_dict.get('materials', []),
+                    "properties": element_dict.get('properties', {}),
+                    "is_manual": element_dict.get('is_manual', True), # Default to True for this endpoint
+                    "is_structural": element_dict.get('is_structural'),
+                    "is_external": element_dict.get('is_external'),
+                    "status": element_status,
                     "updated_at": now,
-                    "global_id": element_model.get('global_id')
+                    "global_id": element_dict.get('global_id')
                 }
-                # Remove keys with None values before saving
-                db_doc = {k: v for k, v in db_doc.items() if v is not None}
+                # Remove keys with None values from $set payload
+                db_doc_set = {k: v for k, v in db_doc_set.items() if v is not None}
 
-                if is_create_operation:
-                    # INSERT new manual element
-                    new_object_id = ObjectId()
-                    db_doc['_id'] = new_object_id
-                    # Use the string representation of the new _id as the primary ifc_id for manual elements
-                    db_doc['ifc_id'] = str(new_object_id)
-                    # Assign GlobalId if not present
-                    if 'global_id' not in db_doc or not db_doc['global_id']:
-                        db_doc['global_id'] = f"MANUAL-{db_doc['ifc_id']}"
-                    db_doc['created_at'] = now
-                    # Remove temporary 'id' field if it exists from the original request
-                    if 'id' in db_doc: del db_doc['id'] 
+                # <<< FIX: Remove original_quantity from $set to avoid conflict >>>
+                db_doc_set.pop('original_quantity', None)
 
-                    operations.append(InsertOne(db_doc))
-                else:
-                    # UPDATE existing element (identified by 'id' which should be ifc_id)
-                    update_payload = db_doc.copy()
-                    # Don't try to set _id or created_at on update
-                    if '_id' in update_payload: del update_payload['_id']
-                    if 'created_at' in update_payload: del update_payload['created_at']
-                    if 'ifc_id' in update_payload: del update_payload['ifc_id'] # Filter is on ifc_id
+                # Fields to set only on insert (creation)
+                db_doc_on_insert = {
+                     "created_at": now,
+                     # Set original quantity on insert if not provided explicitly
+                     # Note: We use element_dict here because db_doc_set might have had original_quantity removed already
+                     "original_quantity": element_dict.get('original_quantity') or element_dict.get('quantity'),
+                     "ifc_id": element_ifc_id # Ensure ifc_id is set on insert
+                 }
+                # Generate pseudo GlobalId on insert if missing
+                # (Adjusted this logic slightly as well for clarity)
+                global_id_to_set = element_dict.get('global_id')
+                if not global_id_to_set:
+                    db_doc_on_insert['global_id'] = f"MANUAL-{element_ifc_id}"
+                elif 'global_id' not in db_doc_set: # Ensure it's in $set if provided but was None originally
+                    db_doc_set['global_id'] = global_id_to_set
 
-                    operations.append(UpdateOne(
-                        {"project_id": project_id, "ifc_id": element_id}, # Filter by ifc_id
-                        {"$set": update_payload},
-                        upsert=False # Do not insert if it doesn't exist
-                    ))
-
+                # Use UpdateOne with upsert=True
+                operations.append(UpdateOne(
+                    {"project_id": project_id, "ifc_id": element_ifc_id},
+                    {
+                        "$set": db_doc_set,
+                        "$setOnInsert": db_doc_on_insert
+                    },
+                    upsert=True
+                ))
                 processed_count += 1
             except Exception as e:
-                # Use .get for safer access in error logging
-                error_id = element_model.get('id', 'N/A')
+                error_id = element_ifc_id or element_dict.get('name', 'N/A')
                 logger.error(f"Error preparing operation for element {error_id}: {e}", exc_info=True)
                 # Continue processing other elements
 
         # Execute Batch Operation
         if not operations:
-             logger.info("No element operations to perform for batch upsert.")
-             return {"success": True, "processed": 0, "created": 0, "updated": 0, "inserted_ids": []}
+             logger.info("No element operations to perform for batch upsert (manual).")
+             return {"success": True, "processed": 0, "created": 0, "updated": 0, "upserted_ids": []}
 
         try:
             result = self.db.elements.bulk_write(operations, ordered=False)
-            # Safely get counts and inserted_ids
-            insert_count = getattr(result, 'inserted_count', 0)
+            # Safely get counts and upserted IDs
             upserted_count = getattr(result, 'upserted_count', 0)
             updated_count = getattr(result, 'modified_count', 0)
             matched_count = getattr(result, 'matched_count', 0)
-            inserted_object_ids = getattr(result, 'inserted_ids', [])
-            # Convert ObjectIds to strings for the final return dict
-            inserted_str_ids = [str(oid) for oid in inserted_object_ids]
+            upserted_object_ids = getattr(result, 'upserted_ids', {}) # Dict: {index: _id}
+
+            # Combine created (upserted) and updated counts
+            created_or_updated_count = upserted_count + updated_count
+
+            # Get the string representation of upserted ObjectIds
+            upserted_str_ids = [str(oid) for oid in upserted_object_ids.values()]
 
             logger.info(
-                f"Bulk write result: matched={matched_count}, "
-                f"modified={updated_count}, upserted={upserted_count}, " # Removed upserted_ids as InsertOne is used
-                f"inserted={insert_count} (IDs: {inserted_str_ids})"
+                f"Manual Bulk write result: matched={matched_count}, "
+                f"modified={updated_count}, upserted={upserted_count} "
+                f"(Upserted ObjectIDs: {upserted_str_ids})"
             )
 
+            # Note: It's hard to get the specific IDs of merely *updated* documents from bulk_write result easily.
+            # We return the IDs of the *upserted* (newly created) documents.
             return {
                 "success": True,
                 "processed": processed_count,
-                "created": insert_count + upserted_count, 
-                "updated": updated_count, 
-                "inserted_ids": inserted_str_ids # Return list of string IDs
+                "created_or_updated": created_or_updated_count, # Combined count
+                "created": upserted_count, # Specifically created count
+                "updated": updated_count, # Specifically updated count
+                "upserted_ids": upserted_str_ids # Return list of string ObjectIDs for created docs
             }
         except BulkWriteError as bwe:
-            logger.error(f"Bulk write error during batch upsert: {bwe.details}")
-            # Safely get counts and inserted IDs from the exception details if available
+            logger.error(f"Bulk write error during batch upsert (manual): {bwe.details}")
             details = getattr(bwe, 'details', {})
-            created = details.get('nInserted', 0) + details.get('nUpserted', 0)
+            # Extract counts from error details
+            created = details.get('nUpserted', 0)
             updated = details.get('nModified', 0)
-            # Note: bulk_write exception details might not contain 'inserted' list easily
-            inserted_ids_on_error = [str(oid) for oid in details.get('upserted', [])] if details.get('upserted') else []
+            upserted_ids_on_error = [str(oid) for oid in details.get('upserted', [])] if details.get('upserted') else []
 
             return {
                 "success": False,
                 "message": f"Bulk write error occurred: {len(details.get('writeErrors', []))} errors.",
                 "details": details,
-                "processed": processed_count, # Might not be fully accurate on error
+                "processed": processed_count,
+                "created_or_updated": created + updated,
                 "created": created,
                 "updated": updated,
-                "inserted_ids": inserted_ids_on_error
-                }
+                "upserted_ids": upserted_ids_on_error
+            }
         except Exception as e:
-            logger.error(f"Unexpected error during batch upsert execution: {e}", exc_info=True)
-            return {"success": False, "message": f"Unexpected error: {e}", "processed": processed_count, "created": 0, "updated": 0, "inserted_ids": []}
+            logger.error(f"Unexpected error during batch upsert (manual) execution: {e}", exc_info=True)
+            return {"success": False, "message": f"Unexpected error: {e}", "processed": processed_count, "created": 0, "updated": 0, "upserted_ids": []}
 

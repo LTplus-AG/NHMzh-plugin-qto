@@ -1,4 +1,5 @@
 import { BatchElementData } from "../types/batchUpdateTypes";
+import { ElementQuantityUpdate } from "./types.ts"; // Correct relative path
 
 // <<< ADDED: Interface for nested quantity data >>>
 export interface QuantityData {
@@ -375,6 +376,39 @@ export class QTOApiClient {
       console.error(
         `Error deleting element ${elementId} from project '${projectName}': ${error}`
       );
+      throw error;
+    }
+  }
+
+  async approveProject(
+    projectName: string,
+    updates: ElementQuantityUpdate[]
+  ): Promise<{ status: string; message: string; project: string }> {
+    try {
+      const encodedProjectName = encodeURIComponent(projectName);
+      const response = await fetch(
+        `${this.baseUrl}/projects/${encodedProjectName}/approve/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(updates),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to approve project: ${response.statusText} - ${errorText}`
+        );
+      }
+
+      const result = await response.json();
+      console.log(`Successfully approved project ${projectName}`);
+      return result;
+    } catch (error) {
+      console.error(`Error approving project ${projectName}:`, error);
       throw error;
     }
   }

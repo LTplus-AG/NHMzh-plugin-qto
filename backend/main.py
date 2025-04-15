@@ -15,6 +15,7 @@ from functools import lru_cache
 from qto_producer import MongoDBHelper # Removed QTOKafkaProducer import
 import re
 from pymongo.database import Database # <<< Import Database type
+from bson.objectid import ObjectId
 # Import the new configuration
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 from datetime import datetime, timezone
@@ -806,22 +807,20 @@ async def upload_ifc(
 
             # 2. Save the parsed elements to the elements collection for this project
             logger.info(f"Saving/Updating {len(element_dicts)} parsed elements via batch upsert for project '{project}' (ID: {project_id})")
-            # Call batch_upsert_elements for update/insert behavior
+            # Call the NEW function for replacing elements from IFC
             # Note: Pass the element dictionaries directly
-            upsert_result = mongodb.batch_upsert_elements(project_id=project_id, elements_data=element_dicts)
+            replace_result = mongodb.replace_project_elements(project_id=project_id, elements_data=element_dicts)
 
             # Check the success field from the result dictionary
-            if not upsert_result.get("success"): 
-                logger.error(f"Failed batch upsert elements for project '{project}'. Details: {upsert_result.get('message')}")
+            if not replace_result.get("success"):
+                logger.error(f"Failed to replace elements for project '{project}'. Details: {replace_result.get('message')}")
                 # Use message from result if available
-                error_detail = upsert_result.get("message", "Failed to save element processing results to database.")
+                error_detail = replace_result.get("message", "Failed to save element processing results to database.")
                 raise HTTPException(500, detail=error_detail)
             else:
                 logger.info(
-                    f"Batch upsert successful for project {project}. "
-                    f"Processed: {upsert_result.get('processed', 0)}, "
-                    f"Created: {upsert_result.get('created', 0)}, "
-                    f"Updated: {upsert_result.get('updated', 0)}"
+                    f"Successfully replaced elements for project {project}. "
+                    f"Inserted: {replace_result.get('inserted_count', 0)}"
                 )
         else:
             logger.warning("MongoDB not connected. Parsed elements not saved.")
@@ -1328,40 +1327,48 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
         elements_dict_list = [element.model_dump(exclude_unset=True) for element in request_data.elements]
 
         # Perform the batch upsert using MongoDBHelper
-        # Assuming batch_upsert_elements uses the global mongodb instance internally
-        result = mongodb.batch_upsert_elements(project_id, elements_dict_list)
+        # Call the RENAMED function for handling manual updates/creates
+        result = mongodb.batch_upsert_manual_elements(project_id, elements_dict_list)
 
         if result.get("success"):
             logger.info(
-                f"Batch update DB operation successful for project {project_name}. "
+                f"Batch update (manual) DB operation successful for project {project_name}. "
                 f"Requested: {len(request_data.elements)}, DB Processed: {result.get('processed', 0)}, "
-                f"Created: {result.get('created', 0)}, Updated: {result.get('updated', 0)}"
+                f"Created/Updated: {result.get('created_or_updated', 0)}" # Changed log field
             )
             # Fetch the updated/created elements using injected db
-            inserted_ids = result.get("inserted_ids", [])
-            updated_elements = []
-            if inserted_ids:
-                 # Convert string IDs back to ObjectIds if needed, or adjust query
-                 object_ids_to_find = []
-                 ifc_ids_to_find = []
-                 for id_val in inserted_ids:
-                     try:
-                         object_ids_to_find.append(ObjectId(id_val))
-                     except:
-                         ifc_ids_to_find.append(id_val)
-                 
-                 query_filter = {"project_id": project_id, "$or": []}
-                 if object_ids_to_find:
-                     query_filter["$or"].append({"_id": {"$in": object_ids_to_find}})
-                 if ifc_ids_to_find:
-                     query_filter["$or"].append({"ifc_id": {"$in": ifc_ids_to_find}})
+            # Fetch based on the provided IDs in the request, or upserted IDs from response
+            upserted_ids = result.get("upserted_ids", []) # List of string ObjectIDs for *created* docs
+            request_ifc_ids = [elem.get('id') or elem.get('ifc_id') for elem in elements_dict_list] # Get all IDs from request
 
+            # Find filter needs adjustment: Find by ifc_id from request OR _id from upserted_ids
+            query_filter = {"project_id": project_id, "$or": []}
+
+            # Add condition for upserted (created) documents by _id
+            if upserted_ids:
+                try:
+                    upserted_object_ids = [ObjectId(oid_str) for oid_str in upserted_ids]
+                    if upserted_object_ids:
+                         query_filter["$or"].append({"_id": {"$in": upserted_object_ids}})
+                except Exception as oid_err:
+                    logger.warning(f"Could not convert upserted string IDs to ObjectIds: {oid_err}")
+
+            # Add condition for potentially updated documents by ifc_id (excluding those just created)
+            # Use all request IDs for simplicity, as finding *only* updated ones is complex
+            if request_ifc_ids:
+                 query_filter["$or"].append({"ifc_id": {"$in": request_ifc_ids}})
+
+            updated_elements = []
+            if query_filter["$or"]:
+                 # Avoid adding empty $or condition
                  if query_filter["$or"]:
-                     updated_elements_cursor = db.elements.find(query_filter)
-                     updated_elements = list(updated_elements_cursor)
-                 else: 
-                     logger.info("No valid inserted IDs found to fetch.")
-            
+                      updated_elements_cursor = db.elements.find(query_filter)
+                      updated_elements = list(updated_elements_cursor)
+                 else:
+                      logger.info("No valid IDs found to fetch after batch update (manual).")
+            else:
+                 logger.info("No conditions generated to fetch elements after batch update (manual).")
+
             # Map DB response to Pydantic (similar to get_project_elements)
             response_elements = []
             for elem in updated_elements:

@@ -29,12 +29,12 @@ import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 import IfcElementsList from "./IfcElementsList";
 import { QtoPreviewDialog } from "./QtoPreviewDialog";
 import React from "react";
-import { quantityConfig } from "../types/types";
 import ManualElementForm from "./IfcElements/ManualElementForm";
-import { ManualElementInput } from "../types/manualTypes";
+import { ManualElementInput, ManualMaterialInput } from "../types/manualTypes";
 import { v4 as uuidv4 } from "uuid";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { BatchElementData } from "../types/batchUpdateTypes";
+import { ElementQuantityUpdate } from "../api/types";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -63,7 +63,7 @@ const MainPage = () => {
     useState<ProjectMetadata | null>(null);
   const [metadataLoading, setMetadataLoading] = useState<boolean>(false);
   const [showManualForm, setShowManualForm] = useState<boolean>(false);
-  const [manualFormLoading] = useState<boolean>(false);
+  const [manualFormLoading, setManualFormLoading] = useState<boolean>(false);
   const [classificationFilter, setClassificationFilter] = useState<string[]>(
     []
   );
@@ -296,173 +296,116 @@ const MainPage = () => {
     }
 
     try {
-      // --- REVERTED: Prepare data for batch update endpoint ---
-      const batchData: BatchElementData[] = [];
+      // --- MODIFIED: Prepare data ONLY for the /approve endpoint ---
 
-      // Process ALL current elements (IFC-derived and locally added manual ones)
-      for (const element of ifcElements) {
-        const isEdited = editedElements.hasOwnProperty(element.id);
+      // 1. Prepare quantity updates for EDITED NON-MANUAL elements
+      const quantityUpdates: ElementQuantityUpdate[] = [];
+      for (const elementId in editedElements) {
+        // Find the original element to check if it's manual
+        const originalElement = ifcElements.find((el) => el.id === elementId);
 
-        // Determine current quantity to send
-        let currentQuantity: any = null;
-        const config = quantityConfig[element.type] || {
-          key: "area",
-          unit: "m²",
-        }; // Default config
-
-        if (isEdited) {
-          const editData = editedElements[element.id];
-          if (editData.newQuantity) {
-            currentQuantity = {
-              value: editData.newQuantity.value,
-              type: editData.newQuantity.type,
-              unit: config.unit ?? "?", // Ensure unit is string
-            };
-          } else {
-            // Fallback for older structure
-            currentQuantity = {
-              value:
-                config.key === "area" ? editData.newArea : editData.newLength,
-              type: config.key,
-              unit: config.unit ?? "?", // Ensure unit is string
-            };
-          }
-          // Ensure value is a number
-          if (currentQuantity && typeof currentQuantity.value === "string") {
-            const parsedValue = parseFloat(currentQuantity.value);
-            currentQuantity.value = !isNaN(parsedValue) ? parsedValue : null;
-          } else if (
-            currentQuantity &&
-            typeof currentQuantity.value !== "number"
+        // IMPORTANT: Only include updates for non-manual elements
+        if (originalElement && !originalElement.is_manual) {
+          const editData = editedElements[elementId];
+          if (
+            editData.newQuantity &&
+            typeof editData.newQuantity.value === "number"
           ) {
-            currentQuantity.value = null; // Default invalid non-strings to null
-          }
-        } else {
-          // Use the element's current quantity if not edited
-          currentQuantity = element.quantity;
-        }
+            // The type of validQuantityType needs to allow all possibilities used below
+            let validQuantityType: "area" | "length" | "volume" | string =
+              "area"; // Default, allow string for flexibility
 
-        // Determine original quantity (important for batch update)
-        // Use the original_quantity from the element itself,
-        // or reconstruct if it was potentially edited (fallback, less ideal)
-        let originalQuantityForPayload = element.original_quantity;
-        if (!originalQuantityForPayload && isEdited) {
-          const editData = editedElements[element.id];
-          if (editData.originalQuantity) {
-            originalQuantityForPayload = {
-              value: editData.originalQuantity.value,
-              type: editData.originalQuantity.type,
-              unit: config.unit ?? "?", // Ensure unit is string
+            // <<< ADDED Type assertion for newQuantity >>>
+            const currentQuantity = editData.newQuantity as {
+              value?: number | null;
+              type?: string;
+              unit?: string;
             };
-          } else {
-            // Fallback if originalQuantity not in editData
-            originalQuantityForPayload = {
-              value:
-                (config.key === "area"
-                  ? editData.originalArea
-                  : editData.originalLength) ?? null, // Handle potential undefined
-              type: config.key,
-              unit: config.unit ?? "?", // Ensure unit is string
-            };
+
+            if (typeof currentQuantity.type === "string") {
+              // Check type exists
+              if (currentQuantity.type === "length")
+                validQuantityType = "length";
+              else if (currentQuantity.type === "volume")
+                validQuantityType = "volume";
+              // <<< Comparison should now work with assertion
+              else validQuantityType = currentQuantity.type; // Keep original if area or other string
+            }
+            // else: Keep default 'area' if type is missing/invalid
+
+            quantityUpdates.push({
+              element_id: elementId,
+              new_quantity: {
+                value: currentQuantity.value ?? null,
+                type: validQuantityType, // Use the determined type
+                // Ensure unit exists on the source object before accessing
+                unit: currentQuantity.unit || "?", // <<< Access unit via asserted type
+              },
+            });
           }
-        } else if (!originalQuantityForPayload && !isEdited) {
-          // If original is missing even on non-edited, try to use current quantity
-          originalQuantityForPayload = element.quantity;
+          // Include fallback for older edit structure if necessary
+          else if (
+            editData.newArea !== undefined &&
+            editData.newArea !== null
+          ) {
+            quantityUpdates.push({
+              element_id: elementId,
+              new_quantity: {
+                value: editData.newArea,
+                type: "area",
+                unit: "m²",
+              },
+            });
+          } else if (
+            editData.newLength !== undefined &&
+            editData.newLength !== null
+          ) {
+            quantityUpdates.push({
+              element_id: elementId,
+              new_quantity: {
+                value: editData.newLength,
+                type: "length",
+                unit: "m",
+              },
+            });
+          }
         }
-
-        // Skip element if current quantity is fundamentally invalid/missing
-        if (
-          !currentQuantity ||
-          currentQuantity.value === null ||
-          currentQuantity.value === undefined
-        ) {
-          console.warn(
-            `Skipping element ${element.id} in batch due to invalid/missing current quantity:`,
-            currentQuantity
-          );
-          continue;
-        }
-
-        // Construct the full element data for the batch
-        batchData.push({
-          id: element.id, // Will be manual_... for new elements
-          global_id: element.global_id,
-          type: element.type,
-          name: element.name,
-          type_name: element.type_name,
-          description: element.description,
-          properties: element.properties,
-          materials: element.materials?.map((m) => ({
-            // Ensure materials format is correct
-            name: m.name,
-            fraction: m.fraction ?? 0,
-            unit: m.unit,
-            volume: m.volume,
-          })),
-          level: element.level,
-          quantity: {
-            // Ensure structure is correct
-            value: currentQuantity.value,
-            type: currentQuantity.type,
-            unit: currentQuantity.unit,
-          },
-          original_quantity: originalQuantityForPayload
-            ? {
-                // Ensure structure is correct
-                value: originalQuantityForPayload.value ?? null, // Ensure null if value missing
-                type: originalQuantityForPayload.type,
-                unit: originalQuantityForPayload.unit ?? "?", // Ensure unit is string
-              }
-            : null,
-          classification: element.classification
-            ? {
-                // Ensure structure is correct
-                id: element.classification.id ?? null,
-                name: element.classification.name ?? null,
-                system: element.classification.system ?? null,
-              }
-            : null,
-          is_manual: element.is_manual,
-          is_structural: element.is_structural,
-          is_external: element.is_external,
-          // Status will be set to 'active' by the backend batch endpoint
-        });
       }
-      // --- End Modification ---
+      // --- End data preparation modification ---
 
-      // 2. Call the BATCH UPDATE API endpoint
+      // 2. Call the APPROVE API endpoint
       console.log(
-        `Sending ${batchData.length} elements to /batch-update endpoint...`
+        `Sending ${quantityUpdates.length} quantity updates to /approve endpoint...`
       );
-      const response = await apiClient.batchUpdateElements(
+      // Ensure apiClient has an 'approveProject' method
+      const response = await apiClient.approveProject(
         selectedProject,
-        batchData
+        quantityUpdates
       );
 
       // 3. Handle response and update UI
-      if (response && response.success === true) {
+      // The backend approve endpoint response structure might differ, adjust as needed
+      if (response && response.status === "success") {
+        // Check for success indicator
         setKafkaSuccess(true);
         setPreviewDialogOpen(false);
         resetEdits(); // Clear local edits
-        // Fetching elements again will get the now 'active' elements, including newly created manual ones
+        // Fetching elements again will get the now 'active' elements
         fetchProjectElements(selectedProject);
       } else {
         setKafkaError(
-          `Fehler bei der Stapelverarbeitung: ${
-            response?.message || "Unknown error"
+          `Fehler bei der Projekt-Bestätigung: ${
+            response?.message || "Unbekannter Fehler"
           }`
         );
-        setIsPreviewDialogSending(false);
       }
     } catch (error) {
-      console.error("Error during batch element update:", error);
+      console.error("Error during project approval:", error);
       setKafkaError(
-        `Failed to save/update elements: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `Fehler: ${error instanceof Error ? error.message : String(error)}`
       );
     } finally {
-      setIsPreviewDialogSending(false);
+      setIsPreviewDialogSending(false); // Stop loading indicator
     }
   };
 
@@ -498,90 +441,89 @@ const MainPage = () => {
     editingId: string | null
   ) => {
     if (!selectedProject) return;
+    setManualFormLoading(true);
+    setKafkaSuccess(null);
+    setKafkaError(null);
 
-    let processedMaterials: LocalIFCElement["materials"] = [];
+    // <<< Explicitly type processedMaterials >>>
+    let processedMaterials: ManualMaterialInput[] = [];
+
     if (
-      data.materials.length > 0 &&
-      typeof data.totalVolume === "number" &&
-      data.totalVolume > 0
+      data.materials.length > 0
+      // && typeof data.totalVolume === "number" && // Volume/Unit are not part of ManualMaterialInput
+      // data.totalVolume > 0
     ) {
+      // <<< CHANGED: Map to ManualMaterialInput structure (name, fraction only) >>>
       processedMaterials = data.materials.map((m) => ({
         name: m.name,
-        fraction: m.fraction,
-        volume: data.totalVolume! * m.fraction,
-        unit: "m³",
+        fraction: m.fraction ?? 0,
+        volume: m.volume ?? null,
+        unit: m.unit ?? (m.volume ? "m³" : undefined),
       }));
-    } else {
-      processedMaterials = data.materials.map((m) => ({
-        name: m.name,
-        fraction: m.fraction,
-        volume: undefined,
-        unit: undefined,
-      }));
+      // } else { // Simplified: Always map, even if totalVolume isn't used
+      //   processedMaterials = data.materials.map((m) => ({
+      //     name: m.name,
+      //     fraction: m.fraction ?? 0, // Default null/undefined fraction to 0
+      //     // volume: undefined, // REMOVED
+      //     // unit: undefined, // REMOVED
+      //   }));
     }
 
-    if (editingId) {
-      setIfcElements((prev) =>
-        prev.map((el) =>
-          el.id === editingId
-            ? {
-                ...el,
-                name: data.name,
-                type: data.type,
-                level: data.level,
-                quantity: data.quantity,
-                classification: data.classification,
-                materials: processedMaterials,
-                description: data.description,
-                area:
-                  data.quantity.type === "area" ? data.quantity.value : null,
-                length:
-                  data.quantity.type === "length" ? data.quantity.value : null,
-                volume:
-                  data.quantity.type === "volume" ? data.quantity.value : null,
-              }
-            : el
-        )
+    const elementDataForApi: BatchElementData = {
+      id: editingId || `manual_${uuidv4()}`,
+      global_id: editingId
+        ? editingElement?.global_id
+        : `MANUAL-${editingId || "new"}`,
+      type: data.type,
+      name: data.name,
+      type_name: data.name,
+      description: data.description,
+      level: data.level,
+      quantity: data.quantity,
+      original_quantity: editingId ? undefined : data.quantity,
+      classification: data.classification,
+      materials: processedMaterials,
+      properties: {},
+      is_manual: true,
+      is_structural: false,
+      is_external: false,
+    };
+
+    try {
+      console.log(
+        "Attempting to save/update manual element:",
+        elementDataForApi
       );
-    } else {
-      // We are adding a new element
-      const tempId = `manual_${uuidv4()}`;
-      const newManualElement: LocalIFCElement = {
-        id: tempId,
-        global_id: `MANUAL-${tempId}`,
-        type: data.type,
-        name: data.name,
-        type_name: data.name,
-        description: data.description,
-        level: data.level,
-        quantity: data.quantity,
-        original_quantity: data.quantity,
-        classification: data.classification,
-        materials: processedMaterials,
-        properties: {},
-        is_manual: true,
-        status: "pending",
-        area: data.quantity.type === "area" ? data.quantity.value : null,
-        length: data.quantity.type === "length" ? data.quantity.value : null,
-        volume: null,
-        original_area:
-          data.quantity.type === "area" ? data.quantity.value : null,
-        original_length:
-          data.quantity.type === "length" ? data.quantity.value : null,
-        original_volume: null,
-        is_structural: false,
-        is_external: false,
-      };
-      setIfcElements((prev) => [...prev, newManualElement]);
-    }
+      const response = await apiClient.batchUpdateElements(selectedProject, [
+        elementDataForApi,
+      ]);
 
-    setShowManualForm(false);
-    setEditingElement(null); // Clear editing state
+      if (response && response.success) {
+        setKafkaSuccess(true);
+        setShowManualForm(false);
+        setEditingElement(null);
+        fetchProjectElements(selectedProject);
+      } else {
+        console.error("Failed to save manual element:", response?.message);
+        setKafkaError(
+          `Fehler beim Speichern des manuellen Elements: ${
+            response?.message || "Unbekannter Fehler"
+          }`
+        );
+      }
+    } catch (error) {
+      console.error("Error saving manual element:", error);
+      setKafkaError(
+        `Fehler: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setManualFormLoading(false);
+    }
   };
 
   const handleManualCancel = () => {
     setShowManualForm(false);
-    setEditingElement(null); // <<< Clear editing state on cancel
+    setEditingElement(null);
   };
 
   const handleClassificationFilterChange = (newFilter: string[]) => {
@@ -602,19 +544,21 @@ const MainPage = () => {
     if (!elementToDelete || !selectedProject) return;
 
     const idToDelete = elementToDelete.id;
-    const isLocalUnsaved = idToDelete.startsWith("manual_");
+    const isSavedManual =
+      elementToDelete.is_manual && elementToDelete.status === "active";
 
     setKafkaSuccess(null);
     setKafkaError(null);
 
-    if (isLocalUnsaved) {
+    if (!isSavedManual) {
+      // Scenario 1: Treat as local-only (either truly unsaved, or non-manual, or not active)
       setIfcElements((prev) => prev.filter((el) => el.id !== idToDelete));
       closeDeleteConfirm();
     } else {
-      // Element exists in DB, proceed with API call
+      // Scenario 2: Element is considered saved and manual, call API
       try {
-        await apiClient.deleteElement(selectedProject, idToDelete);
-        setIfcElements((prev) => prev.filter((el) => el.id !== idToDelete));
+        await apiClient.deleteElement(selectedProject, idToDelete); // API call
+        setIfcElements((prev) => prev.filter((el) => el.id !== idToDelete)); // Update local state
         setKafkaSuccess(true);
       } catch (error) {
         console.error(`Error deleting element ${idToDelete}:`, error);

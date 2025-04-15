@@ -64,7 +64,7 @@ const QUANTITY_TYPES = [
   { type: "length", unit: "m", label: "Länge" },
 ];
 
-// <<< NEW: Mapping from IFC Class to prioritized eBKP-H codes >>>
+// <<< Mapping from IFC Class to prioritized eBKP-H codes >>>
 const ifcClassToEbkpPriority: { [ifcClass: string]: string[] } = {
   IfcWall: ["C2.1", "C2.2", "E1.1", "G1.1"],
   IfcWallStandardCase: ["C2.1", "C2.2", "E1.1", "G1.1"],
@@ -78,9 +78,7 @@ const ifcClassToEbkpPriority: { [ifcClass: string]: string[] } = {
   IfcRoof: ["C3.1", "F1.1", "C3.2"],
   IfcCovering: ["G2.2", "G3.2", "F1.1"],
   IfcFooting: ["C1.2"],
-  // Add more mappings as needed
 };
-// <<< END NEW MAPPING >>>
 
 // Type for the form data state, aligning with ManualElementInput but using FormMaterialState
 type FormDataState = Omit<ManualElementInput, "materials" | "totalVolume"> & {
@@ -578,12 +576,18 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
     const finalTotalVolume = totalVolume; // Already validated by isStep3Valid
 
     // Ensure final materials sent ONLY have name and CORRECT fraction
-    let finalMaterialsForSubmit: { name: string; fraction: number }[] = [];
+    let finalMaterialsForSubmit: {
+      name: string;
+      fraction: number;
+      volume: number;
+      unit: string;
+    }[] = [];
     if (typeof finalTotalVolume === "number" && finalTotalVolume > 0) {
       finalMaterialsForSubmit = formData.materials.map((m) => ({
         name: m.name,
-        // Use stored fraction, ensure it's correct based on final validation
         fraction: m.fraction,
+        volume: m.volume ?? m.fraction * finalTotalVolume,
+        unit: "m³",
       }));
       // Final check on fractions before submit
       const recalcFractionSum = finalMaterialsForSubmit.reduce(
