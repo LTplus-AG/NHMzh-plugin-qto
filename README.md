@@ -1,4 +1,4 @@
-# 🏗️ QTO Plugin with IFC Integration
+# 🏗️ IFC Quantity-Takeoff Plugin für Nachhaltigkeitsmonitoring Zürich. 
 
 [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -7,12 +7,11 @@
 [![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: AGPL](https://img.shields.io/badge/License-AGPL-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
 
-> A comprehensive Quantity Take-Off (QTO) application for BIM workflows that extracts, manipulates, and visualizes quantities from IFC models.
+> A comprehensive Quantity Take-Off (QTO) application that extracts, manipulates, and visualizes quantities from IFC models.
 
 ## ✨ Features
 
 - 📊 Interactive eBKP structure with expandable/collapsible rows
-- 📤 Drag-and-drop IFC model upload and smart parsing
 - 🔍 Intelligent IFC elements grouping by type and classification
 - 📐 Automatic quantity extraction based on element type (area, length, volume)
 - 🧮 Material volume calculation and analysis
