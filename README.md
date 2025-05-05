@@ -1,4 +1,4 @@
-# 🏗️ QTO Plugin with IFC Integration
+# 📊 NHMzh Plugin QTO (Quantity Take-Off)
 
 [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -6,8 +6,23 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: AGPL](https://img.shields.io/badge/License-AGPL-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
+[![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg?style=for-the-badge)](https://github.com/LTplus-AG/NHMzh-plugin-qto)
 
-> A comprehensive Quantity Take-Off (QTO) application for BIM workflows that extracts, manipulates, and visualizes quantities from IFC models.
+A comprehensive Quantity Take-Off (QTO) module for the Nachhaltigkeitsmonitoring der Stadt Zürich (NHMzh) that extracts, manipulates, and visualizes quantities from IFC models.
+
+## 📋 Table of Contents
+
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Project Structure](#-project-structure)
+- [Installation](#-installation)
+- [Kafka Topics](#-kafka-topics)
+- [Usage](#-usage)
+- [API Endpoints](#-api-endpoints)
+- [Data Models](#-data-models)
+- [Tech Stack](#-tech-stack)
+- [Integration](#-integration)
+- [License](#-license)
 
 ## ✨ Features
 
@@ -21,7 +36,22 @@
 - 📡 Integration with Kafka for event publishing
 - 💾 Data persistence with MongoDB
 - 🚦 Classification filtering (EBKP, etc.)
-- 🔄 Event-driven architecture for integration with other systems
+- 🔄 Event-driven architecture for integration with other NHMzh modules
+
+## 🔧 Architecture
+
+### Backend
+
+- **FastAPI** application with endpoints for IFC processing
+- **IfcOpenShell** for parsing IFC files
+- **Kafka Producer** for publishing QTO events
+- **MongoDB** for storing element and project data
+
+### Frontend
+
+- **React/TypeScript** with Material-UI components
+- **MUI DataGrid** for efficient element display
+- **Component-based** architecture for maintainability
 
 ## 🗂️ Project Structure
 
@@ -40,22 +70,7 @@ plugin-qto/
   └── dist/             # Build output
 ```
 
-## 🔧 Architecture
-
-### Backend
-
-- **FastAPI** application with endpoints for IFC processing
-- **IfcOpenShell** for parsing IFC files
-- **Kafka Producer** for publishing QTO events
-- **MongoDB** for storing element and project data
-
-### Frontend
-
-- **React/TypeScript** with Material-UI components
-- **MUI DataGrid** for efficient element display
-- **Component-based** architecture for maintainability
-
-## 🚀 Quick Start
+## 🚀 Installation
 
 ### Prerequisites
 
@@ -68,8 +83,8 @@ plugin-qto/
 1. Clone the repository:
 
 ```bash
-git clone <repository-url>
-cd plugin-qto
+git clone https://github.com/LTplus-AG/NHMzh-plugin-qto.git
+cd NHMzh-plugin-qto
 ```
 
 2. Start with Docker Compose:
@@ -89,8 +104,6 @@ This will start:
 ```bash
 docker-compose up frontend
 ```
-
-This will build and serve the frontend through Nginx on port 80.
 
 ### Local Development
 
@@ -126,6 +139,20 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
+## 📡 Kafka Topics
+
+The QTO plugin publishes element and project data to Kafka topics. Based on the implementation in `qto_producer.py`:
+
+- Project updates are sent with an `eventType` of `PROJECT_UPDATED` containing project metadata
+- Element data is structured with properties including:
+  - IFC class information
+  - Element quantity data (area, volume, etc.)
+  - Classification information (EBKP)
+  - Material composition and volumes 
+  - Structural properties
+
+Elements are sent in batched format for efficient processing by downstream modules. The QTO plugin serves as the primary data source for the NHMzh ecosystem, providing the foundation for both cost calculations and LCA analyses.
+
 ## 📖 Usage
 
 1. Open the application in your browser (default: http://localhost:3004)
@@ -134,7 +161,7 @@ uvicorn main:app --reload
 4. Analyze the extracted IFC elements grouped by type in the bottom section
 5. Use the search feature to find specific elements
 6. Edit quantities as needed
-7. Send QTO data to Dtabase for integration with other systems
+7. Send QTO data to other NHMzh modules for integration
 
 ## 🔌 API Endpoints
 
@@ -149,62 +176,7 @@ uvicorn main:app --reload
 | `/models/{model_id}`       | DELETE | Delete a model                         |
 | `/health`                  | GET    | Check service health                   |
 
-## 🖥️ Frontend Components
-
-### Core Components
-
-- **ObjectSearch**: Advanced search for IFC objects with autocompletion
-- **ClassificationFilter**: Filter elements by classification system
-- **ElementsHeader**: Controls for searching and filtering elements
-- **EbkpGroupRow**: Displays groups of elements by classification
-- **ElementRow**: Shows individual element details with quantity editing
-- **MaterialsTable**: Displays material information for elements
-
-### Workflow
-
-1. Upload an IFC model to the backend
-2. View extracted elements organized by classification
-3. Search and filter elements as needed
-4. Edit quantities if necessary
-5. Send updated QTO data for integration with other systems
-
-## 🔍 IFC Element Processing
-
-The system processes IFC elements based on their class types and extracts quantities using the configuration in `ifc_quantities_config.py`. For example:
-
-- **Walls and Slabs**: Area (m²) from GrossSideArea or GrossArea
-- **Beams and Columns**: Length (m) from Length property
-- **Materials**: Volumes calculated from element volume and material proportions
-
-## ✏️ Quantity Editing
-
-When editing quantities:
-
-1. Original values are preserved
-2. Change tracking is enabled
-3. Edited values are highlighted
-4. Changes can be reset
-
-## 📝 Format
-
-When sending QTO data to Kafka, the following JSON format is used:
-
-```json
-{
-  "eventType": "PROJECT_UPDATED",
-  "timestamp": "2023-01-01T12:00:00Z",
-  "producer": "plugin-qto",
-  "payload": {
-    "projectId": "67e39625158688f60bbd807a",
-    "projectName": "Project Name",
-    "elementCount": 100
-  },
-  "metadata": {
-    "version": "1.0",
-    "correlationId": "abc123"
-  }
-}
-```
+## 💾 Data Models
 
 ### Element Data Format
 
@@ -294,73 +266,6 @@ Each element in MongoDB is stored with the following structure:
 }
 ```
 
-### Element Fields Explanation
-
-| Field               | Description                                               |
-| ------------------- | --------------------------------------------------------- |
-| `_id`               | MongoDB document identifier                               |
-| `project_id`        | Reference to the project this element belongs to          |
-| `ifc_id`            | ID from the original IFC file                             |
-| `global_id`         | IFC GlobalId (UUID format)                                |
-| `ifc_class`         | IFC entity type (e.g., IfcWall, IfcSlab)                  |
-| `name`              | Instance name from IFC                                    |
-| `type_name`         | Type/style name                                           |
-| `level`             | Building story/level name                                 |
-| `quantity`          | Current quantity with value, type (area/length), and unit |
-| `original_quantity` | Original extracted quantity from IFC                      |
-| `is_structural`     | Boolean indicating if element is load-bearing             |
-| `is_external`       | Boolean indicating if element is exterior                 |
-| `classification`    | Classification system details with id, name, and system   |
-| `materials`         | Array of materials with name, volume, fraction, and unit  |
-| `properties`        | Key-value store of all IFC property sets                  |
-| `status`            | Element status (active, deleted, etc.)                    |
-| `created_at`        | Timestamp of element creation                             |
-| `updated_at`        | Timestamp of last element update                          |
-
-## 💾 MongoDB Schema
-
-Elements are stored with the following structure:
-
-```javascript
-{
-  "project_id": ObjectId("..."),
-  "ifc_id": "123",
-  "global_id": "3Hu7R7nL9Epf72889UUqXF",
-  "ifc_class": "IfcWall",
-  "name": "Basic Wall:Interior - 165 Blockwork:123456",
-  "type_name": "Basic Wall:Interior - 165 Blockwork",
-  "level": "Level 1",
-  "quantity": {
-    "value": 10.5,
-    "type": "area",
-    "unit": "m²"
-  },
-  "original_quantity": {
-    "value": 10.5,
-    "type": "area"
-  },
-  "is_structural": true,
-  "is_external": false,
-  "classification": {
-    "id": "321.41",
-    "name": "Interior walls",
-    "system": "EBKP"
-  },
-  "materials": [
-    {
-      "name": "Concrete",
-      "volume": 2.3,
-      "fraction": 0.8,
-      "unit": "m³"
-    }
-  ],
-  "properties": {
-    "Pset_WallCommon.FireRating": "2H"
-  },
-  "status": "active"
-}
-```
-
 ## 🛠️ Tech Stack
 
 ### Frontend
@@ -377,26 +282,18 @@ Elements are stored with the following structure:
 - **Kafka** - Message broker
 - **MongoDB** - Database for element storage
 
-## 📝 Notes
+## 🔗 Integration
 
-- The application features a resilient architecture - it can run with or without the backend, using simulated IFC data when needed.
-- For production deployment, update the API URL in configuration and set proper CORS settings in the backend.
-- The system is designed to work with a variety of IFC schemas and element types.
+The QTO plugin is a core component of the NHMzh ecosystem and integrates with:
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **Cost Plugin**: Provides element quantities for cost calculations (see [NHMzh-plugin-cost](https://github.com/LTplus-AG/NHMzh-plugin-cost))
+- **LCA Plugin**: Supplies material volumes for life cycle assessment (see [NHMzh-plugin-lca](https://github.com/LTplus-AG/NHMzh-plugin-lca))
+- **Central Database**: Stores element data for the entire NHMzh platform
 
 ## 📄 License
 
-AGPL
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
 
-## 🙏 Acknowledgements
+GNU Affero General Public License v3.0 (AGPL-3.0): This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
-- IfcOpenShell for IFC parsing
-- Material-UI for React components
-- FastAPI for the backend framework
+See <https://www.gnu.org/licenses/agpl-3.0.html> for details.
