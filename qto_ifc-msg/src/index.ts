@@ -65,8 +65,15 @@ async function main() {
         );
         log.info(`Successfully retrieved metadata for ${fileID}:`, metadata);
 
+        const projectName = metadata.project || "Default-Project-Name";
+        if (!metadata.project) {
+          log.warn(
+            `metadata.project was empty for fileID ${fileID}. Using default: "${projectName}"`
+          );
+        }
+
         const ifcData: IFCData = {
-          project: metadata.project,
+          project: projectName,
           filename: metadata.filename,
           timestamp: metadata.timestamp,
           file: file,
@@ -83,8 +90,6 @@ async function main() {
           }' (offset: ${message.offset})`,
           error
         );
-        // Re-throw the error to prevent offset commit by kafkajs
-        throw error;
       }
     } else {
       log.warn("Received Kafka message with empty value", {
