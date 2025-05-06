@@ -68,16 +68,37 @@ export async function startKafkaConsumer(
 ): Promise<void> {
   try {
     await consumer.run({
+      autoCommit: false, // Disable auto-commit
       eachMessage: async ({ topic, partition, message }) => {
-        log.debug(
-          `Received message from topic ${topic}, partition ${partition}, offset ${message.offset}`
-        );
-        await messageHandler(message);
+        let commitOffset = (Number(message.offset) + 1).toString();
+        try {
+          log.debug(
+            `Processing message from topic ${topic}, partition ${partition}, offset ${message.offset}...`
+          );
+          await messageHandler(message);
+
+          // Commit offset after successful processing
+          await consumer.commitOffsets([
+            { topic, partition, offset: commitOffset },
+          ]);
+          log.debug(
+            `Committed offset ${commitOffset} for topic ${topic}, partition ${partition}`
+          );
+        } catch (error: any) {
+          log.error("Error processing message:", error);
+
+          // Commit offset even if processing failed, to skip this message
+          await consumer.commitOffsets([
+            { topic, partition, offset: commitOffset },
+          ]);
+          log.warn(
+            `Committed offset ${commitOffset} for topic ${topic}, partition ${partition} after failure (skipping message)`
+          );
+        }
       },
     });
   } catch (error: any) {
     log.error("Error running Kafka consumer:", error);
-    // Exit with a non-zero code to trigger restart
     process.exit(1);
   }
 }
