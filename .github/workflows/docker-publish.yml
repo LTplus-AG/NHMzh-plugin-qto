@@ -29,3 +29,11 @@ jobs:
           file: ./backend/Dockerfile.backend
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/nhmzh-qto-backend:latest
+
+      - name: Build and push qto-ifc-msg Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: ./qto_ifc-msg
+          file: ./qto_ifc-msg/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/nhmzh-qto-ifc-msg:latest
