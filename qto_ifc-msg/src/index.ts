@@ -90,6 +90,7 @@ async function main() {
           }' (offset: ${message.offset})`,
           error
         );
+        throw error;
       }
     } else {
       log.warn("Received Kafka message with empty value", {
