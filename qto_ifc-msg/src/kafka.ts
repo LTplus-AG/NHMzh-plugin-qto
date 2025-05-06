@@ -6,7 +6,7 @@
  * @module kafka
  */
 
-import { Kafka, Consumer } from "kafkajs";
+import { Kafka, Consumer, KafkaMessage, Producer } from "kafkajs";
 import { getEnv } from "./utils/env";
 import { log } from "./utils/logger";
 
@@ -60,72 +60,143 @@ export async function setupKafkaConsumer(): Promise<Consumer> {
 /**
  * Start the Kafka consumer
  * @param consumer - The Kafka consumer
- * @param messageHandler - The message handler
+ * @param messageHandler - The message handler, expected to throw on error
  */
 export async function startKafkaConsumer(
   consumer: Consumer,
-  messageHandler: (message: any) => Promise<void>
+  messageHandler: (message: KafkaMessage) => Promise<void>
 ): Promise<void> {
   try {
     await consumer.run({
-      autoCommit: false, // Explicitly disable auto-commit
+      autoCommit: false, // Manual commit is essential for this error handling
       eachMessage: async ({ topic, partition, message }) => {
         const commitOffset = (Number(message.offset) + 1).toString();
+        let fileIDForLogging: string = "unknown_fileID_in_kafka.ts"; // Default for logging if extraction fails
+
+        try {
+          // Attempt to extract fileID from message for logging purposes ONLY.
+          if (message.value) {
+            const rawValue = message.value.toString();
+            const parts = rawValue.split("/");
+            const extracted = parts.pop();
+            if (extracted) {
+              fileIDForLogging =
+                extracted.split("?")[0].split("#")[0] ||
+                "extracted_empty_fileID";
+            } else {
+              fileIDForLogging = "could_not_extract_fileID_from_path";
+            }
+          } else {
+            fileIDForLogging = "message_value_is_null_in_kafka.ts";
+          }
+        } catch (parseError) {
+          log.warn(
+            "Failed to parse Kafka message value for fileID extraction in kafka.ts eachMessage (for logging only)",
+            { err: parseError, rawMessageValue: message.value?.toString() }
+          );
+          fileIDForLogging = "message_value_parsing_failed_in_kafka.ts";
+        }
+
         try {
           log.info(
-            // Changed from debug for visibility
-            `Processing message from topic ${topic}, partition ${partition}, offset ${message.offset}...`
+            // Changed from debug for better visibility during troubleshooting
+            `Processing message from topic ${topic}, partition ${partition}, offset ${message.offset}, tentative_fileID: ${fileIDForLogging}...`
           );
-          // The messageHandler from index.ts is expected to handle its own errors
-          // and not throw them, allowing this 'try' block to complete.
-          await messageHandler(message);
+          await messageHandler(message); // messageHandler is now expected to throw on critical failure
 
-          // Commit offset after messageHandler has completed (successfully or by handling its own error)
+          // If messageHandler completes without throwing, commit offset for successful processing
           log.info(
-            // Changed from debug for visibility
-            `Attempting to commit offset ${commitOffset} for topic ${topic}, partition ${partition} (after messageHandler completion)`
+            // Changed from debug
+            `Attempting to commit offset ${commitOffset} for topic ${topic}, partition ${partition} (message offset ${message.offset}) after successful processing.`
           );
           await consumer.commitOffsets([
             { topic, partition, offset: commitOffset },
           ]);
           log.info(
-            // Changed from debug for visibility
-            `Committed offset ${commitOffset} for topic ${topic}, partition ${partition}`
+            // Changed from debug
+            `Successfully committed offset ${commitOffset} for topic ${topic}, partition ${partition} (message offset ${message.offset}) after successful processing.`
           );
-        } catch (error: any) {
-          // This catch block is a failsafe.
-          // It would only be hit if messageHandler (from index.ts) unexpectedly throws an error
-          // instead of catching it internally as designed.
+        } catch (processingError: any) {
+          // This block is now hit if messageHandler (from index.ts) throws an error
           log.error(
-            `Unexpected error thrown by messageHandler in kafka.ts for offset ${message.offset} (topic: ${topic}, partition: ${partition}):`,
-            error
+            `Error thrown by messageHandler for fileID (tentative) '${fileIDForLogging}' (offset: ${message.offset}). Attempting to skip.`,
+            {
+              err: processingError,
+              kafkaMessageOffset: message.offset,
+              kafkaMessageTopic: topic,
+              kafkaMessagePartition: partition,
+              processingFileID: fileIDForLogging, // fileID extracted for logging in kafka.ts
+              // Include relevant parts of processingError if it's an Axios error, for example
+              axiosErrorStatus: processingError?.response?.status,
+              axiosErrorResponseData: processingError?.response?.data, // Be cautious with large data
+            }
           );
 
-          // Still attempt to commit offset to prevent retries for this unexpected error.
           log.warn(
-            // Changed from debug for visibility
-            `Attempting to commit offset ${commitOffset} for topic ${topic}, partition ${partition} (after unexpected error in messageHandler)`
+            `Attempting to commit offset ${commitOffset} for topic ${topic}, partition ${partition} (message offset ${message.offset}) after processing failure, to skip message.`,
+            {
+              topic: topic,
+              partition: partition,
+              offset: message.offset,
+              commitOffset: commitOffset,
+              fileIDForLogging: fileIDForLogging,
+            }
           );
           try {
             await consumer.commitOffsets([
               { topic, partition, offset: commitOffset },
             ]);
             log.warn(
-              // Changed from debug for visibility
-              `Committed offset ${commitOffset} for topic ${topic}, partition ${partition} after unexpected error (skipping message)`
+              `Successfully committed offset ${commitOffset} (for message offset ${message.offset}) after processing failure, effectively skipping message.`,
+              {
+                kafkaMessageOffset: message.offset,
+                committedOffset: commitOffset,
+                topic: topic,
+                partition: partition,
+                skippedFileID: fileIDForLogging,
+              }
             );
-          } catch (commitError) {
-            log.error(
-              `Failed to commit offset ${commitOffset} after unexpected error in messageHandler:`,
-              { errorDetail: commitError }
-            );
+          } catch (commitError: any) {
+            const criticalErrorMessage = `CRITICAL FAILURE: Failed to commit offset ${commitOffset} (for message offset ${message.offset}) for fileID (tentative) '${fileIDForLogging}' AFTER a processing error. Message will likely be reprocessed, risking a loop.`;
+
+            // Fallback logging using console.error in case the main logger is also failing
+            console.error(criticalErrorMessage, {
+              commitErrorDetail: String(commitError),
+              commitErrorStack:
+                commitError instanceof Error ? commitError.stack : undefined,
+              originalProcessingErrorDetail: String(processingError),
+              originalProcessingErrorStack:
+                processingError instanceof Error
+                  ? processingError.stack
+                  : undefined,
+            });
+
+            log.error(criticalErrorMessage, {
+              err: commitError,
+              originalProcessingError: {
+                // Provide context of the original error
+                message: processingError?.message,
+                stack: processingError?.stack, // Log stack of original error
+                status: processingError?.response?.status,
+              },
+              kafkaMessageOffset: message.offset,
+              attemptedCommitOffset: commitOffset,
+              topic: topic,
+              partition: partition,
+              fileID: fileIDForLogging,
+            });
+            // To prevent the consumer from crashing and ensure it continues to process other messages (if possible),
+            // we don't re-throw here. The message is already stuck if this commit fails.
+            // External monitoring should pick up the 'CRITICAL FAILURE' logs.
           }
         }
       },
     });
   } catch (error: any) {
-    // This catches errors from consumer.run() itself, e.g., Kafka connection issues.
-    log.error("Critical error running Kafka consumer:", error);
-    process.exit(1); // Exit if the consumer itself fails critically.
+    log.error(
+      "Fatal error running Kafka consumer (consumer.run() failed). The consumer will attempt to exit.",
+      { err: error }
+    );
+    process.exit(1);
   }
 }
