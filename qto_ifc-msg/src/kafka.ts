@@ -6,7 +6,13 @@
  * @module kafka
  */
 
-import { Kafka, Consumer, KafkaMessage, Producer } from "kafkajs";
+import {
+  Kafka,
+  Consumer,
+  KafkaMessage,
+  Producer,
+  EachBatchPayload,
+} from "kafkajs";
 import { getEnv } from "./utils/env";
 import { log } from "./utils/logger";
 
@@ -58,138 +64,88 @@ export async function setupKafkaConsumer(): Promise<Consumer> {
 }
 
 /**
- * Start the Kafka consumer
+ * Start the Kafka consumer using eachBatch for better handling of long tasks.
  * @param consumer - The Kafka consumer
- * @param messageHandler - The message handler, expected to throw on error
+ * @param messageHandler - The message handler, expected to handle errors and resolve offsets.
+ *                       Receives { message, resolveOffset, heartbeat }.
  */
 export async function startKafkaConsumer(
   consumer: Consumer,
-  messageHandler: (message: KafkaMessage) => Promise<void>
+  // Update handler signature to accept necessary payload components
+  messageHandler: (payload: {
+    message: KafkaMessage;
+    resolveOffset: (offset: string) => void;
+    heartbeat: () => Promise<void>;
+    topic: string; // Pass topic and partition for context
+    partition: number;
+  }) => Promise<void>
 ): Promise<void> {
   try {
     await consumer.run({
-      autoCommit: false, // Manual commit is essential for this error handling
-      eachMessage: async ({ topic, partition, message }) => {
-        const commitOffset = (Number(message.offset) + 1).toString();
-        let fileIDForLogging: string = "unknown_fileID_in_kafka.ts"; // Default for logging if extraction fails
+      // Use eachBatch for better control over long tasks and heartbeats
+      eachBatchAutoResolve: false, // We will manually resolve offsets
+      eachBatch: async ({
+        batch,
+        resolveOffset,
+        heartbeat,
+        commitOffsetsIfNecessary, // Use this for efficient commits
+        isRunning,
+        isStale,
+      }: EachBatchPayload) => {
+        log.debug(`Received batch with ${batch.messages.length} messages.`);
 
-        try {
-          // Attempt to extract fileID from message for logging purposes ONLY.
-          if (message.value) {
-            const rawValue = message.value.toString();
-            const parts = rawValue.split("/");
-            const extracted = parts.pop();
-            if (extracted) {
-              fileIDForLogging =
-                extracted.split("?")[0].split("#")[0] ||
-                "extracted_empty_fileID";
-            } else {
-              fileIDForLogging = "could_not_extract_fileID_from_path";
-            }
-          } else {
-            fileIDForLogging = "message_value_is_null_in_kafka.ts";
-          }
-        } catch (parseError) {
-          log.warn(
-            "Failed to parse Kafka message value for fileID extraction in kafka.ts eachMessage (for logging only)",
-            { err: parseError, rawMessageValue: message.value?.toString() }
-          );
-          fileIDForLogging = "message_value_parsing_failed_in_kafka.ts";
-        }
-
-        try {
-          log.info(
-            // Changed from debug for better visibility during troubleshooting
-            `Processing message from topic ${topic}, partition ${partition}, offset ${message.offset}, tentative_fileID: ${fileIDForLogging}...`
-          );
-          await messageHandler(message); // messageHandler is now expected to throw on critical failure
-
-          // If messageHandler completes without throwing, commit offset for successful processing
-          log.info(
-            // Changed from debug
-            `Attempting to commit offset ${commitOffset} for topic ${topic}, partition ${partition} (message offset ${message.offset}) after successful processing.`
-          );
-          await consumer.commitOffsets([
-            { topic, partition, offset: commitOffset },
-          ]);
-          log.info(
-            // Changed from debug
-            `Successfully committed offset ${commitOffset} for topic ${topic}, partition ${partition} (message offset ${message.offset}) after successful processing.`
-          );
-        } catch (processingError: any) {
-          // This block is now hit if messageHandler (from index.ts) throws an error
-          log.error(
-            `Error thrown by messageHandler for fileID (tentative) '${fileIDForLogging}' (offset: ${message.offset}). Attempting to skip.`,
-            {
-              err: processingError,
-              kafkaMessageOffset: message.offset,
-              kafkaMessageTopic: topic,
-              kafkaMessagePartition: partition,
-              processingFileID: fileIDForLogging, // fileID extracted for logging in kafka.ts
-              // Include relevant parts of processingError if it's an Axios error, for example
-              axiosErrorStatus: processingError?.response?.status,
-              axiosErrorResponseData: processingError?.response?.data, // Be cautious with large data
-            }
-          );
-
-          log.warn(
-            `Attempting to commit offset ${commitOffset} for topic ${topic}, partition ${partition} (message offset ${message.offset}) after processing failure, to skip message.`,
-            {
-              topic: topic,
-              partition: partition,
-              offset: message.offset,
-              commitOffset: commitOffset,
-              fileIDForLogging: fileIDForLogging,
-            }
-          );
-          try {
-            await consumer.commitOffsets([
-              { topic, partition, offset: commitOffset },
-            ]);
+        for (const message of batch.messages) {
+          // Prevent processing if consumer is stopping or batch is stale
+          if (!isRunning() || isStale()) {
             log.warn(
-              `Successfully committed offset ${commitOffset} (for message offset ${message.offset}) after processing failure, effectively skipping message.`,
+              "Consumer stopping or batch stale, skipping message processing."
+            );
+            break; // Exit the loop for this batch
+          }
+
+          const fileIDForLogging = extractFileIDForLogging(message); // Extract logging helper
+
+          log.debug(
+            `Processing message offset ${message.offset} (FileID: ${fileIDForLogging}) from batch.`
+          );
+
+          try {
+            // Send heartbeat before starting processing for this message
+            await heartbeat();
+
+            // Call the actual message handler logic
+            await messageHandler({
+              message,
+              resolveOffset,
+              heartbeat,
+              topic: batch.topic,
+              partition: batch.partition,
+            });
+
+            // Heartbeat again after successful processing (optional, but good practice)
+            await heartbeat();
+          } catch (processingError: any) {
+            log.error(
+              `Error in messageHandler for offset ${message.offset} (FileID: ${fileIDForLogging}). Message will likely be reprocessed.`,
               {
+                err: processingError,
                 kafkaMessageOffset: message.offset,
-                committedOffset: commitOffset,
-                topic: topic,
-                partition: partition,
-                skippedFileID: fileIDForLogging,
+                kafkaMessageTopic: batch.topic,
+                kafkaMessagePartition: batch.partition,
+                processingFileID: fileIDForLogging,
               }
             );
-          } catch (commitError: any) {
-            const criticalErrorMessage = `CRITICAL FAILURE: Failed to commit offset ${commitOffset} (for message offset ${message.offset}) for fileID (tentative) '${fileIDForLogging}' AFTER a processing error. Message will likely be reprocessed, risking a loop.`;
-
-            // Fallback logging using console.error in case the main logger is also failing
-            console.error(criticalErrorMessage, {
-              commitErrorDetail: String(commitError),
-              commitErrorStack:
-                commitError instanceof Error ? commitError.stack : undefined,
-              originalProcessingErrorDetail: String(processingError),
-              originalProcessingErrorStack:
-                processingError instanceof Error
-                  ? processingError.stack
-                  : undefined,
-            });
-
-            log.error(criticalErrorMessage, {
-              err: commitError,
-              originalProcessingError: {
-                // Provide context of the original error
-                message: processingError?.message,
-                stack: processingError?.stack, // Log stack of original error
-                status: processingError?.response?.status,
-              },
-              kafkaMessageOffset: message.offset,
-              attemptedCommitOffset: commitOffset,
-              topic: topic,
-              partition: partition,
-              fileID: fileIDForLogging,
-            });
-            // To prevent the consumer from crashing and ensure it continues to process other messages (if possible),
-            // we don't re-throw here. The message is already stuck if this commit fails.
-            // External monitoring should pick up the 'CRITICAL FAILURE' logs.
+            // Do NOT resolve offset on error, let it be reprocessed.
+            // Consider adding a dead-letter queue mechanism here for persistent errors.
           }
         }
+
+        // Commit offsets for all resolved messages in this batch
+        log.debug(
+          `Attempting to commit resolved offsets for batch (up to offset ${batch.lastOffset()}).`
+        );
+        await commitOffsetsIfNecessary();
+        log.debug("Batch offset commit attempt finished.");
       },
     });
   } catch (error: any) {
@@ -198,5 +154,31 @@ export async function startKafkaConsumer(
       { err: error }
     );
     process.exit(1);
+  }
+}
+
+// Helper function for consistent File ID extraction for logging
+function extractFileIDForLogging(message: KafkaMessage): string {
+  try {
+    if (message.value) {
+      const rawValue = message.value.toString();
+      const parts = rawValue.split("/");
+      const extracted = parts.pop();
+      if (extracted) {
+        return (
+          extracted.split("?")[0].split("#")[0] || "extracted_empty_fileID"
+        );
+      } else {
+        return "could_not_extract_fileID_from_path";
+      }
+    } else {
+      return "message_value_is_null";
+    }
+  } catch (parseError) {
+    log.warn(
+      "Failed to parse Kafka message value for fileID extraction (for logging only)",
+      { err: parseError, rawMessageValue: message.value?.toString() }
+    );
+    return "message_value_parsing_failed";
   }
 }

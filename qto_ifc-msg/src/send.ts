@@ -4,57 +4,55 @@ import { IFCData } from "./types";
 import { getEnv } from "./utils/env";
 import { log } from "./utils/logger";
 import FormData from "form-data";
-import * as fs from "fs";
-import * as path from "path";
-import * as os from "os";
-import axios from "axios";
+import axios, { AxiosProgressEvent } from "axios";
+import { Readable } from "stream";
 
 const BACKEND_URL = getEnv("BACKEND_URL");
 const UPLOAD_ENDPOINT = `${BACKEND_URL}/upload-ifc/`;
 
-export async function sendIFCFile(ifcData: IFCData) {
-  let tempFilePath: string | undefined;
+export async function sendIFCFile(
+  ifcData: IFCData,
+  onProgress?: (progressEvent: AxiosProgressEvent) => void
+) {
   try {
     log.info(
-      `Preparing to send file ${ifcData.filename} to ${UPLOAD_ENDPOINT}`
+      `Preparing to send file stream ${ifcData.filename} to ${UPLOAD_ENDPOINT}`
     );
 
     const formData = new FormData();
 
-    const tempDir = os.tmpdir();
-    const safeFilename = ifcData.filename.replace(/[^a-z0-9_.-]/gi, "_");
-    tempFilePath = path.join(tempDir, `ifc_${Date.now()}_${safeFilename}`);
-
-    fs.writeFileSync(tempFilePath, ifcData.file);
-    log.info(`Written buffer to temporary file: ${tempFilePath}`);
-
-    formData.append("file", fs.createReadStream(tempFilePath), {
+    // Append the stream directly to FormData
+    formData.append("file", ifcData.fileStream, {
       filename: ifcData.filename,
-      contentType: "application/octet-stream",
+      contentType: "application/octet-stream", // Or the appropriate MIME type if known
     });
 
+    // Append other metadata
     formData.append("project", ifcData.project);
     formData.append("filename", ifcData.filename);
     formData.append("timestamp", ifcData.timestamp);
 
-    log.info(`Sending multipart request via Axios to ${UPLOAD_ENDPOINT}`);
+    log.info(
+      `Sending multipart stream request via Axios to ${UPLOAD_ENDPOINT}`
+    );
 
     const response = await axios.post(UPLOAD_ENDPOINT, formData, {
       headers: {
-        ...formData.getHeaders(),
+        ...formData.getHeaders(), // Let FormData set the correct Content-Type and boundary
       },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
+      maxContentLength: Infinity, // Allow large uploads
+      maxBodyLength: Infinity, // Allow large uploads
+      onUploadProgress: onProgress, // Pass the callback here
     });
 
     log.info(
       `Received response with status: ${response.status} ${response.statusText}`
     );
 
-    log.info(`File upload successful: ${ifcData.filename}`);
+    log.info(`File stream upload successful: ${ifcData.filename}`);
     return response.data;
   } catch (error: any) {
-    let errorMsg = `Error sending file ${ifcData.filename}`;
+    let errorMsg = `Error sending file stream ${ifcData.filename}`;
     if (axios.isAxiosError(error) && error.response) {
       errorMsg = `Upload failed: ${error.response.status} ${
         error.response.statusText
@@ -63,15 +61,11 @@ export async function sendIFCFile(ifcData: IFCData) {
     } else {
       log.error(errorMsg, error);
     }
-    throw new Error(errorMsg);
-  } finally {
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        log.info(`Removed temporary file: ${tempFilePath}`);
-      } catch (cleanupError: any) {
-        log.warn(`Failed to clean up temp file: ${tempFilePath}`, cleanupError);
-      }
+    // Ensure the stream is destroyed on error to prevent leaks
+    if (ifcData.fileStream && !ifcData.fileStream.destroyed) {
+      ifcData.fileStream.destroy(error);
+      log.debug("Destroyed input stream due to upload error.");
     }
+    throw new Error(errorMsg);
   }
 }
