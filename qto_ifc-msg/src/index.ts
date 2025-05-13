@@ -50,12 +50,17 @@ async function main() {
 
           fileID = message.value.toString().split("/").pop();
           if (!fileID) {
-            log.error("Could not extract fileID from download link", {
-              link: message.value.toString(),
-            });
-            return;
+-            log.error("Could not extract fileID from download link", {
+-              link: message.value.toString(),
+-            });
+-            return;
++            log.error("Could not extract fileID from download link – skipping", {
++              link: message.value.toString(),
++              offset: message.offset,
++            });
++            resolveOffset(message.offset);       // mark as handled
++            return;
           }
-
           log.info(`Extracted fileID: ${fileID}`);
 
           fileStream = await getFile(fileID, IFC_BUCKET_NAME, minioClient);
