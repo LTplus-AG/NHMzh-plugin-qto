@@ -12,6 +12,8 @@ import { log } from "./utils/logger";
 import { getEnv } from "./utils/env";
 import { IFCData } from "./types";
 import { sendIFCFile } from "./send";
+import { Readable } from "stream";
+import { KafkaMessage } from "kafkajs";
 
 const IFC_BUCKET_NAME = getEnv("MINIO_IFC_BUCKET");
 
@@ -29,75 +31,113 @@ async function main() {
   log.info("Kafka consumer setup complete");
 
   log.info("Starting Kafka consumer...");
-  await startKafkaConsumer(consumer, async (message: any) => {
-    if (message.value) {
-      let fileID: string | undefined;
-      try {
-        log.info(
-          "Processing Kafka message value (as string):",
-          message.value.toString()
-        );
-        const downloadLink = message.value.toString();
-        fileID = downloadLink.split("/").pop();
-        if (!fileID) {
-          log.error("Could not extract fileID from download link", {
-            link: downloadLink,
+  await startKafkaConsumer(
+    consumer,
+    async ({ message, resolveOffset, heartbeat, topic, partition }) => {
+      if (message.value) {
+        let fileID: string | undefined;
+        let fileStream: Readable | undefined;
+
+        try {
+          log.info(
+            `Starting processing for offset ${message.offset}`
+          );
+
+          await heartbeat();
+          log.debug(
+            `Heartbeat sent before getFile for offset ${message.offset}`
+          );
+
+          fileID = message.value.toString().split("/").pop();
+          if (!fileID) {
+-            log.error("Could not extract fileID from download link", {
+-              link: message.value.toString(),
+-            });
+-            return;
++            log.error("Could not extract fileID from download link – skipping", {
++              link: message.value.toString(),
++              offset: message.offset,
++            });
++            resolveOffset(message.offset);       // mark as handled
++            return;
+          }
+          log.info(`Extracted fileID: ${fileID}`);
+
+          fileStream = await getFile(fileID, IFC_BUCKET_NAME, minioClient);
+          log.info(`Successfully obtained file stream for ${fileID}`);
+
+          await heartbeat();
+          log.debug(
+            `Heartbeat sent before getFileMetadata for offset ${message.offset}`
+          );
+
+          const metadata = await getFileMetadata(
+            fileID,
+            IFC_BUCKET_NAME,
+            minioClient
+          );
+          log.info(`Successfully retrieved metadata for ${fileID}:`, metadata);
+
+          const projectName = metadata.project || "Default-Project-Name";
+          if (!metadata.project) {
+            log.warn(
+              `metadata.project was empty for fileID ${fileID}. Using default: "${projectName}"`
+            );
+          }
+
+          const ifcData: IFCData = {
+            project: projectName,
+            filename: metadata.filename,
+            timestamp: metadata.timestamp,
+            fileStream: fileStream,
+          };
+
+          await heartbeat();
+          log.debug(
+            `Heartbeat sent before sendIFCFile for offset ${message.offset}`
+          );
+
+          await sendIFCFile(ifcData, async (progressEvent) => {
+            if (progressEvent.loaded && progressEvent.total) {
+              const percentCompleted = Math.round(
+                (progressEvent.loaded * 100) / progressEvent.total
+              );
+              log.debug(
+                `Upload progress for offset ${message.offset}: ${percentCompleted}%`
+              );
+            }
+            await heartbeat();
           });
-          return;
-        }
 
-        log.info(`Extracted fileID: ${fileID}`);
-        const file = await getFile(fileID, IFC_BUCKET_NAME, minioClient);
-        if (!file) {
+          log.info(
+            `Successfully processed and sent file derived from message offset ${message.offset}`
+          );
+
+          resolveOffset(message.offset);
+          log.info(`Offset ${message.offset} resolved.`);
+        } catch (error: any) {
           log.error(
-            `File ${fileID} not found or getFile returned null/undefined.`
+            `Error processing Kafka message for fileID '${
+              fileID || "unknown"
+            }' (offset: ${message.offset})`,
+            error
           );
-          return;
+          if (fileStream && !fileStream.destroyed) {
+            fileStream.destroy();
+            log.debug(
+              "Destroyed MinIO stream due to pre-upload processing error."
+            );
+          }
         }
-        log.info(
-          `Successfully downloaded file ${fileID}, size: ${file.length} bytes`
-        );
-
-        const metadata = await getFileMetadata(
-          fileID,
-          IFC_BUCKET_NAME,
-          minioClient
-        );
-        log.info(`Successfully retrieved metadata for ${fileID}:`, metadata);
-
-        const projectName = metadata.project || "Default-Project-Name";
-        if (!metadata.project) {
-          log.warn(
-            `metadata.project was empty for fileID ${fileID}. Using default: "${projectName}"`
-          );
-        }
-
-        const ifcData: IFCData = {
-          project: projectName,
-          filename: metadata.filename,
-          timestamp: metadata.timestamp,
-          file: file,
-        };
-
-        await sendIFCFile(ifcData);
-        log.info(
-          `Successfully processed and sent file derived from message offset ${message.offset}`
-        );
-      } catch (error: any) {
-        log.error(
-          `Error processing Kafka message for fileID '${
-            fileID || "unknown"
-          }' (offset: ${message.offset})`,
-          error
-        );
-        throw error;
+      } else {
+        log.warn("Received Kafka message with empty value", {
+          offset: message.offset,
+        });
+        resolveOffset(message.offset);
+        log.warn(`Offset ${message.offset} for empty message resolved.`);
       }
-    } else {
-      log.warn("Received Kafka message with empty value", {
-        offset: message.offset,
-      });
     }
-  });
+  );
 
   log.info("Kafka consumer processing loop started");
 }
