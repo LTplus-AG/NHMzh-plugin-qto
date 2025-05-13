@@ -40,9 +40,7 @@ async function main() {
 
         try {
           log.info(
-            `Starting processing for offset ${message.offset} (FileID: ${
-              fileID || "unknown"
-            })`
+            `Starting processing for offset ${message.offset}`
           );
 
           await heartbeat();
