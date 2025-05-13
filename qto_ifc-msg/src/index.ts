@@ -39,9 +39,7 @@ async function main() {
         let fileStream: Readable | undefined;
 
         try {
-          log.info(
-            `Starting processing for offset ${message.offset}`
-          );
+          log.info(`Starting processing for offset ${message.offset}`);
 
           await heartbeat();
           log.debug(
@@ -50,16 +48,15 @@ async function main() {
 
           fileID = message.value.toString().split("/").pop();
           if (!fileID) {
--            log.error("Could not extract fileID from download link", {
--              link: message.value.toString(),
--            });
--            return;
-+            log.error("Could not extract fileID from download link – skipping", {
-+              link: message.value.toString(),
-+              offset: message.offset,
-+            });
-+            resolveOffset(message.offset);       // mark as handled
-+            return;
+            log.error(
+              "Could not extract fileID from download link – skipping",
+              {
+                link: message.value.toString(),
+                offset: message.offset,
+              }
+            );
+            resolveOffset(message.offset); // mark as handled
+            return;
           }
           log.info(`Extracted fileID: ${fileID}`);
 
