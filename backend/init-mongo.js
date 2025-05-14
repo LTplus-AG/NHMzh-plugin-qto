@@ -18,8 +18,11 @@ const lcaDbName = process.env.MONGODB_LCA_DATABASE || "lca";
 const databasesToInit = [
   {
     name: qtoDbName,
-    collections: ["projects", "elements"],
-    indexes: { elements: [{ project_id: 1 }, { element_type: 1 }] },
+    collections: ["projects", "elements", "ifc_processing_jobs"],
+    indexes: {
+      elements: [{ project_id: 1 }, { element_type: 1 }],
+      ifc_processing_jobs: [{ status: 1 }, { created_at: -1 }],
+    },
   },
   {
     name: costDbName,

@@ -4,7 +4,7 @@ import logging
 import os
 import socket
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import re
 from pymongo import MongoClient, UpdateOne, InsertOne
 from bson.objectid import ObjectId
@@ -294,16 +294,24 @@ class MongoDBHelper:
 
             now = datetime.now(timezone.utc)
             elements_to_insert = []
-            for element in elements_data:
+            for element_dict in elements_data:
                 # Ensure basic fields and timestamps are set correctly
-                element['project_id'] = project_id
-                element['created_at'] = now # Mark creation time for this batch
-                element['updated_at'] = now
-                element['is_manual'] = False # Mark elements from IFC as not manual
-                element['status'] = "pending" # Newly uploaded elements start as pending
-                # Remove _id if it somehow exists in the input data
-                element.pop('_id', None)
-                elements_to_insert.append(element)
+                element_dict['project_id'] = project_id
+                element_dict['created_at'] = now # Mark creation time for this batch
+                element_dict['updated_at'] = now
+                element_dict['is_manual'] = False # Mark elements from IFC as not manual
+                element_dict['status'] = "pending" # Newly uploaded elements start as pending
+                
+                # Ensure the IFC GUID (passed as 'id' from Pydantic model) is stored as 'ifc_id'
+                if 'id' in element_dict and 'ifc_id' not in element_dict:
+                    element_dict['ifc_id'] = element_dict.pop('id')
+                elif 'ifc_id' not in element_dict and 'id' not in element_dict:
+                    # This case should ideally not happen if parsing is correct
+                    logger.warning(f"Element missing 'id' and 'ifc_id' for project {project_id}, name: {element_dict.get('name')}. Skipping critical ID.")
+                
+                # Remove MongoDB _id if it somehow exists in the input data to avoid conflicts
+                element_dict.pop('_id', None)
+                elements_to_insert.append(element_dict)
 
             if not elements_to_insert: # Should not happen if elements_data was not empty, but safety check
                  logger.warning(f"Prepared list for insertion is empty for project {project_id}, although input was not.")
@@ -768,4 +776,102 @@ class MongoDBHelper:
         except Exception as e:
             logger.error(f"Unexpected error during batch upsert (manual) execution: {e}", exc_info=True)
             return {"success": False, "message": f"Unexpected error: {e}", "processed": processed_count, "created": 0, "updated": 0, "upserted_ids": []}
+
+    # <<< START ADDED FOR ASYNC IFC PROCESSING >>>
+    def create_ifc_processing_job(self, job_data: Dict[str, Any]) -> Optional[str]:
+        """Creates a new IFC processing job in MongoDB.
+
+        Args:
+            job_data: Dictionary containing job details (filename, project_name, file_id_in_staging, upload_timestamp).
+
+        Returns:
+            The string ObjectId of the created job, or None if creation failed.
+        """
+        if self.db is None:
+            logger.error("MongoDB not connected, cannot create IFC processing job")
+            return None
+        try:
+            now = datetime.now(timezone.utc)
+            job_doc = {
+                "filename": job_data.get("filename"),
+                "project_name": job_data.get("project_name"),
+                "file_id_in_staging": job_data.get("file_id_in_staging"),
+                "upload_timestamp": job_data.get("upload_timestamp"),
+                "status": "queued",
+                "created_at": now,
+                "updated_at": now,
+                "error_message": None,
+                "element_count": None
+            }
+            result = self.db.ifc_processing_jobs.insert_one(job_doc)
+            logger.info(f"Created IFC processing job with ID: {result.inserted_id}")
+            return str(result.inserted_id)
+        except Exception as e:
+            logger.error(f"Error creating IFC processing job in MongoDB: {e}", exc_info=True)
+            return None
+
+    def update_ifc_processing_job_status(
+        self,
+        job_id_str: str,
+        status: str,
+        element_count: Optional[int] = None,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """Updates the status and other details of an IFC processing job.
+
+        Args:
+            job_id_str: The string ObjectId of the job to update.
+            status: The new status (e.g., "processing", "completed", "failed").
+            element_count: Optional number of elements processed.
+            error_message: Optional error message if the job failed.
+
+        Returns:
+            True if the update was successful, False otherwise.
+        """
+        if self.db is None:
+            logger.error(f"MongoDB not connected, cannot update job {job_id_str}")
+            return False
+        try:
+            job_oid = ObjectId(job_id_str)
+            update_fields = {
+                "status": status,
+                "updated_at": datetime.now(timezone.utc)
+            }
+            if element_count is not None:
+                update_fields["element_count"] = element_count
+            if error_message is not None:
+                update_fields["error_message"] = error_message
+            
+            result = self.db.ifc_processing_jobs.update_one(
+                {"_id": job_oid},
+                {"$set": update_fields}
+            )
+            if result.matched_count > 0:
+                logger.info(f"Updated status of job {job_id_str} to '{status}'. Modified: {result.modified_count > 0}")
+                return True
+            else:
+                logger.warning(f"Job {job_id_str} not found for status update.")
+                return False
+        except Exception as e:
+            logger.error(f"Error updating status for job {job_id_str}: {e}", exc_info=True)
+            return False
+
+    def get_ifc_processing_job(self, job_id_str: str) -> Optional[Dict[str, Any]]:
+        """Retrieves an IFC processing job by its string ID."""
+        if self.db is None:
+            logger.error(f"MongoDB not connected, cannot get job {job_id_str}")
+            return None
+        try:
+            job_oid = ObjectId(job_id_str)
+            job_doc = self.db.ifc_processing_jobs.find_one({"_id": job_oid})
+            if job_doc:
+                 # Ensure _id is returned as a string if present, for Pydantic model compatibility
+                if "_id" in job_doc:
+                    job_doc["_id"] = str(job_doc["_id"]) # Or map to 'id' field
+                    job_doc["id"] = job_doc["_id"]
+            return job_doc
+        except Exception as e:
+            logger.error(f"Error retrieving job {job_id_str}: {e}", exc_info=True)
+            return None
+    # <<< END ADDED FOR ASYNC IFC PROCESSING >>>
 

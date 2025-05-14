@@ -19,6 +19,7 @@ export type FileMetadata = {
   timestamp: string;
   project: string;
   filename: string;
+  size: number;
 };
 
 /**
@@ -78,5 +79,6 @@ export async function getFileMetadata(
     timestamp: statObject.metaData["created-at"], // Ensure proper casing
     project: statObject.metaData["project-name"], // Match MinIO key
     filename: statObject.metaData["filename"], // Match MinIO key
+    size: statObject.size, // Added file size from statObject
   };
 }

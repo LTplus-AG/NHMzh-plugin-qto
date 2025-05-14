@@ -87,6 +87,7 @@ async function main() {
             filename: metadata.filename,
             timestamp: metadata.timestamp,
             fileStream: fileStream,
+            fileSize: metadata.size,
           };
 
           await heartbeat();
@@ -94,37 +95,50 @@ async function main() {
             `Heartbeat sent before sendIFCFile for offset ${message.offset}`
           );
 
-          await sendIFCFile(ifcData, async (progressEvent) => {
-            if (progressEvent.loaded && progressEvent.total) {
-              const percentCompleted = Math.round(
-                (progressEvent.loaded * 100) / progressEvent.total
-              );
-              log.debug(
-                `Upload progress for offset ${message.offset}: ${percentCompleted}%`
-              );
+          // sendIFCFile now returns JobAcceptedResponse
+          const jobAcceptance = await sendIFCFile(
+            ifcData,
+            async (progressEvent) => {
+              if (progressEvent.loaded && progressEvent.total) {
+                const percentCompleted = Math.round(
+                  (progressEvent.loaded * 100) / progressEvent.total
+                );
+                log.debug(
+                  `Upload progress for offset ${message.offset}, fileID ${ifcData.filename}: ${percentCompleted}%`
+                );
+              }
+              await heartbeat(); // Heartbeat during progress
             }
-            await heartbeat();
-          });
-
-          log.info(
-            `Successfully processed and sent file derived from message offset ${message.offset}`
           );
 
+          log.info(
+            `File submission accepted by backend for offset ${message.offset}. Job ID: ${jobAcceptance.job_id}`,
+            {
+              filename: ifcData.filename,
+              project: ifcData.project,
+              jobId: jobAcceptance.job_id,
+              statusEndpoint: jobAcceptance.status_endpoint,
+            }
+          );
+
+          await heartbeat(); // Heartbeat after job acceptance, before resolving offset
           resolveOffset(message.offset);
           log.info(`Offset ${message.offset} resolved.`);
         } catch (error: any) {
           log.error(
             `Error processing Kafka message for fileID '${
               fileID || "unknown"
-            }' (offset: ${message.offset})`,
-            error
+            }':`,
+            { err: error, offset: message.offset }
           );
-          if (fileStream && !fileStream.destroyed) {
-            fileStream.destroy();
-            log.debug(
-              "Destroyed MinIO stream due to pre-upload processing error."
-            );
-          }
+          resolveOffset(message.offset);
+          log.warn(
+            `Offset ${
+              message.offset
+            } resolved after error to prevent Kafka loop. Check logs for details about FileID '${
+              fileID || "unknown"
+            }'.`
+          );
         }
       } else {
         log.warn("Received Kafka message with empty value", {
@@ -135,7 +149,6 @@ async function main() {
       }
     }
   );
-
   log.info("Kafka consumer processing loop started");
 }
 

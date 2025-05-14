@@ -44,7 +44,11 @@ export async function setupKafkaConsumer(): Promise<Consumer> {
       },
   });
 
-  const consumer = kafka.consumer({ groupId: "qto-ifc-consumer-group" });
+  const consumer = kafka.consumer({
+    groupId: "qto-ifc-consumer-group",
+    sessionTimeout: 240000, // Increased to 240 seconds (4 minutes)
+    heartbeatInterval: 3000, // Keep heartbeat interval at 3 seconds
+  });
 
   try {
     log.debug("Connecting to Kafka");
@@ -82,51 +86,124 @@ export async function startKafkaConsumer(
 ): Promise<void> {
   try {
     await consumer.run({
-      // Use eachBatch for better control over long tasks and heartbeats
-      eachBatchAutoResolve: false, // We will manually resolve offsets
+      eachBatchAutoResolve: false,
       eachBatch: async ({
         batch,
         resolveOffset,
         heartbeat,
-        commitOffsetsIfNecessary, // Use this for efficient commits
+        commitOffsetsIfNecessary,
         isRunning,
         isStale,
       }: EachBatchPayload) => {
         log.debug(`Received batch with ${batch.messages.length} messages.`);
 
+        if (!isRunning() || isStale()) {
+          log.warn(
+            "Consumer stopping or batch stale, skipping entire batch processing."
+          );
+          // Resolve all offsets in a stale/stopped batch to avoid reprocessing them individually later
+          for (const message of batch.messages) {
+            if (message.offset) {
+              // Ensure offset exists before trying to resolve
+              resolveOffset(message.offset);
+            }
+          }
+          try {
+            await commitOffsetsIfNecessary(); // Attempt to commit resolved offsets
+            log.debug("Committed offsets for stale/stopped batch.");
+          } catch (commitError) {
+            log.error("Error committing offsets for stale/stopped batch:", {
+              err: commitError,
+            });
+          }
+          return; // Exit early
+        }
+
+        // Filter for latest message per projectKey within the batch
+        const latestMessagesToProcess = new Map<string, KafkaMessage>();
+        const offsetsToResolveWithoutProcessing = new Set<string>();
+
         for (const message of batch.messages) {
-          // Prevent processing if consumer is stopping or batch is stale
-          if (!isRunning() || isStale()) {
+          if (!message.value) {
             log.warn(
-              "Consumer stopping or batch stale, skipping message processing."
+              `Message with offset ${message.offset} has null value, scheduling for offset resolution.`
             );
-            break; // Exit the loop for this batch
+            if (message.offset)
+              offsetsToResolveWithoutProcessing.add(message.offset);
+            continue;
           }
 
-          const fileIDForLogging = extractFileIDForLogging(message); // Extract logging helper
+          // Use fileID (before '.ifc') as a stand-in for projectKey if message.key is not reliable
+          // This assumes fileID uniquely identifies a project's dataset for versioning purposes.
+          // A more robust solution would be a dedicated project ID in message.key or value.
+          const fileIdForProjectKey =
+            extractFileIDForLogging(message).split(".")[0];
+          const projectKey = message.key?.toString() || fileIdForProjectKey;
 
+          // Kafka message.timestamp is the append time to Kafka, not necessarily data creation time.
+          // For true latest, data's own timestamp from MinIO metadata would be better,
+          // but fetching it for all messages here is too slow.
+          // Using message.timestamp (Kafka append time) is an approximation for "latest in batch".
+          const messageTimestamp = message.timestamp;
+
+          const existing = latestMessagesToProcess.get(projectKey);
+          if (
+            !existing ||
+            Number(messageTimestamp) > Number(existing.timestamp)
+          ) {
+            if (existing && existing.offset) {
+              offsetsToResolveWithoutProcessing.add(existing.offset);
+            }
+            latestMessagesToProcess.set(projectKey, message);
+          } else {
+            if (message.offset)
+              offsetsToResolveWithoutProcessing.add(message.offset);
+          }
+        }
+
+        log.debug(
+          `Identified ${latestMessagesToProcess.size} latest messages to process out of ${batch.messages.length}.`
+        );
+        log.debug(
+          `${offsetsToResolveWithoutProcessing.size} messages will have their offsets resolved without full processing.`
+        );
+
+        // Resolve offsets for messages that won't be processed
+        for (const offset of offsetsToResolveWithoutProcessing) {
+          resolveOffset(offset);
+        }
+
+        // Process the identified latest messages
+        for (const message of latestMessagesToProcess.values()) {
+          if (!isRunning() || isStale()) {
+            log.warn(
+              "Consumer stopping or batch stale during main processing loop of latest messages."
+            );
+            // Note: some offsets might have been resolved already.
+            // If we bail here, remaining latest messages in this map won't be processed in this iteration.
+            break;
+          }
+
+          const fileIDForLogging = extractFileIDForLogging(message);
           log.debug(
-            `Processing message offset ${message.offset} (FileID: ${fileIDForLogging}) from batch.`
+            `Processing latest message for projectKey '${
+              message.key?.toString() || fileIDForLogging.split(".")[0]
+            }', offset ${message.offset} (FileID: ${fileIDForLogging}).`
           );
 
           try {
-            // Send heartbeat before starting processing for this message
             await heartbeat();
-
-            // Call the actual message handler logic
             await messageHandler({
               message,
-              resolveOffset,
+              resolveOffset, // messageHandler will call this for the processed message
               heartbeat,
               topic: batch.topic,
               partition: batch.partition,
             });
-
-            // Heartbeat again after successful processing (optional, but good practice)
-            await heartbeat();
+            // Heartbeat after successful processing is handled by the caller (messageHandler or its success path)
           } catch (processingError: any) {
             log.error(
-              `Error in messageHandler for offset ${message.offset} (FileID: ${fileIDForLogging}). Message will likely be reprocessed.`,
+              `Error in messageHandler for LATEST message offset ${message.offset} (FileID: ${fileIDForLogging}). Message will likely be reprocessed.`,
               {
                 err: processingError,
                 kafkaMessageOffset: message.offset,
@@ -135,17 +212,21 @@ export async function startKafkaConsumer(
                 processingFileID: fileIDForLogging,
               }
             );
-            // Do NOT resolve offset on error, let it be reprocessed.
-            // Consider adding a dead-letter queue mechanism here for persistent errors.
+            // Do NOT resolve offset on error here; messageHandler is responsible or it will be retried.
           }
         }
 
-        // Commit offsets for all resolved messages in this batch
-        log.debug(
-          `Attempting to commit resolved offsets for batch (up to offset ${batch.lastOffset()}).`
-        );
-        await commitOffsetsIfNecessary();
-        log.debug("Batch offset commit attempt finished.");
+        // Commit all resolved offsets (both skipped and processed)
+        try {
+          await commitOffsetsIfNecessary();
+          log.debug(
+            "Batch offset commit attempt finished for current batch processing logic."
+          );
+        } catch (commitError) {
+          log.error("Error during final commitOffsetsIfNecessary for batch:", {
+            err: commitError,
+          });
+        }
       },
     });
   } catch (error: any) {
