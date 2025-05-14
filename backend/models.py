@@ -229,6 +229,45 @@ class QTORequestBody(BaseModel):
     elements: Optional[List[ElementInputData]] = None
     project: Optional[str] = None
 
+# <<< ADDED FOR ASYNC IFC PROCESSING >>>
+class JobCreate(BaseModel):
+    filename: str
+    project_name: str
+    file_id_in_staging: str # e.g., UUID or path to the staged file
+    upload_timestamp: datetime
+
+class Job(JobCreate):
+    id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
+    status: str = "queued" # queued, processing, completed, failed
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    error_message: Optional[str] = None
+    element_count: Optional[int] = None
+
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str, datetime: lambda dt: dt.isoformat(timespec='seconds')}
+        arbitrary_types_allowed = True
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    filename: str
+    project_name: str
+    created_at: datetime
+    updated_at: datetime
+    element_count: Optional[int] = None
+    error_message: Optional[str] = None
+    
+    class Config:
+        json_encoders = {ObjectId: str, datetime: lambda dt: dt.isoformat(timespec='seconds')}
+
+class JobAcceptedResponse(BaseModel):
+    message: str
+    job_id: str
+    status_endpoint: str
+# <<< END ADDED FOR ASYNC IFC PROCESSING >>>
+
 # Update model references if needed (e.g., if IFCElement definition changed)
 # This helps avoid NameErrors if models depend on each other.
 BatchUpdateResponse.model_rebuild()

@@ -12,15 +12,14 @@ import uuid
 import traceback
 import sys
 from functools import lru_cache
-from qto_producer import MongoDBHelper # Removed QTOKafkaProducer import
+from pathlib import Path
+from qto_producer import MongoDBHelper
 import re
-from pymongo.database import Database # <<< Import Database type
+from pymongo.database import Database
 from bson.objectid import ObjectId
-# Import the new configuration
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 from datetime import datetime, timezone
-from ifc_materials_parser import parse_element_materials # Import the new parser
-# Import all models from models.py
+from ifc_materials_parser import parse_element_materials
 from models import (
     QuantityData, ClassificationData, MaterialData,
     ManualQuantityInput, ClassificationNested, ManualMaterialInput, ManualClassificationInput,
@@ -28,7 +27,8 @@ from models import (
     ElementListResponse, BatchUpdateResponse, QTOResponse, ModelUploadResponse,
     ProcessResponse, ModelDeleteResponse, HealthResponse, ModelInfo,
     ElementQuantityUpdate, ManualElementInput, BatchElementData, BatchUpdateRequest,
-    ElementInputData, QTORequestBody
+    ElementInputData, QTORequestBody,
+    Job, JobStatusResponse, JobAcceptedResponse # <<< ADDED Job models
 )
 
 # Set up logging
@@ -47,7 +47,6 @@ logger.info(f"Python version: {sys.version}")
 # Initialize MongoDB connection at startup
 mongodb: Optional[MongoDBHelper] = None # Type hint for clarity
 
-# <<< Dependency Function >>>
 async def get_db() -> Database:
     """FastAPI dependency to get the MongoDB database instance."""
     if mongodb is None or mongodb.db is None:
@@ -55,10 +54,8 @@ async def get_db() -> Database:
         logger.error("Database dependency requested, but connection is not available.")
         raise HTTPException(status_code=503, detail="Database service not available.")
     return mongodb.db
-# <<< End Dependency Function >>>
 
 def init_mongodb():
-    """Initialize MongoDB connection and create necessary collections"""
     global mongodb
     try:
         mongodb = MongoDBHelper()
@@ -72,8 +69,8 @@ app = FastAPI(
     title="QTO IFC Parser API",
     description="API for parsing IFC files and extracting QTO data",
     version="1.0.0",
-    docs_url=None,  # Disable default docs to use custom implementation
-    redoc_url=None  # Disable default redoc to use custom implementation
+    docs_url=None,
+    redoc_url=None
 )
 
 # Get CORS settings from environment variables
@@ -90,8 +87,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Get the list of target IFC classes from environment variables
@@ -714,159 +711,236 @@ def read_root():
     logger.info("API root endpoint accessed")
     return {"message": "IFC Parser API is running"}
 
-@app.post("/upload-ifc/", response_model=ProcessResponse)
+# <<< ADDED: Background task function for IFC processing >>>
+def process_ifc_file_in_background(
+    job_id: str,
+    temp_file_path: str,
+    original_filename: str,
+    project_name: str,
+    upload_timestamp_str: str # Pass as string, convert inside
+):
+    """The actual long-running IFC processing logic to be run in the background."""
+    ifc_file_obj = None # For proper cleanup if ifcopenshell.open fails
+    try:
+        logger.info(f"[Job: {job_id}] Background processing started for {original_filename}")
+        if mongodb is None or mongodb.db is None:
+            logger.error(f"[Job: {job_id}] MongoDB not available. Aborting background task.")
+            # No easy way to update job status if DB is down at this point
+            return
+
+        mongodb.update_ifc_processing_job_status(job_id, status="processing")
+
+        # --- Open IFC File ---
+        try:
+            ifc_file_obj = ifcopenshell.open(temp_file_path)
+            logger.info(f"[Job: {job_id}] IFC file opened successfully with schema: {ifc_file_obj.schema}")
+        except Exception as ifc_error:
+            logger.error(f"[Job: {job_id}] Error opening IFC file {temp_file_path}: {ifc_error}")
+            mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=f"Error opening IFC: {str(ifc_error)}")
+            return
+
+        # --- Parse IFC Data ---
+        parsed_elements_models: List[IFCElement] = _parse_ifc_data(ifc_file_obj) # _parse_ifc_data returns list of Pydantic models
+        logger.info(f"[Job: {job_id}] Finished parsing. Found {len(parsed_elements_models)} elements.")
+
+        if not parsed_elements_models:
+            logger.warning(f"[Job: {job_id}] Parsing completed, but no elements were extracted from {original_filename}.")
+
+        # --- Convert Pydantic models to dicts for saving to MongoDB ---
+        element_dicts_for_db = []
+        for elem_model in parsed_elements_models:
+            try:
+                element_dicts_for_db.append(elem_model.model_dump(exclude_none=True))
+            except AttributeError:
+                element_dicts_for_db.append(elem_model.dict(exclude_none=True)) # Fallback for older Pydantic
+            except Exception as dump_error:
+                logger.error(f"[Job: {job_id}] Error converting element {getattr(elem_model, 'id', '?')} to dict: {dump_error}")
+
+        # --- Save Parsed Data to MongoDB (Elements Collection) ---
+        # 1. Find or create the project and get its ID
+        project_data_for_db = {
+            "name": project_name,
+            "metadata": { 
+                "filename": original_filename,
+                "upload_timestamp": upload_timestamp_str # Use the original upload timestamp string
+            }
+        }
+        project_db_id = mongodb.save_project(project_data_for_db)
+
+        if not project_db_id:
+            err_msg = f"Failed to find or create project '{project_name}' in MongoDB."
+            logger.error(f"[Job: {job_id}] {err_msg}")
+            mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=err_msg)
+            return
+
+        # 2. Replace elements in the elements collection
+        replace_result = mongodb.replace_project_elements(project_id=project_db_id, elements_data=element_dicts_for_db)
+
+        if not replace_result.get("success"):
+            err_msg = f"Failed to replace elements for project '{project_name}'. Details: {replace_result.get('message')}"
+            logger.error(f"[Job: {job_id}] {err_msg}")
+            mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=err_msg)
+            return
+        
+        logger.info(f"[Job: {job_id}] Successfully replaced elements. Inserted: {replace_result.get('inserted_count', 0)}")
+        mongodb.update_ifc_processing_job_status(job_id, status="completed", element_count=len(parsed_elements_models))
+        logger.info(f"[Job: {job_id}] Background processing for {original_filename} completed successfully.")
+
+    except Exception as e:
+        logger.error(f"[Job: {job_id}] Unexpected error in background task for {original_filename}: {str(e)}")
+        logger.error(traceback.format_exc())
+        if mongodb and job_id: # Check if mongodb and job_id are available
+            mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=f"Unexpected background error: {str(e)}")
+    finally:
+        # --- Clean up temporary file ---
+        if ifc_file_obj:
+             del ifc_file_obj # Remove reference to potentially release file lock before unlinking
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+                logger.info(f"[Job: {job_id}] Cleaned up temporary file: {temp_file_path}")
+            except Exception as cleanup_error:
+                logger.error(f"[Job: {job_id}] Error removing temp file during background task cleanup: {str(cleanup_error)}")
+# <<< END ADDED: Background task function >>>
+
+
+@app.post("/upload-ifc/", response_model=JobAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_ifc(
+    background_tasks: BackgroundTasks, # <<< MOVED to be first and fixed
     file: UploadFile = File(...),
     project: str = Form(...),
     filename: str = Form(...),
-    timestamp: str = Form(...),
-    background_tasks: BackgroundTasks = None # Keep background tasks if needed later
+    timestamp: str = Form(...)
 ):
-    """
-    Receives an IFC file (usually from qto_ifc-msg),
-    parses it, saves the parsed data to MongoDB,
-    and triggers a Kafka notification.
-    """
     logger.info(f"Received file upload request for project '{project}', filename '{filename}'")
-   
-    if not file.filename.endswith('.ifc'):
-        raise HTTPException(status_code=400, detail="Only IFC files are supported")
-    
-    temp_file_path = None # Initialize path
-    ifc_file = None
+
+    if not filename.lower().endswith('.ifc'): # Use filename from Form, not file.filename
+        raise HTTPException(status_code=400, detail="Only IFC files are supported based on provided filename form field")
+
+    # --- Staging File --- Staging directory for uploaded files before background processing
+    # Should be a persistent volume if background workers are separate processes/machines.
+    # For BackgroundTasks, a local temp directory can work if it persists long enough.
+    # Using a more persistent staging approach for robustness:
+    staging_dir = os.path.join(os.getcwd(), "ifc_staging") 
+    os.makedirs(staging_dir, exist_ok=True)
+    if not os.access(staging_dir, os.W_OK):
+        logger.error(f"Staging directory {staging_dir} not writable.")
+        raise HTTPException(status_code=500, detail="Server configuration error: Staging directory not writable")
+
+    # Sanitize filename to prevent path traversal
+    safe_filename = Path(filename).name
+    file_id_in_staging = str(uuid.uuid4()) # Unique ID for the staged file
+    staged_file_path = os.path.join(staging_dir, f"{file_id_in_staging}_{safe_filename}")
+
     try:
-        # --- Save Temp File --- (Similar to before)
-        temp_dir = os.path.join(os.getcwd(), "temp")
-        os.makedirs(temp_dir, exist_ok=True)
-        if not os.access(temp_dir, os.W_OK):
-            raise HTTPException(status_code=500, detail="Server configuration error: Temp directory not writable")
+        # Stream file to disk to avoid loading entire file into memory
+        with open(staged_file_path, 'wb') as out_file:
+            bytes_written = 0
+            while chunk := await file.read(4 * 1024 * 1024):  # Read in 4MB chunks
+                out_file.write(chunk)
+                bytes_written += len(chunk)
         
-        # Use a more predictable temp name if needed, or keep UUID
-        file_uuid = str(uuid.uuid4())
-        # Ensure the original filename from the form is used for the temp file name part
-        temp_file_path = os.path.join(temp_dir, f"{file_uuid}_{filename}")
-        
-        contents = await file.read()
-        if not contents:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
-        
-        with open(temp_file_path, 'wb') as f:
-            f.write(contents)
-        
-        if not os.path.exists(temp_file_path):
-            raise HTTPException(status_code=500, detail="Failed to save uploaded file")
-            
-        
-        # --- Open IFC File --- (Similar to before)
-        try:
-            ifc_file = ifcopenshell.open(temp_file_path)
-            logger.info(f"IFC file opened successfully with schema: {ifc_file.schema}")
-        except Exception as ifc_error:
-            logger.error(f"Error opening IFC file {temp_file_path}: {ifc_error}")
-            # Add more checks like before if needed
-            raise HTTPException(status_code=400, detail=f"Error processing IFC file: {str(ifc_error)}")
+        if bytes_written == 0:
+            # Clean up empty file if it was created
+            if os.path.exists(staged_file_path):
+                try: os.unlink(staged_file_path)
+                except Exception as e_unlink:
+                    logger.warning(f"Could not clean up empty staged file {staged_file_path}: {e_unlink}")
+            raise HTTPException(status_code=400, detail="Uploaded file is empty or failed to write any content.")
 
+        logger.info(f"File '{safe_filename}' for project '{project}' staged at: {staged_file_path}, size: {bytes_written} bytes")
 
-        parsed_elements: List[IFCElement] = _parse_ifc_data(ifc_file)
-        logger.info(f"Finished parsing. Found {len(parsed_elements)} elements.")
-
-        if not parsed_elements:
-             logger.warning(f"Parsing completed, but no elements were extracted from {filename}. Check IFC structure and filters.")
-             # Decide if this is an error or just an empty file case
-             # For now, proceed but log warning.
-
-        # --- Convert Pydantic models to dicts for saving --- << NEW
-        element_dicts = []
-        for elem_model in parsed_elements:
-            try:
-                # Use model_dump for Pydantic v2
-                element_dicts.append(elem_model.model_dump(exclude_none=True))
-            except AttributeError:
-                # Fallback for older Pydantic
-                element_dicts.append(elem_model.dict(exclude_none=True))
-            except Exception as dump_error:
-                logger.error(f"Error converting element {getattr(elem_model, 'id', '?')} to dict: {dump_error}")
-                # Optionally skip this element or add placeholder
-
-        # --- Save Parsed Data to MongoDB --- << MODIFIED: Save to Elements Collection >>
-        if mongodb is not None and mongodb.db is not None:
-            # 1. Find or create the project and get its ID
-            project_data = {
-                "name": project,
-                "metadata": { # Include basic metadata
-                     "filename": filename,
-                     "upload_timestamp": timestamp # Use the timestamp from the request form
-                }
-                # Add other relevant project-level info if needed
-            }
-            project_id = mongodb.save_project(project_data)
-
-            if not project_id:
-                logger.error(f"Failed to find or create project '{project}' in MongoDB. Cannot save elements.")
-                raise HTTPException(status_code=500, detail="Failed to process project entry in database.")
-
-            # 2. Save the parsed elements to the elements collection for this project
-            logger.info(f"Saving/Updating {len(element_dicts)} parsed elements via batch upsert for project '{project}' (ID: {project_id})")
-            # Call the NEW function for replacing elements from IFC
-            # Note: Pass the element dictionaries directly
-            replace_result = mongodb.replace_project_elements(project_id=project_id, elements_data=element_dicts)
-
-            # Check the success field from the result dictionary
-            if not replace_result.get("success"):
-                logger.error(f"Failed to replace elements for project '{project}'. Details: {replace_result.get('message')}")
-                # Use message from result if available
-                error_detail = replace_result.get("message", "Failed to save element processing results to database.")
-                raise HTTPException(500, detail=error_detail)
-            else:
-                logger.info(
-                    f"Successfully replaced elements for project {project}. "
-                    f"Inserted: {replace_result.get('inserted_count', 0)}"
-                )
-        else:
-            logger.warning("MongoDB not connected. Parsed elements not saved.")
-            raise HTTPException(status_code=503, detail="Database unavailable, cannot save results") # Raise error if DB is down
-
-        return ProcessResponse(
-            message="IFC file processed and elements saved/updated successfully", # Updated message
-            project=project,
-            filename=filename,
-            element_count=len(parsed_elements) # Keep original parsed count for response
-        )
-    
-    except HTTPException:
-        # If an HTTPException was raised, clean up and re-raise
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception as cleanup_error:
-                logger.error(f"Error removing temp file during HTTP exception: {str(cleanup_error)}")
-        raise # Re-raise the original HTTPException
+    except HTTPException: # Re-raise HTTPExceptions directly
+        raise
     except Exception as e:
-        # General error handling
-        logger.error(f"Unexpected error processing IFC file {filename}: {str(e)}")
-        logger.error(traceback.format_exc())
-        # Clean up temp file
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception as cleanup_error:
-                logger.error(f"Error removing temp file during general exception: {str(cleanup_error)}")
-        raise HTTPException(status_code=500, detail=f"Error processing IFC file: {str(e)}")
+        logger.error(f"Error staging uploaded file {safe_filename}: {e}", exc_info=True)
+        # Clean up partially written or problematic file
+        if os.path.exists(staged_file_path):
+            try: os.unlink(staged_file_path)
+            except Exception as e_unlink_err:
+                 logger.warning(f"Could not clean up partially staged file {staged_file_path} after error: {e_unlink_err}")
+        raise HTTPException(status_code=500, detail=f"Failed to stage uploaded file: {e}")
     finally:
-        # --- Clean up --- (Ensure temp file is removed)
-        # The ifc_file object might hold a lock on the file on some systems
-        if 'ifc_file' in locals() and ifc_file is not None:
-            # Explicitly close or delete the ifc_file object if necessary
-            # Although ifcopenshell usually doesn't hold a persistent lock after opening
-            del ifc_file # Remove reference
+        await file.close() # Ensure file is closed
 
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-                logger.info(f"Cleaned up temporary file: {temp_file_path}")
-            except Exception as cleanup_error:
-                # Log error but don't crash the response if cleanup fails
-                logger.warning(f"Error removing temp file during final cleanup: {str(cleanup_error)}")
+    # --- Create Job in MongoDB ---
+    if mongodb is None or mongodb.db is None:
+        logger.error("MongoDB not available. Cannot create processing job.")
+        # Cleanup staged file if job creation fails before background task is added
+        if os.path.exists(staged_file_path): 
+            try: os.unlink(staged_file_path)
+            except: pass
+        raise HTTPException(status_code=503, detail="Database service unavailable, cannot queue file for processing.")
+
+    upload_dt_object = None
+    try:
+        # Attempt to parse the timestamp string into a datetime object
+        # Ensure it's timezone-aware if necessary, or store as naive UTC if that's the convention.
+        # For simplicity, assuming it might be ISO format from qto-ifc-msg
+        upload_dt_object = datetime.fromisoformat(timestamp.replace("Z", "+00:00")) if timestamp else datetime.now(timezone.utc)
+    except ValueError:
+        logger.warning(f"Could not parse provided timestamp '{timestamp}', using current time.")
+        upload_dt_object = datetime.now(timezone.utc)
+
+    job_payload = {
+        "filename": filename, 
+        "project_name": project,
+        "file_id_in_staging": staged_file_path, # Store the path to the staged file
+        "upload_timestamp": upload_dt_object
+    }
+    job_id = mongodb.create_ifc_processing_job(job_payload)
+
+    if not job_id:
+        logger.error("Failed to create IFC processing job in database.")
+        # Cleanup staged file if job creation fails before background task is added
+        if os.path.exists(staged_file_path): 
+            try: os.unlink(staged_file_path)
+            except: pass
+        raise HTTPException(status_code=500, detail="Failed to queue file for processing.")
+
+    # --- Add to BackgroundTasks ---
+    background_tasks.add_task(
+        process_ifc_file_in_background,
+        job_id=job_id,
+        temp_file_path=staged_file_path, # Pass the staged file path
+        original_filename=filename,
+        project_name=project,
+        upload_timestamp_str=timestamp # Pass original string timestamp
+    )
+
+    logger.info(f"Job {job_id} for file '{filename}' added to background tasks.")
+
+    status_url = f"/ifc-jobs/{job_id}" # Example status URL
+    return JobAcceptedResponse(
+        message="IFC file received and queued for processing.",
+        job_id=job_id,
+        status_endpoint=status_url
+    )
+
+# <<< ADDED: Endpoint to get job status >>>
+@app.get("/ifc-jobs/{job_id_str}", response_model=JobStatusResponse)
+async def get_ifc_job_status(job_id_str: str, db: Database = Depends(get_db)):
+    if mongodb is None: # Check global mongodb helper instance
+        raise HTTPException(status_code=503, detail="Database service not available.")
+    
+    job_doc = mongodb.get_ifc_processing_job(job_id_str)
+    if not job_doc:
+        raise HTTPException(status_code=404, detail=f"Job {job_id_str} not found.")
+    
+    # Convert to Pydantic model for response validation and serialization
+    # Ensure all fields required by JobStatusResponse are present or have defaults
+    response_data = {
+        "job_id": job_doc.get("id", job_doc.get("_id")), # Use 'id' or fallback to '_id'
+        "status": job_doc.get("status", "unknown"),
+        "filename": job_doc.get("filename", "N/A"),
+        "project_name": job_doc.get("project_name", "N/A"),
+        "created_at": job_doc.get("created_at", datetime.min.replace(tzinfo=timezone.utc)),
+        "updated_at": job_doc.get("updated_at", datetime.min.replace(tzinfo=timezone.utc)),
+        "element_count": job_doc.get("element_count"),
+        "error_message": job_doc.get("error_message")
+    }
+    return JobStatusResponse(**response_data)
+# <<< END ADDED >>>
 
 @app.get("/projects/", response_model=List[str])
 async def list_projects(db: Database = Depends(get_db)): # <<< Inject DB
@@ -1048,7 +1122,6 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
                 validated_elements.append(element_model)
             except Exception as validation_error:
                 validation_errors += 1
-                logger.warning(f"Skipping element {i+1} in project '{project_name}' (source: {source}) due to validation error: {validation_error}. Data snippet: {str(elem_data)[:200]}...")
 
         return validated_elements
 
