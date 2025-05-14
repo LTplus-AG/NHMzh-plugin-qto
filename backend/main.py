@@ -12,15 +12,14 @@ import uuid
 import traceback
 import sys
 from functools import lru_cache
-from qto_producer import MongoDBHelper # Removed QTOKafkaProducer import
+from pathlib import Path
+from qto_producer import MongoDBHelper
 import re
-from pymongo.database import Database # <<< Import Database type
+from pymongo.database import Database
 from bson.objectid import ObjectId
-# Import the new configuration
 from ifc_quantities_config import TARGET_QUANTITIES, _get_quantity_value
 from datetime import datetime, timezone
-from ifc_materials_parser import parse_element_materials # Import the new parser
-# Import all models from models.py
+from ifc_materials_parser import parse_element_materials
 from models import (
     QuantityData, ClassificationData, MaterialData,
     ManualQuantityInput, ClassificationNested, ManualMaterialInput, ManualClassificationInput,
@@ -48,7 +47,6 @@ logger.info(f"Python version: {sys.version}")
 # Initialize MongoDB connection at startup
 mongodb: Optional[MongoDBHelper] = None # Type hint for clarity
 
-# <<< Dependency Function >>>
 async def get_db() -> Database:
     """FastAPI dependency to get the MongoDB database instance."""
     if mongodb is None or mongodb.db is None:
@@ -56,10 +54,8 @@ async def get_db() -> Database:
         logger.error("Database dependency requested, but connection is not available.")
         raise HTTPException(status_code=503, detail="Database service not available.")
     return mongodb.db
-# <<< End Dependency Function >>>
 
 def init_mongodb():
-    """Initialize MongoDB connection and create necessary collections"""
     global mongodb
     try:
         mongodb = MongoDBHelper()
@@ -73,8 +69,8 @@ app = FastAPI(
     title="QTO IFC Parser API",
     description="API for parsing IFC files and extracting QTO data",
     version="1.0.0",
-    docs_url=None,  # Disable default docs to use custom implementation
-    redoc_url=None  # Disable default redoc to use custom implementation
+    docs_url=None,
+    redoc_url=None
 )
 
 # Get CORS settings from environment variables
@@ -91,8 +87,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Get the list of target IFC classes from environment variables
@@ -818,8 +814,8 @@ async def upload_ifc(
 ):
     logger.info(f"Received file upload request for project '{project}', filename '{filename}'")
 
-    if not file.filename.endswith('.ifc'):
-        raise HTTPException(status_code=400, detail="Only IFC files are supported")
+    if not filename.lower().endswith('.ifc'): # Use filename from Form, not file.filename
+        raise HTTPException(status_code=400, detail="Only IFC files are supported based on provided filename form field")
 
     # --- Staging File --- Staging directory for uploaded files before background processing
     # Should be a persistent volume if background workers are separate processes/machines.
@@ -831,23 +827,38 @@ async def upload_ifc(
         logger.error(f"Staging directory {staging_dir} not writable.")
         raise HTTPException(status_code=500, detail="Server configuration error: Staging directory not writable")
 
+    # Sanitize filename to prevent path traversal
+    safe_filename = Path(filename).name
     file_id_in_staging = str(uuid.uuid4()) # Unique ID for the staged file
-    staged_file_path = os.path.join(staging_dir, f"{file_id_in_staging}_{filename}")
+    staged_file_path = os.path.join(staging_dir, f"{file_id_in_staging}_{safe_filename}")
 
     try:
-        contents = await file.read()
-        if not contents:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        # Stream file to disk to avoid loading entire file into memory
+        with open(staged_file_path, 'wb') as out_file:
+            bytes_written = 0
+            while chunk := await file.read(4 * 1024 * 1024):  # Read in 4MB chunks
+                out_file.write(chunk)
+                bytes_written += len(chunk)
         
-        with open(staged_file_path, 'wb') as f:
-            f.write(contents)
-        logger.info(f"File '{filename}' for project '{project}' staged at: {staged_file_path}")
+        if bytes_written == 0:
+            # Clean up empty file if it was created
+            if os.path.exists(staged_file_path):
+                try: os.unlink(staged_file_path)
+                except Exception as e_unlink:
+                    logger.warning(f"Could not clean up empty staged file {staged_file_path}: {e_unlink}")
+            raise HTTPException(status_code=400, detail="Uploaded file is empty or failed to write any content.")
 
+        logger.info(f"File '{safe_filename}' for project '{project}' staged at: {staged_file_path}, size: {bytes_written} bytes")
+
+    except HTTPException: # Re-raise HTTPExceptions directly
+        raise
     except Exception as e:
-        logger.error(f"Error staging uploaded file {filename}: {e}", exc_info=True)
+        logger.error(f"Error staging uploaded file {safe_filename}: {e}", exc_info=True)
+        # Clean up partially written or problematic file
         if os.path.exists(staged_file_path):
             try: os.unlink(staged_file_path)
-            except: pass # Best effort cleanup
+            except Exception as e_unlink_err:
+                 logger.warning(f"Could not clean up partially staged file {staged_file_path} after error: {e_unlink_err}")
         raise HTTPException(status_code=500, detail=f"Failed to stage uploaded file: {e}")
     finally:
         await file.close() # Ensure file is closed
@@ -1111,7 +1122,6 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
                 validated_elements.append(element_model)
             except Exception as validation_error:
                 validation_errors += 1
-                logger.warning(f"Skipping element {i+1} in project '{project_name}' (source: {source}) due to validation error: {validation_error}. Data snippet: {str(elem_data)[:200]}...")
 
         return validated_elements
 
