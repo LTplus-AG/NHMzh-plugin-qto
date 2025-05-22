@@ -395,12 +395,12 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
         for element in all_elements: # Use all_elements instead of chunking for simplicity here
             try:
                 # Extract basic properties
-                element_id_str = str(element.id())
+                # Use the IFC GUID as the primary identifier
                 element_global_id = element.GlobalId
                 element_type_class = element.is_a()
                 element_instance_name = element.Name if hasattr(element, "Name") and element.Name else "Unnamed"
                 element_data = {
-                    "id": element_id_str,
+                    "id": element_global_id,
                     "global_id": element_global_id,
                     "type": element_type_class,
                     "name": element_instance_name,
