@@ -209,7 +209,7 @@ Each element in MongoDB is stored with the following structure:
   "project_id": {
     "$oid": "67e39625158688f60bbd807a"
   },
-  "ifc_id": "139",
+  "ifc_id": "3DqaUydM99ehywE4_2hm1u",
   "global_id": "3DqaUydM99ehywE4_2hm1u",
   "ifc_class": "IfcWall",
   "name": "Basic Wall:Holz Aussenwand_470mm:2270026",
