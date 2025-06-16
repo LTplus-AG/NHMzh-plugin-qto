@@ -58,6 +58,7 @@ export interface IFCElement {
         name: string;
         fraction?: number | null | undefined;
         volume?: number | null | undefined;
+        width?: number | null | undefined;
         unit?: string | null | undefined;
       }>
     | null
