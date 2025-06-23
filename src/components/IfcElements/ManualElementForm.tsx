@@ -250,8 +250,9 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
       setIsQuantityTypeDisabled(true);
       return;
     }
+    // Allow changing the quantity type regardless of the selected element type.
+    setIsQuantityTypeDisabled(false);
     if (selectedType === "ManualQuantity") {
-      setIsQuantityTypeDisabled(false);
       if (
         formData.quantity.type !== "area" &&
         formData.quantity.type !== "length"
@@ -262,7 +263,6 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
         }));
       }
     } else {
-      setIsQuantityTypeDisabled(true);
       let determinedKey: "area" | "length" = "area";
       let determinedUnit = "m²";
       if (selectedType.includes("Beam") || selectedType.includes("Column")) {
