@@ -38,13 +38,6 @@ class MongoDBHelper:
         # --- Get configuration from environment variables ---
         self.host = os.getenv('MONGODB_HOST', 'mongodb') # Service name in Docker network
         self.port = os.getenv('MONGODB_PORT', '27017')   # Default MongoDB port
-        
-        # --- Reverted: Use QTO Service User --- 
-        # logger.warning("FORCE TEMPORARY DEBUG: Using MongoDB Admin User credentials for QTO service!")
-        # self.user = os.getenv('MONGODB_ADMIN_USER')     # Use ADMIN user (passed from root user)
-        # self.password = os.getenv('MONGODB_ADMIN_PASSWORD') # Use ADMIN password (passed from root pass)
-        # --- END TEMP DEBUG --- 
-        
         self.user = os.getenv('MONGODB_QTO_USER')       # Use Specific user for this service
         self.password = os.getenv('MONGODB_QTO_PASSWORD') # Use Specific password for this service
         
@@ -52,10 +45,8 @@ class MongoDBHelper:
         
         # --- Validate required variables ---
         if not self.user:
-            # Reverted error message
             raise ValueError("MONGODB_QTO_USER environment variable is not set.")
         if not self.password:
-            # Reverted error message
             raise ValueError("MONGODB_QTO_PASSWORD environment variable is not set.")
             
         # --- Construct the MongoDB URI ---
@@ -81,21 +72,14 @@ class MongoDBHelper:
         while retries < self.max_retries:
             try:
                 logger.info(f"Attempting MongoDB connection (attempt {retries + 1}/{self.max_retries})...")
-                # Create the MongoDB client
-                # Add serverSelectionTimeoutMS to handle network issues better
                 self.client = MongoClient(
                     self.uri, 
                     serverSelectionTimeoutMS=5000 # Timeout after 5 seconds
                 )
-                # Test the connection by pinging the server - this forces authentication
                 self.client.admin.command('ping')
-                # Get database
                 self.db = self.client[self.db_name]
                 
                 logger.info(f"MongoDB connected successfully to database '{self.db_name}'")
-                
-                # Ensure collections exist (optional, init script should handle this)
-                # self._ensure_collections() 
                 return
             except Exception as e:
                 retries += 1
@@ -105,24 +89,18 @@ class MongoDBHelper:
                     time.sleep(self.retry_delay)
                 else:
                     logger.error(f"Failed to connect to MongoDB after {self.max_retries} attempts.")
-                    # Optionally raise the exception or handle it as needed
-                    # raise ConnectionFailure(f"Could not connect to MongoDB: {e}") from e
-                    # For now, just log and let db be None
                     self.db = None 
-                    return # Exit loop after max retries
+                    return
     
     def _ensure_collections(self):
         """Ensure required collections exist with proper indexes."""
         try:
-            # Check if collections exist, create them if not
             collection_names = self.db.list_collection_names()
             
-            # Projects collection
             if "projects" not in collection_names:
                 self.db.create_collection("projects")
                 self.db.projects.create_index("name")
             
-            # Elements collection
             if "elements" not in collection_names:
                 self.db.create_collection("elements")
                 self.db.elements.create_index("project_id")
@@ -143,13 +121,11 @@ class MongoDBHelper:
             return None
             
         try:
-            # Add timestamps if they don't exist
             if 'created_at' not in project_data:
                 project_data['created_at'] = datetime.now(timezone.utc)
             
             project_data['updated_at'] = datetime.now(timezone.utc)
             
-            # Check if project already exists by name
             existing_project = self.db.projects.find_one({"name": project_data["name"]})
             
             if existing_project:
@@ -189,7 +165,6 @@ class MongoDBHelper:
             return None
             
         try:
-            # Add timestamps if they don't exist
             if 'created_at' not in element_data:
                 element_data['created_at'] = datetime.now(timezone.utc)
             
@@ -302,12 +277,9 @@ class MongoDBHelper:
                 element_dict['is_manual'] = False # Mark elements from IFC as not manual
                 element_dict['status'] = "pending" # Newly uploaded elements start as pending
                 
-                # Ensure the IFC GUID (passed as 'id' from Pydantic model) is stored as 'ifc_id'
-                if 'id' in element_dict and 'ifc_id' not in element_dict:
-                    element_dict['ifc_id'] = element_dict.pop('id')
-                elif 'ifc_id' not in element_dict and 'id' not in element_dict:
-                    # This case should ideally not happen if parsing is correct
-                    logger.warning(f"Element missing 'id' and 'ifc_id' for project {project_id}, name: {element_dict.get('name')}. Skipping critical ID.")
+                # Ensure the global_id is stored correctly from the parsed data
+                if 'global_id' not in element_dict:
+                    logger.warning(f"Element missing 'global_id' for project {project_id}, name: {element_dict.get('name')}. This should not happen.")
                 
                 # Remove MongoDB _id if it somehow exists in the input data to avoid conflicts
                 element_dict.pop('_id', None)
@@ -390,7 +362,6 @@ class MongoDBHelper:
             return None
         try:
             collection = self.db.parsed_ifc_data
-            # Find the latest document for the project based on updated_at
             latest_data = collection.find_one(
                 {"project_name": project_name},
                 sort=[("updated_at", -1)] # Get the most recent entry
@@ -409,10 +380,8 @@ class MongoDBHelper:
             logger.error("MongoDB not connected, cannot list projects")
             return []
         try:
-            # Query the 'projects' collection for the distinct 'name' field
             collection = self.db.projects
             distinct_projects = collection.distinct("name")
-            # logger.info(f"Distinct projects found in 'projects' collection: {distinct_projects}") # Too verbose
             return distinct_projects
         except Exception as e:
             logger.error(f"Error listing distinct projects from MongoDB: {e}")
@@ -502,8 +471,8 @@ class MongoDBHelper:
                     error_count += 1
                     continue
 
-                # Find the element by project_id and ifc_id
-                filter_criteria = {"project_id": project_id, "ifc_id": element_ifc_id}
+                # Find the element by project_id and global_id
+                filter_criteria = {"project_id": project_id, "global_id": element_ifc_id}
                 
                 # Prepare the update operation
                 update_operation = {
@@ -521,7 +490,7 @@ class MongoDBHelper:
                 result = self.db.elements.update_one(filter_criteria, update_operation)
                 
                 if result.matched_count == 0:
-                    logger.warning(f"No element found matching project {project_id} and ifc_id {element_ifc_id}. Update skipped.")
+                    logger.warning(f"No element found matching project {project_id} and global_id {element_ifc_id}. Update skipped.")
                     error_count += 1
                 elif result.modified_count == 0:
                     # Matched but didn't modify (maybe quantity was already the same?)
@@ -541,59 +510,54 @@ class MongoDBHelper:
         # Return True if there were no errors, even if some were skipped/not found
         return error_count == 0
 
-    def delete_element(self, project_id: ObjectId, element_ifc_id: str) -> Dict[str, Any]:
+    def delete_element(self, project_id: ObjectId, element_global_id: str) -> Dict[str, Any]:
         """Deletes a single element, ensuring it belongs to the project and is manual."""
         if self.db is None:
             logger.error("MongoDB not connected, cannot delete element")
             return {"success": False, "message": "Database not connected."}
         
         try:
-            # logger.info(f"Attempting to delete element with ifc_id: '{element_ifc_id}' in project_id: {project_id}") # <<< Logging
             # Find the element first to verify it's manual and belongs to the project
             element_to_delete = self.db.elements.find_one({
                 "project_id": project_id,
-                "ifc_id": element_ifc_id
+                "global_id": element_global_id
             })
-            # logger.info(f"Result of find_one for element '{element_ifc_id}': {'Found' if element_to_delete else 'Not Found'}") # <<< Logging
 
             if not element_to_delete:
-                logger.warning(f"Element with ifc_id {element_ifc_id} not found in project {project_id} for deletion.")
+                logger.warning(f"Element with global_id {element_global_id} not found in project {project_id} for deletion.")
                 return {"success": False, "message": "Element not found.", "deleted_count": 0}
             
             # <<< Important Check: Only allow deleting manual elements >>>
-            is_manual_flag = element_to_delete.get("is_manual", False) # <<< Logging
-            # logger.info(f"Element '{element_ifc_id}' found. is_manual flag: {is_manual_flag}") # <<< Logging
+            is_manual_flag = element_to_delete.get("is_manual", False)
             if not is_manual_flag:
-                 logger.warning(f"Attempted to delete non-manual element {element_ifc_id}. Operation forbidden.")
+                 logger.warning(f"Attempted to delete non-manual element {element_global_id}. Operation forbidden.")
                  return {"success": False, "message": "Only manually added elements can be deleted.", "deleted_count": 0}
 
             # Proceed with deletion
-            element_db_id = element_to_delete["_id"] # <<< Logging
-            # logger.info(f"Proceeding to delete element with database _id: {element_db_id}") # <<< Logging
+            element_db_id = element_to_delete["_id"]
             result = self.db.elements.delete_one({
                 "_id": element_db_id # Delete by unique _id
             })
-            delete_count = result.deleted_count # <<< Logging
-            # logger.info(f"Result of delete_one operation: deleted_count={delete_count}") # <<< Logging
+            delete_count = result.deleted_count
 
             if delete_count == 1:
-                logger.info(f"Successfully deleted manual element {element_ifc_id} (DB ID: {element_db_id}) from project {project_id}")
+                logger.info(f"Successfully deleted manual element {element_global_id} (DB ID: {element_db_id}) from project {project_id}")
                 return {"success": True, "deleted_count": 1}
             else:
                  # Should not happen if find_one succeeded, but good practice
-                 logger.error(f"Failed to delete element {element_ifc_id} even though it was found.")
+                 logger.error(f"Failed to delete element {element_global_id} even though it was found.")
                  return {"success": False, "message": "Deletion failed after element was found.", "deleted_count": 0}
 
         except Exception as e:
-            logger.error(f"Error deleting element {element_ifc_id}: {e}")
+            logger.error(f"Error deleting element {element_global_id}: {e}")
             return {"success": False, "message": str(e), "deleted_count": 0}
 
     # --- Method Renamed & Refined for Manual Updates/Creates --- #
     def batch_upsert_manual_elements(self, project_id: ObjectId, elements_data: List[Any]) -> Dict[str, Any]:
         """Performs a batch update/insert operation primarily for manual elements.
 
-        - Updates existing elements based on 'ifc_id'.
-        - Inserts new elements if 'ifc_id' is provided and does not exist (upsert=True).
+        - Updates existing elements based on 'global_id'.
+        - Inserts new elements if 'global_id' is provided and does not exist (upsert=True).
         - Can handle elements marked as manual or not, but intended for UI-driven updates.
         - Sets status to 'active' for all processed elements by default (can be overridden in input).
 
@@ -623,9 +587,9 @@ class MongoDBHelper:
                 logger.warning(f"Skipping unrecognized element data type in batch: {type(element_input)}")
                 continue
 
-            element_ifc_id = element_dict.get('id') or element_dict.get('ifc_id') # Allow 'id' or 'ifc_id'
-            if not element_ifc_id:
-                logger.warning(f"Skipping element without 'id' or 'ifc_id' in batch upsert: {element_dict.get('name', 'N/A')}")
+            element_global_id = element_dict.get('global_id') or element_dict.get('id')  # Primary: global_id, fallback: id
+            if not element_global_id:
+                logger.warning(f"Skipping element without 'global_id' in batch upsert: {element_dict.get('name', 'N/A')}")
                 continue
 
             try:
@@ -688,23 +652,19 @@ class MongoDBHelper:
                 # --- Fields to set only on insert (creation) --- 
                 db_doc_on_insert = {
                      "created_at": now,
-                     "ifc_id": element_ifc_id, # Ensure ifc_id is set on insert
                      # --- Add FLAT original quantities to $setOnInsert --- 
                      **flat_original_quantities # Unpack the calculated flat originals
                  }
                 # Remove None values from on_insert
                 db_doc_on_insert = {k: v for k, v in db_doc_on_insert.items() if v is not None}
 
-                # Generate pseudo GlobalId on insert if missing
-                global_id_to_set = element_dict.get('global_id')
-                if not global_id_to_set:
-                    db_doc_on_insert['global_id'] = f"MANUAL-{element_ifc_id}"
-                elif 'global_id' not in db_doc_set: # Ensure it's in $set if provided but was None originally
-                    db_doc_set['global_id'] = global_id_to_set
+                # Ensure global_id is properly set
+                if 'global_id' not in db_doc_set or not db_doc_set['global_id']:
+                    db_doc_set['global_id'] = element_global_id
 
                 # Use UpdateOne with upsert=True
                 operations.append(UpdateOne(
-                    {"project_id": project_id, "ifc_id": element_ifc_id},
+                    {"project_id": project_id, "global_id": element_global_id},
                     {
                         "$set": db_doc_set,
                         "$setOnInsert": db_doc_on_insert
@@ -713,7 +673,7 @@ class MongoDBHelper:
                 ))
                 processed_count += 1
             except Exception as e:
-                error_id = element_ifc_id or element_dict.get('name', 'N/A')
+                error_id = element_global_id or element_dict.get('name', 'N/A')
                 logger.error(f"Error preparing operation for element {error_id}: {e}", exc_info=True)
                 # Continue processing other elements
 
