@@ -1032,7 +1032,45 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
             db_quantity = elem.get("quantity")
             db_original_quantity = elem.get("original_quantity")
 
-            # Current Quantity
+            # Build ALL available quantities for user selection
+            available_quantities = []
+            
+            # Add all non-zero quantities from flat fields
+            if mapped_elem["area"] is not None and mapped_elem["area"] > 0:
+                available_quantities.append({
+                    "value": mapped_elem["area"],
+                    "type": "area",
+                    "unit": "m²",
+                    "label": "Area"
+                })
+            
+            if mapped_elem["length"] is not None and mapped_elem["length"] > 0:
+                available_quantities.append({
+                    "value": mapped_elem["length"],
+                    "type": "length", 
+                    "unit": "m",
+                    "label": "Length"
+                })
+                
+            if mapped_elem["volume"] is not None and mapped_elem["volume"] > 0:
+                available_quantities.append({
+                    "value": mapped_elem["volume"],
+                    "type": "volume",
+                    "unit": "m³", 
+                    "label": "Volume"
+                })
+
+            # Add count if element exists (always 1 for individual elements)
+            available_quantities.append({
+                "value": 1,
+                "type": "count",
+                "unit": "Stk",
+                "label": "Count"
+            })
+
+            mapped_elem["available_quantities"] = available_quantities
+
+            # Current Quantity (determine default/primary quantity)
             if isinstance(db_quantity, dict) and db_quantity.get("value") is not None:
                 mapped_elem["quantity"] = {
                     "value": db_quantity.get("value"),
@@ -1044,22 +1082,43 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
                 if db_quantity.get("type") == "length": mapped_elem["length"] = db_quantity.get("value")
                 if db_quantity.get("type") == "volume": mapped_elem["volume"] = db_quantity.get("value")
             else:
-                 # Fallback: try to build from flat fields if nested is missing
+                 # Fallback: try to build from flat fields using TARGET_QUANTITIES logic
+                 element_type = mapped_elem.get("type", "Unknown")
                  q_type = None
                  q_value = None
                  q_unit = None
-                 if mapped_elem["area"] is not None:
-                     q_type = "area"
-                     q_value = mapped_elem["area"]
-                     q_unit = "m²" # Assume default unit
-                 elif mapped_elem["length"] is not None:
-                     q_type = "length"
-                     q_value = mapped_elem["length"]
-                     q_unit = "m" # Assume default unit
-                 elif mapped_elem["volume"] is not None:
-                     q_type = "volume"
-                     q_value = mapped_elem["volume"]
-                     q_unit = "m³" # Assume default unit
+                 
+                 # Check TARGET_QUANTITIES config to determine preferred quantity type
+                 if element_type in TARGET_QUANTITIES:
+                     config = TARGET_QUANTITIES[element_type]
+                     # Prioritize the configured quantity type for this element
+                     if "length" in config and mapped_elem["length"] is not None and mapped_elem["length"] > 0:
+                         q_type = "length"
+                         q_value = mapped_elem["length"]
+                         q_unit = "m"
+                     elif "area" in config and mapped_elem["area"] is not None and mapped_elem["area"] > 0:
+                         q_type = "area"
+                         q_value = mapped_elem["area"]
+                         q_unit = "m²"
+                     elif "volume" in config and mapped_elem["volume"] is not None and mapped_elem["volume"] > 0:
+                         q_type = "volume"
+                         q_value = mapped_elem["volume"]
+                         q_unit = "m³"
+                 
+                 # If no TARGET_QUANTITIES config or no matching quantity found, use fallback order
+                 if q_type is None:
+                     if mapped_elem["area"] is not None and mapped_elem["area"] > 0:
+                         q_type = "area"
+                         q_value = mapped_elem["area"]
+                         q_unit = "m²"
+                     elif mapped_elem["length"] is not None and mapped_elem["length"] > 0:
+                         q_type = "length"
+                         q_value = mapped_elem["length"]
+                         q_unit = "m"
+                     elif mapped_elem["volume"] is not None and mapped_elem["volume"] > 0:
+                         q_type = "volume"
+                         q_value = mapped_elem["volume"]
+                         q_unit = "m³"
 
                  if q_type and q_value is not None:
                       mapped_elem["quantity"] = {"value": q_value, "type": q_type, "unit": q_unit}
