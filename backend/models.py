@@ -9,6 +9,13 @@ class QuantityData(BaseModel):
     type: Optional[str] = None # e.g., 'area', 'volume', 'length'
     unit: Optional[str] = None  # e.g., 'm²', 'm³', 'm'
 
+class AvailableQuantity(BaseModel):
+    """Available quantity option for user selection"""
+    value: float
+    type: str # 'area', 'length', 'volume', 'count'
+    unit: str # 'm²', 'm', 'm³', 'Stk'
+    label: str # 'Area', 'Length', 'Volume', 'Count'
+
 class ClassificationData(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
@@ -53,6 +60,7 @@ class IFCElement(BaseModel):
     properties: Dict[str, Any] = Field(default_factory=dict)
     quantity: Optional[QuantityData] = None # Use the detailed QuantityData
     original_quantity: Optional[QuantityData] = None # Use the detailed QuantityData
+    available_quantities: Optional[List[AvailableQuantity]] = None # All available quantity options
     level: Optional[str] = None
     classification: Optional[ClassificationData] = None # Use the detailed ClassificationData
     materials: Optional[List[MaterialData]] = None # Use the detailed MaterialData
