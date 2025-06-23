@@ -44,7 +44,7 @@ class ManualClassificationInput(BaseModel):
 # Primary Element Model (used in many responses and internal processing)
 class IFCElement(BaseModel):
     """IFC Element data model for API responses and internal use"""
-    id: str # This will be the ifc_id or the generated manual ID (_id from DB)
+    id: str # This will be the global_id for consistent identification
     global_id: Optional[str] = None
     ifc_class: Optional[str] = Field(None, alias="type") # Map 'type' from DB to 'ifc_class'
     name: Optional[str] = None
@@ -62,7 +62,6 @@ class IFCElement(BaseModel):
     is_external: Optional[bool] = None
     created_at: Optional[datetime] = None # Included for potential use
     updated_at: Optional[datetime] = None # Included for potential use
-    # Fields from the second definition merged in (if needed, adjust as necessary)
     area: Optional[float] = None # This might be redundant if covered by quantity.value where quantity.type == 'area'
     volume: Optional[float] = None # Redundant if quantity.type == 'volume'
     length: Optional[float] = None # Redundant if quantity.type == 'length'
@@ -135,7 +134,7 @@ class ModelInfo(BaseModel):
 
 # Request Body / Input Models
 class ElementQuantityUpdate(BaseModel):
-    element_id: str # Should match ifc_id or manual _id
+    element_id: str # Should match global_id
     new_quantity: ManualQuantityInput # Use the specific ManualQuantityInput
 
 class ManualElementInput(BaseModel):
@@ -150,7 +149,6 @@ class ManualElementInput(BaseModel):
 class BatchElementData(BaseModel):
     # Model for elements within the batch update request
     id: str # Can be IFC GUID, existing DB element _id (as str), or temp 'manual_...' ID
-    ifc_id: Optional[str] = None # Add ifc_id field for matching
     global_id: Optional[str] = None # Needed for updates/identification
     type: Optional[str] = Field(None, alias="ifc_class") # Corresponds to ifc_class, allow alias
     name: Optional[str] = None
@@ -172,23 +170,22 @@ class BatchElementData(BaseModel):
         json_encoders = {ObjectId: str}
         arbitrary_types_allowed = True
 
-    # Add validator to ensure either ifc_id or global_id is present for updates if not a new manual element
+    # Add validator to ensure global_id is present for updates if not a new manual element
     @model_validator(mode='before')
     def check_ids_for_update(cls, values):
         id_val = values.get('id')
-        ifc_id_val = values.get('ifc_id')
         global_id_val = values.get('global_id')
         is_manual_val = values.get('is_manual', False) # Default to False if not provided
 
         # If it's not a new manual element (ID doesn't start with 'manual_')
-        # then we need either ifc_id or global_id for matching in the DB.
+        # then we need global_id for matching in the DB.
         # Also check if the provided id is a valid ObjectId string if not manual
         is_potential_object_id = ObjectId.is_valid(id_val) if isinstance(id_val, str) else False
 
         if not (is_manual_val and isinstance(id_val, str) and id_val.startswith('manual_')):
-             # If it's an existing element, it should have an ID that's either an ObjectId string or an IFC ID/Global ID
-            if not (is_potential_object_id or ifc_id_val or global_id_val):
-                 raise ValueError(f"Existing element update (ID: {id_val}) requires a valid 'id' (ObjectId string), or 'ifc_id', or 'global_id' for matching.")
+             # If it's an existing element, it should have an ID that's either an ObjectId string or a Global ID
+            if not (is_potential_object_id or global_id_val):
+                 raise ValueError(f"Existing element update (ID: {id_val}) requires a valid 'id' (ObjectId string) or 'global_id' for matching.")
         return values
 
 class BatchUpdateRequest(BaseModel):

@@ -400,7 +400,6 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                 element_type_class = element.is_a()
                 element_instance_name = element.Name if hasattr(element, "Name") and element.Name else "Unnamed"
                 element_data = {
-                    "id": element_global_id,
                     "global_id": element_global_id,
                     "type": element_type_class,
                     "name": element_instance_name,
@@ -979,7 +978,7 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
 
             # Initial mapping from DB fields to response model fields
             mapped_elem = {
-                "id": elem.get("ifc_id", str(elem.get("_id"))),
+                "id": elem.get("global_id"),
                 "global_id": elem.get("global_id"),
                 "type": elem.get("ifc_class", "Unknown"),
                 "name": elem.get("name", "Unnamed"),
@@ -1315,7 +1314,6 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
 
         element_to_save = {
             "project_id": project_id,
-            "ifc_id": manual_id, # Use generated manual ID
             "global_id": f"MANUAL-{manual_id}", # Create a pseudo GlobalId
             "ifc_class": element_data.type,
             "name": element_data.name,
@@ -1357,7 +1355,7 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
 
         # Simplified mapping for response (adapt as needed based on IFCElement model)
         mapped_elem = {
-            "id": created_element_data.get("ifc_id"), 
+            "id": created_element_data.get("global_id"), 
             "global_id": created_element_data.get("global_id"),
             "type": created_element_data.get("ifc_class"),
             "name": created_element_data.get("name"),
@@ -1412,9 +1410,9 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
             # Fetch the updated/created elements using injected db
             # Fetch based on the provided IDs in the request, or upserted IDs from response
             upserted_ids = result.get("upserted_ids", []) # List of string ObjectIDs for *created* docs
-            request_ifc_ids = [elem.get('id') or elem.get('ifc_id') for elem in elements_dict_list] # Get all IDs from request
+            request_global_ids = [elem.get('global_id') or elem.get('id') for elem in elements_dict_list] # Get all global_ids from request
 
-            # Find filter needs adjustment: Find by ifc_id from request OR _id from upserted_ids
+            # Find filter needs adjustment: Find by global_id from request OR _id from upserted_ids
             query_filter = {"project_id": project_id, "$or": []}
 
             # Add condition for upserted (created) documents by _id
@@ -1426,10 +1424,10 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                 except Exception as oid_err:
                     logger.warning(f"Could not convert upserted string IDs to ObjectIds: {oid_err}")
 
-            # Add condition for potentially updated documents by ifc_id (excluding those just created)
+            # Add condition for potentially updated documents by global_id (excluding those just created)
             # Use all request IDs for simplicity, as finding *only* updated ones is complex
-            if request_ifc_ids:
-                 query_filter["$or"].append({"ifc_id": {"$in": request_ifc_ids}})
+            if request_global_ids:
+                 query_filter["$or"].append({"global_id": {"$in": request_global_ids}})
 
             updated_elements = []
             if query_filter["$or"]:
@@ -1448,7 +1446,7 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                 try:
                     # Simplified mapping - copy relevant fields
                     mapped_resp_elem = {
-                        "id": elem.get("ifc_id", str(elem.get("_id"))),
+                        "id": elem.get("global_id"),
                         "global_id": elem.get("global_id"),
                         "type": elem.get("ifc_class"),
                         "name": elem.get("name"),
@@ -1514,8 +1512,8 @@ async def delete_element_endpoint(project_name: str, element_id: str, db: Databa
          raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
 # <<< ADDED: Endpoint for Deleting a Manual Element (The one that had the syntax error) >>>
-@app.delete("/projects/{project_name}/elements/{element_ifc_id}", response_model=Dict[str, Any])
-async def delete_manual_element(project_name: str, element_ifc_id: str, db: Database = Depends(get_db)): # <<< Inject DB
+@app.delete("/projects/{project_name}/elements/{element_global_id}", response_model=Dict[str, Any])
+async def delete_manual_element(project_name: str, element_global_id: str, db: Database = Depends(get_db)): # <<< Inject DB
     """Deletes a specific manually added element from a project."""
     try:
         # 1. Find Project ID using injected db
@@ -1526,7 +1524,7 @@ async def delete_manual_element(project_name: str, element_ifc_id: str, db: Data
 
         # 2. Call MongoDB helper to delete the element
         # Assuming delete_element uses the global mongodb instance internally
-        result = mongodb.delete_element(project_id, element_ifc_id)
+        result = mongodb.delete_element(project_id, element_global_id)
 
         if not result.get("success"): # Check success key in result dict
             # Determine appropriate status code based on message
@@ -1539,14 +1537,14 @@ async def delete_manual_element(project_name: str, element_ifc_id: str, db: Data
         # Return success message
         return {
             "status": "success",
-            "message": f"Element {element_ifc_id} deleted successfully from project {project_name}.",
+            "message": f"Element {element_global_id} deleted successfully from project {project_name}.",
             "deleted_count": result.get('deleted_count', 0)
         }
     except HTTPException as http_exc:
-        logger.error(f"HTTP error deleting element {element_ifc_id} from {project_name}: {http_exc.detail}")
+        logger.error(f"HTTP error deleting element {element_global_id} from {project_name}: {http_exc.detail}")
         raise http_exc
     except Exception as e:
-        logger.error(f"Error deleting element {element_ifc_id} from project {project_name}: {str(e)}")
+        logger.error(f"Error deleting element {element_global_id} from project {project_name}: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error during element deletion: {str(e)}")
 
