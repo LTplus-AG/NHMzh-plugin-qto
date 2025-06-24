@@ -60,6 +60,7 @@ export interface IFCElement {
     volume?: number;
     unit?: string;
     fraction?: number; // <<< ADD fraction if backend sends it
+    width?: number;
   }>;
   status?: "pending" | "active" | null;
   is_manual?: boolean;

@@ -81,6 +81,71 @@ const MainPage = () => {
     resetEdits,
   } = useElementEditing();
 
+  // Wrapper to also update element and material volumes when area changes
+  const handleQuantityChangeWithVolume = (
+    elementId: string,
+    quantityKey: "area" | "length",
+    originalValue: number | null | undefined,
+    newValue: string
+  ) => {
+    // First update the edit state using existing hook
+    handleQuantityChange(elementId, quantityKey, originalValue, newValue);
+
+    if (quantityKey !== "area") return; // Only adjust volumes on area edits
+
+    const numericValue = newValue === "" ? null : parseFloat(newValue);
+
+    setIfcElements((prev) =>
+      prev.map((el) => {
+        if (el.id !== elementId) return el;
+
+        const baseArea = el.original_area ?? el.area;
+        const baseVolume = el.original_volume ?? el.volume;
+
+        if (
+          baseArea === null ||
+          baseArea === undefined ||
+          baseArea === 0 ||
+          baseVolume === null ||
+          baseVolume === undefined
+        ) {
+          return el; // insufficient data
+        }
+
+        const thicknessTotal = baseVolume / baseArea;
+
+        // If numericValue invalid or equal to original -> revert to base volumes
+        if (numericValue === null || isNaN(numericValue)) {
+          const revertedMats = el.materials?.map((m) => {
+            if (m.width !== undefined) {
+              const widthM = m.width / 1000;
+              return { ...m, volume: baseArea * widthM };
+            }
+            if (m.fraction !== undefined) {
+              return { ...m, volume: baseVolume * m.fraction };
+            }
+            return m;
+          });
+          return { ...el, volume: baseVolume, materials: revertedMats };
+        }
+
+        const newTotalVolume = numericValue * thicknessTotal;
+        const updatedMats = el.materials?.map((m) => {
+          if (m.width !== undefined) {
+            const widthM = m.width / 1000;
+            return { ...m, volume: numericValue * widthM };
+          }
+          if (m.fraction !== undefined) {
+            return { ...m, volume: newTotalVolume * m.fraction };
+          }
+          return m;
+        });
+
+        return { ...el, volume: newTotalVolume, materials: updatedMats };
+      })
+    );
+  };
+
   const { ebkpGroups, uniqueClassifications } = useEbkpGroups(
     ifcElements,
     classificationFilter,
@@ -1006,7 +1071,7 @@ const MainPage = () => {
               loading={ifcLoading}
               error={ifcError}
               editedElements={editedElements}
-              handleQuantityChange={handleQuantityChange}
+              handleQuantityChange={handleQuantityChangeWithVolume}
               onEbkpStatusChange={setHasEbkpGroups}
               targetIfcClasses={TARGET_IFC_CLASSES}
               viewType={viewType}
