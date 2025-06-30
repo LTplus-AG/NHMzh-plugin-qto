@@ -6,20 +6,16 @@ import {
   Typography,
   Collapse,
   Box,
-  TableContainer,
-  Table,
-  TableHead,
-  TableBody,
   Tooltip,
 } from "@mui/material";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import EditIcon from "@mui/icons-material/Edit";
 import BuildIcon from "@mui/icons-material/Build";
 import { IFCElement } from "../../types/types";
-import ElementRow from "./ElementRow";
+import VirtualizedElementList from "./VirtualizedElementList";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
+import { tableStyles } from "./tableConfig";
 
 interface EbkpGroup {
   code: string;
@@ -52,13 +48,14 @@ interface EbkpGroupRowProps {
   editedElements: Record<string, EditedQuantity>;
   handleQuantityChange: (
     elementId: string,
-    quantityKey: "area" | "length",
+    quantityKey: "area" | "length" | "count",
     originalValue: number | null | undefined,
     newValue: string
   ) => void;
   getElementDisplayStatus: (element: IFCElement) => ElementDisplayStatus;
   handleEditManualClick: (element: IFCElement) => void;
   openDeleteConfirm: (element: IFCElement) => void;
+  viewType?: string;
 }
 
 const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
@@ -72,10 +69,11 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
   getElementDisplayStatus,
   handleEditManualClick,
   openDeleteConfirm,
+  viewType,
 }) => {
   // Check if any element in the group has been edited LOCALLY (unsaved)
   const hasEditedElements = useMemo(
-    () => group.elements.some((el) => editedElements[el.id]),
+    () => group.elements.some((el) => editedElements[el.global_id]),
     [group.elements, editedElements]
   );
   const hasManualElements = useMemo(
@@ -146,17 +144,37 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
     <React.Fragment>
       <TableRow
         sx={{
-          "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.04)" },
+          ...tableStyles.dataRow,
+          "&:hover": { 
+            backgroundColor: "rgba(25, 118, 210, 0.04)",
+            transform: "translateY(-1px)",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.1)",
+          },
           cursor: "pointer",
           backgroundColor: isExpanded
-            ? "rgba(0, 0, 255, 0.04)"
+            ? "rgba(25, 118, 210, 0.08)"
             : hasEditedElements || hasPersistedEdits
             ? "rgba(255, 152, 0, 0.08)"
             : "inherit",
+          transition: "all 0.2s ease-in-out",
+          borderBottom: "2px solid rgba(0, 0, 0, 0.12)",
         }}
         onClick={() => toggleExpand(group.code)}
       >
-        <TableCell>
+        {/* Column 1: Expand - matches child table expand column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            width: "48px",
+            minWidth: "48px",
+            maxWidth: "48px",
+            flex: "0 0 48px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+          }}
+        >
           <IconButton
             aria-label="expand row"
             size="small"
@@ -164,52 +182,118 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
               e.stopPropagation();
               toggleExpand(group.code);
             }}
+            sx={{
+              ...tableStyles.expandButton,
+              transition: "transform 0.2s ease",
+              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+            }}
           >
-            {isExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+            <KeyboardArrowDownIcon />
           </IconButton>
         </TableCell>
-        <TableCell>
-          <strong>{group.code}</strong>
-          {/* Manual Indicator */}
-          {hasManualElements && (
-            <Tooltip title="Gruppe enthält manuelle Elemente">
-              <BuildIcon
-                fontSize="inherit" // Smaller size within the cell
-                sx={{
-                  ml: 1,
-                  verticalAlign: "middle",
-                  color: "action.active",
-                  fontSize: "1.1rem", // Slightly larger than in ElementRow maybe
-                }}
-              />
-            </Tooltip>
-          )}
-          {/* Edit Indicator */}
-          {showEditIcon && (
-            <Tooltip title={editIconTooltip}>
-              <EditIcon
-                fontSize="inherit"
-                sx={{
-                  ml: hasManualElements ? 0.5 : 1, // Adjust spacing if manual icon is also present
-                  verticalAlign: "middle",
-                  color: "warning.main",
-                  fontSize: "1.1rem",
-                }}
-              />
-            </Tooltip>
-          )}
+
+        {/* Column 2: EBKP Code & Bezeichnung - spans type + GUID columns */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "1 1 480px", // Combined flex of type + GUID columns
+            minWidth: "320px",
+          }}
+        >
+          <Box sx={{ 
+            display: "flex", 
+            alignItems: "center", 
+            gap: 2,
+            width: "100%",
+            minWidth: 0,
+          }}>
+            <Box sx={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 1,
+              minWidth: 0,
+              flex: "0 0 auto",
+            }}>
+              <Typography variant="h6" sx={{ 
+                fontWeight: 700, 
+                fontSize: "1rem",
+                whiteSpace: "nowrap",
+              }}>
+                {group.code}
+              </Typography>
+              {hasManualElements && (
+                <Tooltip title="Gruppe enthält manuelle Elemente" arrow>
+                  <BuildIcon sx={{ fontSize: "0.9rem", color: "info.main" }} />
+                </Tooltip>
+              )}
+              {showEditIcon && (
+                <Tooltip title={editIconTooltip} arrow>
+                  <EditIcon sx={{ fontSize: "0.9rem", color: "warning.main" }} />
+                </Tooltip>
+              )}
+            </Box>
+            <Typography variant="body2" sx={{ 
+              fontWeight: 500,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: "1 1 auto",
+              minWidth: 0,
+            }}>
+              {group.name || "-"}
+            </Typography>
+          </Box>
         </TableCell>
-        <TableCell>{group.name}</TableCell>
-        <TableCell>{group.elements.length}</TableCell>
-        <TableCell align="center">
-          <Tooltip title={statusLabel}>
+
+        {/* Column 3: Empty - matches child kategorie column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 1 160px",
+            minWidth: "100px",
+          }}
+        />
+
+        {/* Column 4: Element count - matches child ebene column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 1 120px",
+            minWidth: "80px",
+            display: "flex",
+            alignItems: "center",
+          }}
+        >
+          <Typography variant="body2" sx={{ 
+            fontWeight: 600, 
+            color: "primary.main",
+            whiteSpace: "nowrap",
+          }}>
+            {group.elements.length} {viewType === "grouped" ? "Typen" : "Elemente"}
+          </Typography>
+        </TableCell>
+
+        {/* Column 5: Status - matches child menge column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 0 140px",
+            minWidth: "120px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Tooltip title={statusLabel} arrow>
             <Box
               sx={{
-                width: 12,
-                height: 12,
+                width: 16,
+                height: 16,
                 borderRadius: "50%",
                 bgcolor: statusColor,
                 display: "inline-block",
+                border: "2px solid white",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
               }}
             />
           </Tooltip>
@@ -217,53 +301,43 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
       </TableRow>
 
       {/* Expanded EBKP elements */}
-      <TableRow>
-        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
-          <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+      <TableRow sx={{ 
+        width: "100%",
+        minWidth: "800px",
+      }}>
+        <TableCell 
+          colSpan={5}
+          sx={{ 
+            paddingBottom: 0, 
+            paddingTop: 0, 
+            borderBottom: "none",
+            width: "100%",
+          }}
+        >
+          <Collapse in={isExpanded} timeout="auto">
             <Box sx={{ margin: 1 }}>
-              <Typography variant="h6" gutterBottom component="div">
-                Elemente ({group.elements.length})
-              </Typography>
-              <TableContainer
-                sx={{
-                  border: "1px solid rgba(224, 224, 224, 1)",
-                  borderRadius: 1,
-                }}
-              >
-                <Table size="small" stickyHeader>
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.05)" }}>
-                      <TableCell width="50px" />
-                      <TableCell>Type</TableCell>
-                      <TableCell>Kategorie</TableCell>
-                      <TableCell>Ebene</TableCell>
-                      <TableCell width="150px" align="center">
-                        Menge
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {group.elements.map((element, elementIndex) => (
-                      <ElementRow
-                        key={`${
-                          group.code
-                        }-${elementIndex}-${element.id.substring(0, 8)}`}
-                        element={element}
-                        groupCode={group.code}
-                        elementIndex={elementIndex}
-                        isExpanded={expandedElements.includes(element.id)}
-                        toggleExpand={toggleExpandElement}
-                        editedElement={editedElements[element.id]}
-                        handleQuantityChange={handleQuantityChange}
-                        getElementDisplayStatus={getElementDisplayStatus}
-                        isParentGroupExpanded={isExpanded}
-                        handleEditManualClick={handleEditManualClick}
-                        openDeleteConfirm={openDeleteConfirm}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+              <Box sx={{ 
+                display: "flex", 
+                justifyContent: "space-between", 
+                alignItems: "center",
+                mb: 1 
+              }}>
+                <Typography variant="h6" component="div">
+                  {viewType === "grouped" ? "Typen" : "Elemente"} ({group.elements.length})
+                </Typography>
+              </Box>
+              <VirtualizedElementList
+                elements={group.elements}
+                groupCode={group.code}
+                expandedElements={expandedElements}
+                toggleExpandElement={toggleExpandElement}
+                editedElements={editedElements}
+                handleQuantityChange={handleQuantityChange}
+                getElementDisplayStatus={getElementDisplayStatus}
+                handleEditManualClick={handleEditManualClick}
+                openDeleteConfirm={openDeleteConfirm}
+                maxHeight={window.innerHeight * 0.7} // 70vh equivalent
+              />
             </Box>
           </Collapse>
         </TableCell>

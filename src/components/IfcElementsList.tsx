@@ -1,3 +1,4 @@
+import { useState, useEffect, useMemo } from "react";
 import {
   Alert,
   CircularProgress,
@@ -13,18 +14,17 @@ import {
   Tooltip,
   Button,
 } from "@mui/material";
-import { useEffect, useState, useMemo } from "react";
 import { IFCElement } from "../types/types";
 import EbkpGroupRow from "./IfcElements/EbkpGroupRow";
 import ElementsHeader from "./IfcElements/ElementsHeader";
-import { EditedQuantity } from "./IfcElements/types";
-import ViewModeToggle from "./IfcElements/ViewModeToggle";
 import StatusLegend from "./IfcElements/StatusLegend";
+import ViewModeToggle from "./IfcElements/ViewModeToggle";
+import { EditedQuantity } from "./IfcElements/types";
 import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
 import { EbkpGroup } from "./IfcElements/types";
+import { tableStyles, TABLE_COLUMNS, getColumnStyle } from "./IfcElements/tableConfig";
 
 // --- Status Definitions ---
-// Refined statuses for clearer UI representation
 export type ElementDisplayStatus = "pending" | "edited" | "active" | "manual";
 
 export const STATUS_CONFIG: Record<
@@ -32,19 +32,16 @@ export const STATUS_CONFIG: Record<
   { color: string; label: string; description: string }
 > = {
   pending: {
-    // Was: IFC Pending
     color: "#ffcc80", // Lighter orange
     label: "Ausstehend (IFC)",
     description: "Vom IFC-Modell geladen, noch nicht bestätigt.",
   },
   edited: {
-    // Was: Locally Edited (Pending Save)
     color: "#90caf9", // Lighter blue
     label: "Lokal Bearbeitet",
     description: "Änderungen sind noch nicht gespeichert.",
   },
   active: {
-    // Was: Confirmed Active (from DB)
     color: "#81c784", // Lighter green
     label: "Bestätigt",
     description: "Zuletzt gespeicherter Zustand (IFC oder Manuell).",
@@ -70,7 +67,7 @@ interface IfcElementsListProps {
   editedElements: Record<string, EditedQuantity>;
   handleQuantityChange: (
     elementId: string,
-    quantityKey: "area" | "length",
+    quantityKey: "area" | "length" | "count",
     originalValue: number | null | undefined,
     newValue: string
   ) => void;
@@ -117,7 +114,7 @@ const IfcElementsList = ({
   const getElementDisplayStatus = (
     element: IFCElement
   ): ElementDisplayStatus => {
-    const isLocallyEdited = editedElements.hasOwnProperty(element.id);
+    const isLocallyEdited = editedElements.hasOwnProperty(element.global_id);
 
     // 1. Highest priority: Locally Edited (Blue) - Applies to both IFC and manual elements being edited
     if (isLocallyEdited) {
@@ -150,7 +147,7 @@ const IfcElementsList = ({
       // Fallback for non-manual elements without a clear status (should ideally not happen)
       // Defaulting to 'active' might be safest visually, but log a warning.
       console.warn(
-        `Element ${element.id} (IFC) has unexpected status: ${element.status}. Defaulting display to 'active'.`
+        `Element ${element.global_id} (IFC) has unexpected status: ${element.status}. Defaulting display to 'active'.`
       );
       return "active";
     }
@@ -181,7 +178,7 @@ const IfcElementsList = ({
 
       // Find the EBKP code for the selected element
       const ebkpGroup = ebkpGroups.find((group) =>
-        group.elements.some((e) => e.id === element.id)
+        group.elements.some((e) => e.global_id === element.global_id)
       );
 
       if (ebkpGroup) {
@@ -191,14 +188,14 @@ const IfcElementsList = ({
         }
 
         // Expand the element if not already expanded
-        if (!expandedElements.includes(element.id)) {
-          setExpandedElements((prev) => [...prev, element.id]);
+        if (!expandedElements.includes(element.global_id)) {
+          setExpandedElements((prev) => [...prev, element.global_id]);
         }
 
         // Scroll to the element
         setTimeout(() => {
           const elementRow = document.getElementById(
-            `element-row-${element.id}`
+            `element-row-${element.global_id}`
           );
           if (elementRow) {
             elementRow.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -347,7 +344,7 @@ const IfcElementsList = ({
           {/* View Mode Toggle Button */}
           {setViewType && (
             <ViewModeToggle
-              viewType={viewType || "individual"}
+              viewType={viewType || "grouped"}
               onChange={setViewType}
             />
           )}
@@ -357,49 +354,109 @@ const IfcElementsList = ({
       <TableContainer
         component={Paper}
         elevation={2}
-        style={{
+        sx={{
           width: "100%",
           flexGrow: 1,
-          overflow: "auto",
-          paddingTop: "12px",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          pt: 1.5,
         }}
       >
-        <Table stickyHeader style={{ width: "100%", tableLayout: "fixed" }}>
-          <TableHead>
-            <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.08)" }}>
-              <TableCell width="50px" />
-              <TableCell>EBKP</TableCell>
-              <TableCell>Bezeichnung</TableCell>
-              <TableCell>Anzahl Elemente</TableCell>
-              <TableCell width="80px">Status</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {ebkpGroups.map((group) => (
-              <EbkpGroupRow
-                key={`ebkp-${group.code}`}
-                group={group}
-                isExpanded={expandedEbkp.includes(group.code)}
-                toggleExpand={toggleExpandEbkp}
-                expandedElements={expandedElements}
-                toggleExpandElement={toggleExpandElement}
-                editedElements={editedElements}
-                handleQuantityChange={handleQuantityChange}
-                getElementDisplayStatus={getElementDisplayStatus}
-                handleEditManualClick={handleEditManualClick}
-                openDeleteConfirm={openDeleteConfirm}
-              />
-            ))}
-
-            {ebkpGroups.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={4} align="center">
-                  Keine Elemente mit EBKP-Klassifikation gefunden
+        <Box sx={{ 
+          width: "100%", 
+          overflowX: "auto",
+          overflowY: "auto",
+          flexGrow: 1,
+          minWidth: 0, // Allow the box to shrink but table inside maintains its width
+        }}>
+          <Table stickyHeader sx={{
+            ...tableStyles.root,
+            minWidth: "900px", // Ensure table doesn't shrink below this
+          }}>
+            <TableHead>
+              <TableRow sx={tableStyles.headerRow}>
+                <TableCell 
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "0 0 48px",
+                    minWidth: "48px",
+                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                  }}
+                />
+                <TableCell 
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "1 1 480px", // Combined width of type + GUID columns
+                    minWidth: "320px",
+                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                  }}
+                >
+                  EBKP / Bezeichnung
+                </TableCell>
+                <TableCell 
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "0 1 160px",
+                    minWidth: "100px",
+                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                  }}
+                />
+                <TableCell 
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "0 1 120px",
+                    minWidth: "80px",
+                    display: "flex",
+                    alignItems: "center",
+                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                  }}
+                >
+                  {viewType === "grouped" ? "Anzahl Typen" : "Anzahl Elemente"}
+                </TableCell>
+                <TableCell 
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "0 0 140px",
+                    minWidth: "120px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                  }}
+                >
+                  Status
                 </TableCell>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
+            </TableHead>
+            <TableBody>
+              {ebkpGroups.map((group) => (
+                <EbkpGroupRow
+                  key={`ebkp-${group.code}`}
+                  group={group}
+                  isExpanded={expandedEbkp.includes(group.code)}
+                  toggleExpand={toggleExpandEbkp}
+                  expandedElements={expandedElements}
+                  toggleExpandElement={toggleExpandElement}
+                  editedElements={editedElements}
+                  handleQuantityChange={handleQuantityChange}
+                  getElementDisplayStatus={getElementDisplayStatus}
+                  handleEditManualClick={handleEditManualClick}
+                  openDeleteConfirm={openDeleteConfirm}
+                  viewType={viewType}
+                />
+              ))}
+
+              {ebkpGroups.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} align="center">
+                    Keine Elemente mit EBKP-Klassifikation gefunden
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Box>
       </TableContainer>
     </div>
   );
@@ -409,15 +466,65 @@ export default IfcElementsList;
 
 export const ElementDetailHeader = () => (
   <TableHead>
-    <TableRow sx={{ backgroundColor: "rgba(0, 0, 0, 0.04)" }}>
-      <TableCell width="50px" />
-      <TableCell>Type</TableCell>
-      <TableCell>Kategorie</TableCell>
-      <TableCell>Geschoss</TableCell>
-      <TableCell width="150px" align="center">
+    <TableRow sx={tableStyles.headerRow}>
+      <TableCell 
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[0]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      />
+      <TableCell 
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[1]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      >
+        Type
+      </TableCell>
+      <TableCell 
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[2]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      >
+        GUID
+      </TableCell>
+      <TableCell 
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[3]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      >
+        Kategorie
+      </TableCell>
+      <TableCell 
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[4]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      >
+        Ebene
+      </TableCell>
+      <TableCell 
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[5]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      >
         Menge
       </TableCell>
-      <TableCell>Eigenschaften</TableCell>
     </TableRow>
   </TableHead>
 );

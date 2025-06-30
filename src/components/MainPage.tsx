@@ -55,7 +55,7 @@ const MainPage = () => {
     useState<boolean>(false);
   const [hasEbkpGroups, setHasEbkpGroups] = useState<boolean>(true);
   const [selectedProject, setSelectedProject] = useState<string>("");
-  const [viewType, setViewType] = useState<string>("individual");
+  const [viewType, setViewType] = useState<string>("grouped");
   const [projectList, setProjectList] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState<boolean>(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
@@ -203,8 +203,7 @@ const MainPage = () => {
       const mappedElements: LocalIFCElement[] = elementsFromApi.map(
         (apiElement: ApiIFCElement, _index: number): LocalIFCElement => {
           return {
-            id: apiElement.id,
-            global_id: apiElement.global_id,
+            global_id: apiElement.global_id || '',
             type: apiElement.type,
             name: apiElement.name,
             type_name: (apiElement as any).type_name,
@@ -302,7 +301,7 @@ const MainPage = () => {
       const quantityUpdates: ElementQuantityUpdate[] = [];
       for (const elementId in editedElements) {
         // Find the original element to check if it's manual
-        const originalElement = ifcElements.find((el) => el.id === elementId);
+        const originalElement = ifcElements.find((el) => el.global_id === elementId);
 
         // IMPORTANT: Only include updates for non-manual elements
         if (originalElement && !originalElement.is_manual) {
@@ -512,11 +511,12 @@ const MainPage = () => {
     }
     // --- End data preparation ---
 
+    const newId = editingId || `manual_${uuidv4()}`;
     const elementDataForApi: BatchElementData = {
-      id: editingId || `manual_${uuidv4()}`,
+      id: newId,
       global_id: editingId
-        ? editingElement?.global_id
-        : `MANUAL-${editingId || "new"}`,
+        ? editingElement?.global_id || ''
+        : newId,
       type: data.type,
       name: data.name,
       type_name: data.name, // Use name as type_name for manual elements
@@ -539,10 +539,7 @@ const MainPage = () => {
     };
 
     try {
-      console.log(
-        "Attempting to save/update manual element:",
-        elementDataForApi
-      );
+
       const response = await apiClient.batchUpdateElements(selectedProject, [
         elementDataForApi,
       ]);
@@ -555,8 +552,7 @@ const MainPage = () => {
         // --- Update Local State Directly ---
         const newOrUpdatedElement: LocalIFCElement = {
           // Map fields from elementDataForApi to LocalIFCElement structure
-          id: elementDataForApi.id,
-          global_id: elementDataForApi.global_id,
+          global_id: elementDataForApi.global_id || "",
           type: elementDataForApi.type,
           name: elementDataForApi.name,
           type_name: elementDataForApi.type_name,
@@ -591,7 +587,7 @@ const MainPage = () => {
           if (editingId) {
             // Update existing element
             return prevElements.map((el) =>
-              el.id === editingId ? newOrUpdatedElement : el
+              el.global_id === editingId ? newOrUpdatedElement : el
             );
           } else {
             // Add new element
@@ -641,7 +637,7 @@ const MainPage = () => {
   const handleDeleteConfirm = async () => {
     if (!elementToDelete || !selectedProject) return;
 
-    const idToDelete = elementToDelete.id;
+    const idToDelete = elementToDelete.global_id;
     const isSavedManual =
       elementToDelete.is_manual && elementToDelete.status === "active";
 
@@ -650,13 +646,13 @@ const MainPage = () => {
 
     if (!isSavedManual) {
       // Scenario 1: Treat as local-only (either truly unsaved, or non-manual, or not active)
-      setIfcElements((prev) => prev.filter((el) => el.id !== idToDelete));
+      setIfcElements((prev) => prev.filter((el) => el.global_id !== idToDelete));
       closeDeleteConfirm();
     } else {
       // Scenario 2: Element is considered saved and manual, call API
       try {
         await apiClient.deleteElement(selectedProject, idToDelete); // API call
-        setIfcElements((prev) => prev.filter((el) => el.id !== idToDelete)); // Update local state
+        setIfcElements((prev) => prev.filter((el) => el.global_id !== idToDelete)); // Update local state
         setKafkaSuccess(true);
       } catch (error) {
         console.error(`Error deleting element ${idToDelete}:`, error);
@@ -736,7 +732,7 @@ const MainPage = () => {
         <DialogContent>
           <DialogContentText>
             Sind Sie sicher, dass Sie das manuelle Element \"
-            <strong>{elementToDelete?.name || elementToDelete?.id}</strong>\ \"
+            <strong>{elementToDelete?.name || elementToDelete?.global_id}</strong>\ \"
             unwiderruflich löschen möchten?
           </DialogContentText>
         </DialogContent>

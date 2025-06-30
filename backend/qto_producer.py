@@ -450,7 +450,7 @@ class MongoDBHelper:
             new_quantity_dict = None
             try:
                 # Access attributes directly from Pydantic model
-                element_ifc_id = update.element_id 
+                element_ifc_id = update.global_id 
                 new_quantity_model = update.new_quantity
                 
                 # Check if the model and its value are valid
@@ -482,22 +482,14 @@ class MongoDBHelper:
                     }
                 }
                 
-                # Log before update
-                # logger.debug(f"Attempting MongoDB update for element_ifc_id: {element_ifc_id}")
-                # logger.debug(f"Filter criteria: {filter_criteria}")
-                # logger.debug(f"Update operation: {update_operation}")
-
                 result = self.db.elements.update_one(filter_criteria, update_operation)
                 
                 if result.matched_count == 0:
                     logger.warning(f"No element found matching project {project_id} and global_id {element_ifc_id}. Update skipped.")
                     error_count += 1
                 elif result.modified_count == 0:
-                    # Matched but didn't modify (maybe quantity was already the same?)
-                    # logger.info(f"Element {element_ifc_id} matched but not modified (quantity might be unchanged). Considered success.") # Too verbose
                     success_count += 1 
                 else:
-                    # Successfully modified
                     success_count += 1
                     
             except Exception as e:
@@ -587,7 +579,7 @@ class MongoDBHelper:
                 logger.warning(f"Skipping unrecognized element data type in batch: {type(element_input)}")
                 continue
 
-            element_global_id = element_dict.get('global_id') or element_dict.get('id')  # Primary: global_id, fallback: id
+            element_global_id = element_dict.get('global_id')  # Use global_id for identification
             if not element_global_id:
                 logger.warning(f"Skipping element without 'global_id' in batch upsert: {element_dict.get('name', 'N/A')}")
                 continue

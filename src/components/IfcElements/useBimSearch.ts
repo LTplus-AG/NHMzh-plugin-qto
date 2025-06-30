@@ -9,7 +9,7 @@ export interface BimElement extends Omit<IFCElement, "level"> {
 
 const useBimSearch = (
   elements: IFCElement[],
-  viewType: string = "individual",
+  viewType: string = "grouped",
   ebkpGroups?: any[]
 ) => {
   const [inputValue, setInputValue] = useState("");
@@ -29,19 +29,8 @@ const useBimSearch = (
   }, [inputValue]);
 
   const filteredOptions = useMemo(() => {
-    console.log(
-      `useBimSearch running with viewType: ${viewType}, input: "${inputValue}"`
-    );
-    console.log(
-      `Total elements: ${elements.length}, grouped elements: ${
-        elements.filter((el) => el.groupedElements && el.groupedElements > 1)
-          .length
-      }`
-    );
-
     // Check if we have ebkpGroups to use for grouped view mode
     if (viewType === "grouped" && ebkpGroups && ebkpGroups.length > 0) {
-      console.log(`Using ebkpGroups with ${ebkpGroups.length} EBKP groups`);
 
       // Extract all grouped elements from all EBKP groups
       const groupedElements: IFCElement[] = [];
@@ -55,9 +44,7 @@ const useBimSearch = (
         }
       });
 
-      console.log(
-        `Extracted ${groupedElements.length} total grouped elements from ebkpGroups`
-      );
+
 
       // If we have an input, filter based on it
       if (inputValue) {
@@ -87,11 +74,6 @@ const useBimSearch = (
         );
 
         // If no grouped elements found, something might be wrong with grouping
-        if (groupedElements.length === 0) {
-          console.warn(
-            "No grouped elements found in grouped view. Check if grouping is working correctly."
-          );
-        }
 
         // Create a set to track which elements are included in groups
         const includedElementIds = new Set<string>();
@@ -105,7 +87,7 @@ const useBimSearch = (
         const individualElements = elements.filter(
           (el) =>
             !(el.groupedElements && el.groupedElements > 1) &&
-            !includedElementIds.has(el.id)
+            !includedElementIds.has(el.global_id)
         );
 
         return [...groupedElements, ...individualElements].slice(0, 100);
@@ -129,27 +111,7 @@ const useBimSearch = (
         (el) => el.groupedElements && el.groupedElements > 1
       );
 
-      // Log for debugging
-      console.log(
-        `Search: "${searchLower}", found ${groupedElements.length} grouped elements to search through`
-      );
 
-      // Sample a few grouped elements to check if they have type_name
-      if (groupedElements.length > 0) {
-        const sample = groupedElements.slice(
-          0,
-          Math.min(3, groupedElements.length)
-        );
-        console.log(
-          "Sample grouped elements:",
-          sample.map((el) => ({
-            id: el.id,
-            type_name: el.type_name,
-            name: el.name,
-            level: el.level,
-          }))
-        );
-      }
 
       // Filter grouped elements that match
       const matchingGroups = groupedElements.filter((el) => {
@@ -192,7 +154,7 @@ const useBimSearch = (
         // Now filter individual elements that aren't part of any matched group
         const remainingElements = elements.filter((el) => {
           // Skip elements that are already included in groups
-          if (includedElementIds.has(el.id)) {
+          if (includedElementIds.has(el.global_id)) {
             return false;
           }
           // Skip elements that are groups themselves
@@ -213,7 +175,7 @@ const useBimSearch = (
             (el.category && el.category.toLowerCase().includes(searchLower)) ||
             (el.global_id &&
               el.global_id.toLowerCase().includes(searchLower)) ||
-            el.id.toLowerCase().includes(searchLower)
+            el.global_id.toLowerCase().includes(searchLower)
           );
         });
 
@@ -233,7 +195,7 @@ const useBimSearch = (
             el.classification_name.toLowerCase().includes(searchLower)) ||
           (el.category && el.category.toLowerCase().includes(searchLower)) ||
           (el.global_id && el.global_id.toLowerCase().includes(searchLower)) ||
-          el.id.toLowerCase().includes(searchLower)
+          el.global_id.toLowerCase().includes(searchLower)
       );
     }
 

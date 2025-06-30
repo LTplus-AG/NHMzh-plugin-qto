@@ -978,7 +978,6 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
 
             # Initial mapping from DB fields to response model fields
             mapped_elem = {
-                "id": elem.get("global_id"),
                 "global_id": elem.get("global_id"),
                 "type": elem.get("ifc_class", "Unknown"),
                 "name": elem.get("name", "Unnamed"),
@@ -1025,7 +1024,7 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
                  }
             else:
                  # Fallback if classification is not a dict (or handle differently)
-                 logger.debug(f"Classification field for element {mapped_elem['id']} is not a dictionary: {db_classification}")
+                 logger.debug(f"Classification field for element {mapped_elem['global_id']} is not a dictionary: {db_classification}")
 
 
             # --- Build Nested Quantity Objects ---
@@ -1169,7 +1168,7 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
             try:
                 # Ensure required fields have defaults if missing before validation
                 # (Already done partially above, but double-check key ones)
-                if not elem_data.get("id"): elem_data["id"] = f"missing-id-{i}"
+                if not elem_data.get("global_id"): elem_data["global_id"] = f"missing-global-id-{i}"
                 if not elem_data.get("type"): elem_data["type"] = "Unknown"
                 if not elem_data.get("name"): elem_data["name"] = f"Unnamed-{i}"
                 if "properties" not in elem_data or elem_data["properties"] is None: elem_data["properties"] = {}
@@ -1414,7 +1413,6 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
 
         # Simplified mapping for response (adapt as needed based on IFCElement model)
         mapped_elem = {
-            "id": created_element_data.get("global_id"), 
             "global_id": created_element_data.get("global_id"),
             "type": created_element_data.get("ifc_class"),
             "name": created_element_data.get("name"),
@@ -1469,7 +1467,7 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
             # Fetch the updated/created elements using injected db
             # Fetch based on the provided IDs in the request, or upserted IDs from response
             upserted_ids = result.get("upserted_ids", []) # List of string ObjectIDs for *created* docs
-            request_global_ids = [elem.get('global_id') or elem.get('id') for elem in elements_dict_list] # Get all global_ids from request
+            request_global_ids = [elem.get('global_id') for elem in elements_dict_list] # Get all global_ids from request
 
             # Find filter needs adjustment: Find by global_id from request OR _id from upserted_ids
             query_filter = {"project_id": project_id, "$or": []}
@@ -1505,7 +1503,6 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                 try:
                     # Simplified mapping - copy relevant fields
                     mapped_resp_elem = {
-                        "id": elem.get("global_id"),
                         "global_id": elem.get("global_id"),
                         "type": elem.get("ifc_class"),
                         "name": elem.get("name"),

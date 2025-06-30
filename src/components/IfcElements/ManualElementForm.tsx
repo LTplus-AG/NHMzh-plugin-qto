@@ -68,6 +68,7 @@ interface ManualElementFormProps {
 const QUANTITY_TYPES = [
   { type: "area", unit: "m²", label: "Fläche" },
   { type: "length", unit: "m", label: "Länge" },
+  { type: "count", unit: "Stk", label: "Stk" },
 ];
 
 // <<< Mapping from IFC Class to prioritized eBKP-H codes >>>
@@ -554,7 +555,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
       materials: [],
       description: formData.description,
     };
-    onSubmit(dataToSubmit, initialData?.id || null, {
+    onSubmit(dataToSubmit, initialData?.global_id || null, {
       ...formData.quantity,
       value: finalQuantityValue,
     });
@@ -645,7 +646,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
         materials: finalMaterials, // Use the processed list (name/fraction only)
         description: formData.description,
       },
-      initialData?.id || null,
+      initialData?.global_id || null,
       originalStep2Quantity // <<< ADDED: Pass original quantity
     );
   };
