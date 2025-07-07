@@ -19,6 +19,7 @@ import { IFCElement } from "../../types/types";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
 import { tableStyles } from "./tableConfig";
+import { checkPersistedEdit } from "../../utils/elementEditChecks";
 
 interface MainEbkpGroupRowProps {
   group: HierarchicalEbkpGroup;
@@ -41,22 +42,7 @@ interface MainEbkpGroupRowProps {
   viewType?: string;
 }
 
-// Helper function to check if any element in the group has been edited LOCALLY (unsaved)
-const checkPersistedEdit = (element: IFCElement): boolean => {
-  const currentVal = element.quantity?.value;
-  const originalVal = element.original_quantity?.value;
-  if (
-    currentVal !== null &&
-    currentVal !== undefined &&
-    !isNaN(currentVal) &&
-    originalVal !== null &&
-    originalVal !== undefined &&
-    !isNaN(originalVal)
-  ) {
-    return Math.abs(currentVal - originalVal) > 1e-9;
-  }
-  return false;
-};
+
 
 const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
   group,

@@ -16,6 +16,7 @@ import VirtualizedElementList from "./VirtualizedElementList";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
 import { tableStyles } from "./tableConfig";
+import { checkPersistedEdit } from "../../utils/elementEditChecks";
 
 interface EbkpGroup {
   code: string;
@@ -23,21 +24,7 @@ interface EbkpGroup {
   elements: IFCElement[];
 }
 
-const checkPersistedEdit = (element: IFCElement): boolean => {
-  const currentVal = element.quantity?.value;
-  const originalVal = element.original_quantity?.value;
-  if (
-    currentVal !== null &&
-    currentVal !== undefined &&
-    !isNaN(currentVal) &&
-    originalVal !== null &&
-    originalVal !== undefined &&
-    !isNaN(originalVal)
-  ) {
-    return Math.abs(currentVal - originalVal) > 1e-9;
-  }
-  return false;
-};
+
 
 interface EbkpGroupRowProps {
   group: EbkpGroup;

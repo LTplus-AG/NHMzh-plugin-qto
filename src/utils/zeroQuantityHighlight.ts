@@ -99,6 +99,9 @@ export const hasZeroQuantityInAnyType = (item: {
   const hasAnyQuantity = quantities.some(q => q !== null && q !== undefined);
   if (!hasAnyQuantity) return true;
   
-  // Check if all defined quantities are zero
-  return quantities.every(q => q === null || q === undefined || isZeroQuantity(q));
+  // Check if any quantity is defined and non-zero
+  const hasNonZeroQuantity = quantities.some(q => 
+    q !== null && q !== undefined && !isZeroQuantity(q)
+  );
+  return !hasNonZeroQuantity;
 }; 

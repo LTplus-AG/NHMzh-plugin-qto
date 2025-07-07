@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { IFCElement } from "../../../types/types";
-import { EbkpGroup } from "../types";
+import { EbkpGroup, HierarchicalEbkpGroup } from "../types";
 
 // Main EBKP group names mapping
 const EBKP_MAIN_GROUP_NAMES: Record<string, string> = {
@@ -50,13 +50,6 @@ const getClassificationKey = (el: IFCElement): string | null => {
   }
   return null;
 };
-
-export interface HierarchicalEbkpGroup {
-  mainGroup: string;
-  mainGroupName: string;
-  subGroups: EbkpGroup[];
-  totalElements: number;
-}
 
 export const useEbkpGroups = (
   elements: IFCElement[],
