@@ -17,7 +17,7 @@ const getClassificationKey = (el: IFCElement): string | null => {
 export const useEbkpGroups = (
   elements: IFCElement[],
   classificationFilter: string[],
-  viewType: string = "individual"
+  viewType: string = "grouped"
 ) => {
 
   // Get unique classification IDs (from all elements, including manual)
@@ -173,33 +173,47 @@ export const useEbkpGroups = (
               ?.elements.push(elementsInTypeGroup[0]);
           } else {
             // Create merged element if more than one
-            const mergedElement: IFCElement = { ...elementsInTypeGroup[0] }; // Base on first
-            mergedElement.id = `group-${groupKeyForMap}-${typeName.replace(
-              /\s+/g,
-              "-"
-            )}-${level.replace(/\s+/g, "-")}`;
-            mergedElement.name = typeName;
-            mergedElement.type_name = typeName;
-            mergedElement.level = level;
-            mergedElement.groupedElements = elementsInTypeGroup.length;
-            mergedElement.originalElementIds = elementsInTypeGroup.map(
-              (el) => el.id
-            );
+            const firstElement = elementsInTypeGroup[0];
+            const groupElements = elementsInTypeGroup.slice(1);
+
+            const mergedElement: IFCElement = {
+              ...firstElement,
+              // The ID will be kept from firstElement
+              global_id: firstElement.global_id,
+              groupedElements: groupElements.length,
+              hasPropertyDifferences: false,
+            };
+
+            // Add grouped element IDs for reference
+            const groupedElementIds = groupElements.map((el) => el.global_id);
 
             // Aggregate quantities, check for property differences, merge materials (existing logic)
-            let hasPropertyDifferences = false;
-            const firstElement = elementsInTypeGroup[0];
-            for (let i = 1; i < elementsInTypeGroup.length; i++) {
-              if (
-                elementsInTypeGroup[i].is_structural !==
-                  firstElement.is_structural ||
-                elementsInTypeGroup[i].is_external !== firstElement.is_external
-              ) {
-                hasPropertyDifferences = true;
-                break;
+            let differentProperties = new Set<string>();
+            let totalVolume = 0;
+            const materialMap = new Map<string, any>();
+            
+            elementsInTypeGroup.forEach((el) => {
+              if (el.is_structural !== firstElement.is_structural) {
+                differentProperties.add("is_structural");
               }
-            }
-            mergedElement.hasPropertyDifferences = hasPropertyDifferences;
+              if (el.is_external !== firstElement.is_external) {
+                differentProperties.add("is_external");
+              }
+              if (el.materials) {
+                el.materials.forEach((mat) => {
+                  const name = mat.name;
+                  if (!materialMap.has(name)) {
+                    materialMap.set(name, { ...mat, volume: 0 });
+                  }
+                  const existingMat = materialMap.get(name);
+                  if (mat.volume !== undefined && mat.volume !== null) {
+                    existingMat.volume = (existingMat.volume || 0) + mat.volume;
+                    totalVolume += mat.volume;
+                  }
+                });
+              }
+            });
+            mergedElement.hasPropertyDifferences = differentProperties.size > 0;
 
             mergedElement.area = elementsInTypeGroup.reduce(
               (sum, el) => sum + (el.area || 0),
@@ -215,8 +229,6 @@ export const useEbkpGroups = (
             );
 
             // Merge materials (existing logic)
-            const materialMap = new Map<string, any>();
-            let totalVolume = 0;
             elementsInTypeGroup.forEach((el) => {
               if (el.materials) {
                 el.materials.forEach((mat) => {

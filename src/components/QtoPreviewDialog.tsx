@@ -26,7 +26,7 @@ const TYPE_COLORS = {
 
 // Interface for the elements passed from MainPage
 interface IfcElement {
-  id: string; // Needed to check against editedElements keys
+  global_id: string; // Needed to check against editedElements keys
   type_name?: string | null;
   name?: string | null;
   type?: string | null;
@@ -124,8 +124,8 @@ export const QtoPreviewDialog: React.FC<QtoPreviewDialogProps> = ({
       // Increment the total count for this typeName
       summaryMap[typeName].totalCount++;
 
-      // Increment the edited count if the element's ID is a key in the editedElements map
-      if (editedElements.hasOwnProperty(element.id)) {
+      // Increment the edited count if the element's global_id is a key in the editedElements map
+      if (Object.prototype.hasOwnProperty.call(editedElements, element.global_id)) {
         summaryMap[typeName].editedCount++;
       }
     });

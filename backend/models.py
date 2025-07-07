@@ -51,8 +51,7 @@ class ManualClassificationInput(BaseModel):
 # Primary Element Model (used in many responses and internal processing)
 class IFCElement(BaseModel):
     """IFC Element data model for API responses and internal use"""
-    id: str # This will be the global_id for consistent identification
-    global_id: Optional[str] = None
+    global_id: str # Primary identifier - IFC Global ID
     ifc_class: Optional[str] = Field(None, alias="type") # Map 'type' from DB to 'ifc_class'
     name: Optional[str] = None
     type_name: Optional[str] = None
@@ -142,7 +141,7 @@ class ModelInfo(BaseModel):
 
 # Request Body / Input Models
 class ElementQuantityUpdate(BaseModel):
-    element_id: str # Should match global_id
+    global_id: str # Element's global ID for identification
     new_quantity: ManualQuantityInput # Use the specific ManualQuantityInput
 
 class ManualElementInput(BaseModel):
@@ -156,8 +155,7 @@ class ManualElementInput(BaseModel):
 
 class BatchElementData(BaseModel):
     # Model for elements within the batch update request
-    id: str # Can be IFC GUID, existing DB element _id (as str), or temp 'manual_...' ID
-    global_id: Optional[str] = None # Needed for updates/identification
+    global_id: str # IFC GUID or temp 'manual_...' ID for identification
     type: Optional[str] = Field(None, alias="ifc_class") # Corresponds to ifc_class, allow alias
     name: Optional[str] = None
     type_name: Optional[str] = None
@@ -178,22 +176,20 @@ class BatchElementData(BaseModel):
         json_encoders = {ObjectId: str}
         arbitrary_types_allowed = True
 
-    # Add validator to ensure global_id is present for updates if not a new manual element
+    # Add validator to ensure global_id is present and valid
     @model_validator(mode='before')
-    def check_ids_for_update(cls, values):
-        id_val = values.get('id')
+    def check_global_id_for_update(cls, values):
         global_id_val = values.get('global_id')
         is_manual_val = values.get('is_manual', False) # Default to False if not provided
 
-        # If it's not a new manual element (ID doesn't start with 'manual_')
-        # then we need global_id for matching in the DB.
-        # Also check if the provided id is a valid ObjectId string if not manual
-        is_potential_object_id = ObjectId.is_valid(id_val) if isinstance(id_val, str) else False
-
-        if not (is_manual_val and isinstance(id_val, str) and id_val.startswith('manual_')):
-             # If it's an existing element, it should have an ID that's either an ObjectId string or a Global ID
-            if not (is_potential_object_id or global_id_val):
-                 raise ValueError(f"Existing element update (ID: {id_val}) requires a valid 'id' (ObjectId string) or 'global_id' for matching.")
+        # Ensure global_id is present
+        if not global_id_val:
+            raise ValueError("global_id is required for element identification")
+        
+        # For manual elements, ensure global_id starts with 'manual_'
+        if is_manual_val and not str(global_id_val).startswith('manual_'):
+            raise ValueError(f"Manual element global_id must start with 'manual_', got: {global_id_val}")
+        
         return values
 
 class BatchUpdateRequest(BaseModel):
@@ -201,8 +197,7 @@ class BatchUpdateRequest(BaseModel):
 
 class ElementInputData(BaseModel):
     # Define the specific input model for elements in the /send-qto request
-    id: str
-    global_id: Optional[str] = None
+    global_id: str
     type: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None

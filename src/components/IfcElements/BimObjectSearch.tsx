@@ -52,7 +52,7 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
     if (option.type_name) {
       return option.type_name;
     }
-    return `${option.type || "Element"} ${option.id}`;
+    return `${option.type || "Element"} ${option.global_id}`;
   };
 
   // Format decimal number to display with 3 decimal places
@@ -188,10 +188,10 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
   const uniqueFilteredOptions = useMemo(() => {
     const uniqueIds = new Set<string>();
     return filteredOptions.filter((option) => {
-      if (uniqueIds.has(option.id)) {
+      if (uniqueIds.has(option.global_id)) {
         return false;
       }
-      uniqueIds.add(option.id);
+      uniqueIds.add(option.global_id);
       return true;
     });
   }, [filteredOptions]);
@@ -204,7 +204,7 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
       onClose={() => setOpen(false)}
       options={uniqueFilteredOptions}
       getOptionLabel={getOptionLabel}
-      getOptionKey={(option) => option.id}
+      getOptionKey={(option) => option.global_id}
       renderOption={renderOption}
       onChange={(_, newValue) => onElementSelect(newValue)}
       inputValue={inputValue}

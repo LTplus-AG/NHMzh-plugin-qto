@@ -1,25 +1,25 @@
-import EditIcon from "@mui/icons-material/Edit";
+import React, { useMemo } from "react";
+import {
+  TableRow,
+  TableCell,
+  IconButton,
+  Typography,
+  Collapse,
+  Box,
+  Tooltip,
+  TextField,
+} from "@mui/material";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import EditIcon from "@mui/icons-material/Edit";
 import BuildIcon from "@mui/icons-material/Build";
 import EditNoteIcon from "@mui/icons-material/EditNote";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
-import {
-  Box,
-  Collapse,
-  IconButton,
-  TableCell,
-  TableRow,
-  TextField,
-  Tooltip,
-  Typography,
-} from "@mui/material";
-import React, { useMemo } from "react";
-import { IFCElement } from "../../types/types";
-import MaterialsTable from "./ElementTable";
+import { IFCElement, quantityConfig } from "../../types/types";
+import MaterialsTable from "./MaterialsTable";
 import { EditedQuantity } from "./types";
-import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
-import { quantityConfig } from "../../types/types";
+import { ElementDisplayStatus } from "../IfcElementsList";
+import CopyableText from "../ui/CopyableText";
+import { TABLE_COLUMNS, getColumnStyle, tableStyles } from "./tableConfig";
 
 interface ElementRowProps {
   element: IFCElement;
@@ -30,19 +30,17 @@ interface ElementRowProps {
   editedElement?: EditedQuantity; // Updated to use EditedQuantity type
   handleQuantityChange: (
     elementId: string,
-    quantityKey: "area" | "length", // Identify which quantity is changing
+    quantityKey: "area" | "length" | "count", // Identify which quantity is changing
     originalValue: number | null | undefined,
     newValue: string
   ) => void;
   getElementDisplayStatus: (element: IFCElement) => ElementDisplayStatus; // Add prop type
-  isParentGroupExpanded: boolean; // <<< ADD parent expansion state prop
-  handleEditManualClick: (element: IFCElement) => void; // <<< ADDED prop
-  openDeleteConfirm: (element: IFCElement) => void; // <<< ADDED prop
+  handleEditManualClick: (element: IFCElement) => void; // <<< Destructure prop
 }
 
 const getQuantityValue = (
   element: IFCElement,
-  quantityType: "area" | "length"
+  quantityType: "area" | "length" | "count"
 ): number | null | undefined => {
   // 1. Prioritize direct top-level properties first
   if (quantityType === "area" && typeof element.area === "number") {
@@ -95,25 +93,19 @@ const ElementRow: React.FC<ElementRowProps> = ({
   editedElement,
   handleQuantityChange,
   getElementDisplayStatus, // Destructure prop
-  isParentGroupExpanded, // <<< DESTRUCTURE parent expansion state prop
   handleEditManualClick, // <<< Destructure prop
-  openDeleteConfirm, // <<< Destructure prop
 }) => {
-  // <<< ADD Log for the entire element object >>>
-  console.log(
-    `ElementRow (${element.id}): Received element data:`,
-    JSON.stringify(element, null, 2)
-  );
+
 
   const category = element.category || element.type;
   const level = element.level || "unbekannt";
-  const uniqueKey = `${groupCode}-${elementIndex}-${element.id.substring(
+  const uniqueKey = `${groupCode}-${elementIndex}-${element.global_id.substring(
     0,
     8
   )}`;
 
   // --- Determine Quantity Key and Unit to Display/Edit ---
-  let displayQuantityKey: "area" | "length" = "area"; // Default
+  let displayQuantityKey: "area" | "length" | "count" = "area"; // Default
   let displayUnit: string = "m²"; // Default
 
   const originalType = element.original_quantity?.type;
@@ -123,15 +115,15 @@ const ElementRow: React.FC<ElementRowProps> = ({
     unit: "m²",
   };
 
-  // 1. Prioritize original_quantity type if it's area or length
-  if (originalType === "area" || originalType === "length") {
+  // 1. Prioritize original_quantity type if it's area, length, or count
+  if (originalType === "area" || originalType === "length" || originalType === "count") {
     displayQuantityKey = originalType;
-    displayUnit = originalType === "area" ? "m²" : "m";
+    displayUnit = originalType === "area" ? "m²" : originalType === "length" ? "m" : "Stk";
   }
-  // 2. Else, use current quantity type if it's area or length
-  else if (currentType === "area" || currentType === "length") {
+  // 2. Else, use current quantity type if it's area, length, or count
+  else if (currentType === "area" || currentType === "length" || currentType === "count") {
     displayQuantityKey = currentType;
-    displayUnit = currentType === "area" ? "m²" : "m";
+    displayUnit = currentType === "area" ? "m²" : currentType === "length" ? "m" : "Stk";
   }
   // 3. Else, fall back to default based on IFC type
   else {
@@ -142,7 +134,6 @@ const ElementRow: React.FC<ElementRowProps> = ({
 
   // Determine display status
   const displayStatus = getElementDisplayStatus(element);
-  const statusConfig = STATUS_CONFIG[displayStatus];
 
   // Check if this element is currently being edited locally (unsaved)
   const isLocallyEdited = editedElement !== undefined;
@@ -258,10 +249,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
       finalDisplayValue = formatNumber(valueToFormat);
     }
 
-    // <<< Re-enable Log >>>
-    console.log(
-      `ElementRow (${element.id}): getDisplayValue calculated: '${finalDisplayValue}' from valueToFormat: ${valueToFormat}`
-    );
+
 
     return finalDisplayValue;
   };
@@ -272,9 +260,10 @@ const ElementRow: React.FC<ElementRowProps> = ({
   return (
     <React.Fragment>
       <TableRow
-        id={`element-row-${element.id}`}
+        id={`element-row-${element.global_id}`}
         sx={{
-          "&:hover": { backgroundColor: "rgba(0, 0, 0, 0.02)" },
+          ...tableStyles.dataRow,
+          "&:hover": { backgroundColor: "rgba(25, 118, 210, 0.04)" },
           cursor: "pointer",
           backgroundColor: isExpanded
             ? "rgba(0, 0, 255, 0.04)" // Expanded background
@@ -284,136 +273,176 @@ const ElementRow: React.FC<ElementRowProps> = ({
             ? "rgba(255, 183, 77, 0.1)" // Manual unsaved color (using 'manual' status color)
             : displayStatus === "pending"
             ? "rgba(255, 204, 128, 0.1)" // Pending color
+            : elementIndex % 2 === 1
+            ? "rgba(0, 0, 0, 0.02)" // Zebra stripe for odd rows
             : "inherit", // Default
           transition: "background-color 0.3s ease",
         }}
-        onClick={() => toggleExpand(element.id)}
+        onClick={() => toggleExpand(element.global_id)}
       >
-        <TableCell sx={{ display: "flex", alignItems: "center" }}>
-          {/* Expansion Icon (shown when not manual or when expanded) */}
+        {/* Column 1: Expand */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[0]),
+            padding: "0", // Override for expand button cell
+            justifyContent: "center",
+          }}
+        >
           {(isExpanded || !element.is_manual) && (
             <IconButton
               aria-label="expand element"
               size="small"
               onClick={(e) => {
                 e.stopPropagation();
-                toggleExpand(element.id);
+                toggleExpand(element.global_id);
               }}
-              sx={{ padding: "4px" }}
+              sx={tableStyles.expandButton}
             >
               {isExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
             </IconButton>
           )}
-          {/* Manual Element Buttons (Edit/Delete - shown when collapsed) */}
           {!isExpanded && element.is_manual && (
-            <Box sx={{ display: "flex" }}>
-              <Tooltip title="Manuelles Element bearbeiten">
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Tooltip title="Bearbeiten">
                 <IconButton
                   size="small"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleEditManualClick(element);
                   }}
-                  sx={{ padding: "4px" }}
+                  sx={{ ...tableStyles.expandButton, p: "1px" }}
                 >
-                  <EditNoteIcon fontSize="inherit" color="action" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Manuelles Element löschen">
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openDeleteConfirm(element);
-                  }}
-                  sx={{ padding: "4px", ml: 0.5 }}
-                  color="error"
-                >
-                  <DeleteOutlineIcon fontSize="inherit" />
+                  <EditNoteIcon sx={{ fontSize: "0.9rem" }} />
                 </IconButton>
               </Tooltip>
             </Box>
           )}
         </TableCell>
-        <TableCell>
-          {element.type_name || element.name || element.type}
-          {/* Manual Element Indicator */}
-          {element.is_manual && (
-            <Tooltip title="Manuell hinzugefügtes Element">
-              <BuildIcon
-                fontSize="small"
-                sx={{
-                  ml: 1,
-                  verticalAlign: "middle",
-                  color: "action.active", // Or another suitable color
-                  fontSize: "1rem",
-                }}
-              />
-            </Tooltip>
-          )}
-          {/* Edited Element Indicator */}
-          {(isLocallyEdited || isPersistedEdit) && !element.is_manual && (
-            <Tooltip
-              title={
-                isLocallyEdited
-                  ? "Lokal bearbeitet (ungespeichert)"
-                  : "Menge wurde überschrieben"
-              }
-            >
-              <EditIcon
-                fontSize="small"
-                sx={{
-                  ml: 1,
-                  verticalAlign: "middle",
-                  color: "warning.main",
-                  fontSize: "1rem",
-                }}
-              />
-            </Tooltip>
-          )}
-          {element.groupedElements && element.groupedElements > 1 && (
-            <Typography
-              variant="caption"
-              sx={{
-                ml: 1,
-                display: "inline-block",
-                color: "text.secondary",
-                backgroundColor: element.hasPropertyDifferences
-                  ? "rgba(255, 152, 0, 0.08)"
-                  : "rgba(25, 118, 210, 0.05)",
-                borderRadius: "4px",
-                padding: "0 4px",
-                fontWeight: "medium",
-              }}
-            >
-              {element.groupedElements} Elemente
-              {element.hasPropertyDifferences && (
-                <span
-                  style={{
-                    marginLeft: "4px",
-                    color: "orange",
-                  }}
-                  title="Diese Elemente haben unterschiedliche Eigenschaften"
-                >
-                  *
-                </span>
-              )}
-            </Typography>
-          )}
-        </TableCell>
-        <TableCell>{category}</TableCell>
-        <TableCell>{level}</TableCell>
-        {/* Quantity Cell */}
+
+        {/* Column 2: Type */}
         <TableCell
           sx={{
-            position: "relative",
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[1]),
+          }}
+        >
+          <Box sx={{ 
+            display: "flex", 
+            alignItems: "center", 
+            flexWrap: "wrap", 
+            gap: 0.5,
+            width: "100%",
+            minWidth: 0,
+          }}>
+            <Typography sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: "1 1 auto",
+              minWidth: 0,
+            }}>
+              {element.type_name || element.name || element.type}
+            </Typography>
+            {element.is_manual && (
+              <Tooltip title="Manuell hinzugefügtes Element">
+                <BuildIcon sx={{ fontSize: "0.9rem", color: "action.active", flex: "0 0 auto" }} />
+              </Tooltip>
+            )}
+            {(isLocallyEdited || isPersistedEdit) && !element.is_manual && (
+              <Tooltip
+                title={
+                  isLocallyEdited
+                    ? "Lokal bearbeitet (ungespeichert)"
+                    : "Menge wurde überschrieben"
+                }
+              >
+                <EditIcon sx={{ fontSize: "0.9rem", color: "warning.main", flex: "0 0 auto" }} />
+              </Tooltip>
+            )}
+            {element.groupedElements && element.groupedElements > 1 && (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "inline-block",
+                  color: "text.secondary",
+                  backgroundColor: element.hasPropertyDifferences
+                    ? "rgba(255, 152, 0, 0.08)"
+                    : "rgba(25, 118, 210, 0.05)",
+                  borderRadius: "4px",
+                  padding: "0 4px",
+                  fontWeight: "medium",
+                  flex: "0 0 auto",
+                }}
+              >
+                {element.groupedElements}x
+                {element.hasPropertyDifferences && "*"}
+              </Typography>
+            )}
+          </Box>
+        </TableCell>
+
+        {/* Column 3: GUID */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[2]),
+          }}
+        >
+          <CopyableText text={element.global_id} showFullText={true} />
+        </TableCell>
+
+        {/* Column 4: Kategorie */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[3]),
+          }}
+        >
+          <Typography sx={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            width: "100%",
+          }}>
+            {category}
+          </Typography>
+        </TableCell>
+
+        {/* Column 5: Ebene */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[4]),
+          }}
+        >
+          <Typography sx={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            width: "100%",
+          }}>
+            {level}
+          </Typography>
+        </TableCell>
+
+        {/* Column 6: Menge */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[5]),
             ...((isLocallyEdited || isPersistedEdit) && {
-              backgroundColor: "rgba(255, 152, 0, 0.15)",
-              borderRadius: 1,
+              backgroundColor: "rgba(255, 152, 0, 0.08)",
             }),
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", width: "100%" }}>
+          <Box sx={{ 
+            display: "flex", 
+            alignItems: "center", 
+            justifyContent: "flex-end", 
+            width: "100%",
+            gap: 0.5,
+          }}>
             {element.groupedElements && element.groupedElements > 1 ? (
               <Tooltip
                 title="Bearbeitung nicht möglich, da mehrere Elemente gruppiert angezeigt werden. Wechseln Sie zur Einzelansicht um Mengen zu bearbeiten."
@@ -433,18 +462,22 @@ const ElementRow: React.FC<ElementRowProps> = ({
                     disabled={true}
                     onClick={(e) => e.stopPropagation()}
                     sx={{
-                      width: "calc(100% - 40px)", // Adjust width, leave space for unit
-                      mr: 1,
-                      "& .MuiInput-root": {
-                        borderRadius: 1, // Match outlined style
+                      width: "80px",
+                      mr: 0.5,
+                      "& .MuiInputBase-root": {
+                        borderRadius: 1,
+                        fontSize: "0.875rem",
                       },
-                      // Style for disabled state
+                      "& .MuiInputBase-input": {
+                        py: 0.5,
+                        px: 1,
+                        textAlign: "right",
+                      },
                       "& .Mui-disabled": {
                         WebkitTextFillColor: "rgba(0, 0, 0, 0.6) !important",
                         cursor: "not-allowed",
-                        backgroundColor: "rgba(0, 0, 0, 0.02)", // Slight background for disabled
+                        backgroundColor: "rgba(0, 0, 0, 0.02)",
                       },
-                      // Hide number input spinners
                       "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
                         {
                           WebkitAppearance: "none",
@@ -474,7 +507,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
                   }
 
                   handleQuantityChange(
-                    element.id,
+                    element.global_id,
                     displayQuantityKey,
                     originalQuantityValue, // Pass the determined original value
                     e.target.value
@@ -483,24 +516,31 @@ const ElementRow: React.FC<ElementRowProps> = ({
                 onFocus={(e) => e.target.select()}
                 onClick={(e) => e.stopPropagation()}
                 sx={{
-                  width: "calc(100% - 40px)", // Adjust width, leave space for unit
-                  mr: 1,
-                  "& .MuiInput-root": {
+                  width: "80px",
+                  mr: 0.5,
+                  "& .MuiInputBase-root": {
                     borderRadius: 1,
-                    // <<< UPDATED: Highlight border if locally edited OR persisted edit >>>
-                    borderColor:
-                      isLocallyEdited || isPersistedEdit
-                        ? "warning.main"
-                        : undefined,
+                    fontSize: "0.875rem",
+                  },
+                  "& .MuiInputBase-input": {
+                    py: 0.5,
+                    px: 1,
+                    textAlign: "right",
+                  },
+                  "& .MuiOutlinedInput-root": {
                     "&.Mui-focused fieldset": {
-                      // <<< UPDATED: Keep border color on focus if edited/persisted >>>
+                      borderColor:
+                        isLocallyEdited || isPersistedEdit
+                          ? "warning.main"
+                          : "primary.main",
+                    },
+                    "& fieldset": {
                       borderColor:
                         isLocallyEdited || isPersistedEdit
                           ? "warning.main"
                           : undefined,
                     },
                   },
-                  // Hide number input spinners (less relevant for type="text", but keep for safety)
                   "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
                     {
                       WebkitAppearance: "none",
@@ -512,7 +552,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
                 }}
               />
             )}
-            <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
+            <Typography variant="body2" sx={{ fontSize: "0.875rem", color: "text.secondary" }}>
               {displayUnit}
             </Typography>
           </Box>
@@ -524,35 +564,20 @@ const ElementRow: React.FC<ElementRowProps> = ({
                 display: "block",
                 color: "text.secondary",
                 textAlign: "right",
-                fontSize: "0.7rem",
+                fontSize: "0.75rem",
+                marginTop: "4px",
+                paddingRight: "8px",
               }}
             >
-              (Original: {formatNumber(originalQuantityValue)} {displayUnit})
+              ({formatNumber(originalQuantityValue)})
             </Typography>
-          )}
-        </TableCell>
-        {/* End Quantity Cell */}
-        {/* Status Cell - Add the colored dot */}
-        <TableCell align="center">
-          {!isParentGroupExpanded && (
-            <Tooltip title={statusConfig.label}>
-              <Box
-                sx={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: "50%",
-                  bgcolor: statusConfig.color,
-                  display: "inline-block",
-                }}
-              />
-            </Tooltip>
           )}
         </TableCell>
       </TableRow>
 
       {/* Element details when expanded */}
       <TableRow>
-        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
+        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={6}>
           <Collapse in={isExpanded} timeout="auto" unmountOnExit>
             <Box sx={{ margin: 1, paddingLeft: 2 }}>
               {/* Materials Section */}

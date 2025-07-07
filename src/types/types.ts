@@ -14,8 +14,7 @@ export interface CostItem {
 }
 
 export interface IFCElement {
-  id: string;
-  global_id?: string | null | undefined;
+  global_id: string;
   type: string;
   name: string;
   type_name?: string | null | undefined;
@@ -120,7 +119,7 @@ export interface ColumnWidthsType {
 }
 
 export const quantityConfig: {
-  [key: string]: { key: "area" | "length"; unit: string };
+      [key: string]: { key: "area" | "length" | "count"; unit: string };
 } = {
   IfcWall: { key: "area", unit: "m²" },
   IfcWallStandardCase: { key: "area", unit: "m²" },

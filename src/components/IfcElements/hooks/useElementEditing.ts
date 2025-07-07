@@ -12,7 +12,7 @@ export const useElementEditing = () => {
   // Handle quantity changes (works for both area and length)
   const handleQuantityChange = (
     elementId: string,
-    quantityKey: "area" | "length",
+    quantityKey: "area" | "length" | "count",
     originalValue: number | null | undefined,
     newValue: string
   ) => {
@@ -23,7 +23,11 @@ export const useElementEditing = () => {
 
     setEditedElements((prev) => {
       // If the new value is the same as original, remove from edited elements
-      if (numericValue === originalValue) {
+      // Treat null, undefined, and 0 as equivalent for comparison
+      const originalIsZeroish = originalValue === null || originalValue === undefined || originalValue === 0;
+      const newIsZeroish = numericValue === null || numericValue === 0;
+      
+      if ((originalIsZeroish && newIsZeroish) || numericValue === originalValue) {
         const newEdited = { ...prev };
         // Make sure to remove all potential fields
         delete newEdited[elementId];
