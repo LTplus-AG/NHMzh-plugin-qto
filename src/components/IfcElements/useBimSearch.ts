@@ -172,10 +172,9 @@ const useBimSearch = (
               el.classification_id.toLowerCase().includes(searchLower)) ||
             (el.classification_name &&
               el.classification_name.toLowerCase().includes(searchLower)) ||
-            (el.category && el.category.toLowerCase().includes(searchLower)) ||
-            (el.global_id &&
-              el.global_id.toLowerCase().includes(searchLower)) ||
-            el.global_id.toLowerCase().includes(searchLower)
+                      (el.category && el.category.toLowerCase().includes(searchLower)) ||
+          (el.global_id &&
+            el.global_id.toLowerCase().includes(searchLower))
           );
         });
 
@@ -193,9 +192,8 @@ const useBimSearch = (
             el.classification_id.toLowerCase().includes(searchLower)) ||
           (el.classification_name &&
             el.classification_name.toLowerCase().includes(searchLower)) ||
-          (el.category && el.category.toLowerCase().includes(searchLower)) ||
-          (el.global_id && el.global_id.toLowerCase().includes(searchLower)) ||
-          el.global_id.toLowerCase().includes(searchLower)
+                  (el.category && el.category.toLowerCase().includes(searchLower)) ||
+        (el.global_id && el.global_id.toLowerCase().includes(searchLower))
       );
     }
 

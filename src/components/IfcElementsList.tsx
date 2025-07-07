@@ -114,7 +114,7 @@ const IfcElementsList = ({
   const getElementDisplayStatus = (
     element: IFCElement
   ): ElementDisplayStatus => {
-    const isLocallyEdited = editedElements.hasOwnProperty(element.global_id);
+    const isLocallyEdited = Object.prototype.hasOwnProperty.call(editedElements, element.global_id);
 
     // 1. Highest priority: Locally Edited (Blue) - Applies to both IFC and manual elements being edited
     if (isLocallyEdited) {

@@ -125,7 +125,7 @@ export const QtoPreviewDialog: React.FC<QtoPreviewDialogProps> = ({
       summaryMap[typeName].totalCount++;
 
       // Increment the edited count if the element's global_id is a key in the editedElements map
-      if (editedElements.hasOwnProperty(element.global_id)) {
+      if (Object.prototype.hasOwnProperty.call(editedElements, element.global_id)) {
         summaryMap[typeName].editedCount++;
       }
     });
