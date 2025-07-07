@@ -21,3 +21,10 @@ export interface EbkpGroup {
   name: string | null;
   elements: IFCElement[];
 }
+
+export interface HierarchicalEbkpGroup {
+  mainGroup: string;
+  mainGroupName: string;
+  subGroups: EbkpGroup[];
+  totalElements: number;
+}
