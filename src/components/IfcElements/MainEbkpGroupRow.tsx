@@ -18,8 +18,9 @@ import EbkpGroupRow from "./EbkpGroupRow";
 import { IFCElement } from "../../types/types";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
-import { tableStyles } from "./tableConfig";
+import { tableStyles, groupRowConfig, warningBadgeStyles, groupInfoStyles, tableSpacing } from "./tableConfig";
 import { checkPersistedEdit } from "../../utils/elementEditChecks";
+import { hasZeroQuantityInAnyType, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 
 interface MainEbkpGroupRowProps {
   group: HierarchicalEbkpGroup;
@@ -82,6 +83,26 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
     [allElements]
   );
 
+  // Check for zero quantities - compute once and derive both values
+  const zeroQuantityElements = useMemo(
+    () => allElements.filter((el) => {
+      const quantityForCheck = {
+        quantity: el.quantity?.value,
+        area: el.area,
+        length: el.length,
+        volume: el.volume,
+        hasZeroQuantityInGroup: el.hasZeroQuantityInGroup,
+        groupedElements: el.groupedElements,
+        type: el.type,
+      };
+      return hasZeroQuantityInAnyType(quantityForCheck);
+    }),
+    [allElements]
+  );
+  
+  const hasZeroQuantities = zeroQuantityElements.length > 0;
+  const elementsWithZeroQuantities = zeroQuantityElements.length;
+
   // Aggregate status for the main group based on priorities
   const aggregateStatus = useMemo(() => {
     let hasEdited = false;
@@ -136,7 +157,8 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
   return (
     <React.Fragment>
       <TableRow
-        sx={{
+        sx={getZeroQuantityStyles(hasZeroQuantities, {
+          minHeight: tableSpacing.rowHeight.comfortable,
           backgroundColor: isExpanded
             ? "rgba(25, 118, 210, 0.08)"
             : hasEditedElements || hasPersistedEdits
@@ -149,28 +171,23 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
               ? "rgba(255, 152, 0, 0.12)"
               : "rgba(0, 0, 0, 0.08)",
             transform: "translateY(-1px)",
-            boxShadow: `inset 4px 0 0 ${statusColor}, 0 2px 8px rgba(0,0,0,0.15)`,
+            boxShadow: `inset 4px 0 0 ${statusColor}, 0 4px 12px rgba(0,0,0,0.15)`,
           },
           cursor: "pointer",
-          borderTop: "2px solid rgba(0, 0, 0, 0.15)",
-          borderBottom: "1px solid rgba(0, 0, 0, 0.12)",
+          borderTop: "2px solid rgba(0, 0, 0, 0.08)",
+          borderBottom: "1px solid rgba(0, 0, 0, 0.08)",
           boxShadow: `inset 4px 0 0 ${statusColor}`,
           transition: "all 0.2s ease-in-out",
-        }}
+        })}
         onClick={() => toggleExpand(group.mainGroup)}
       >
         <TableCell
           sx={{
             ...tableStyles.dataCell,
-            width: "48px",
-            minWidth: "48px",
-            maxWidth: "48px",
-            flex: "0 0 48px",
+            ...groupRowConfig.mainGroup.expandColumn,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            py: 2,
-            px: 1,
           }}
         >
           <IconButton
@@ -182,12 +199,12 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
             }}
             sx={{
               ...tableStyles.expandButton,
-              p: 0.5,
+              p: 1,
               transition: "transform 0.2s ease",
               transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
             }}
           >
-            <ChevronRightIcon />
+            <ChevronRightIcon sx={{ fontSize: tableSpacing.iconSize.medium }} />
           </IconButton>
         </TableCell>
 
@@ -199,6 +216,8 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
             fontSize: "1.1rem",
             py: 2,
             px: 2,
+            minWidth: "600px", // Give more space for the content
+            flex: "1 1 auto",
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 2, width: "100%" }}>
@@ -244,17 +263,65 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
               )}
             </Box>
             
-            <Typography variant="body1" sx={{ fontWeight: 500, flex: "1 1 auto" }}>
+            <Typography variant="body1" sx={{ fontWeight: 500, flex: "1 1 auto", minWidth: 0 }}>
               {group.mainGroupName}
             </Typography>
             
-            <Typography variant="body2" sx={{ 
-              color: "text.secondary",
-              fontSize: "0.8rem",
-              fontWeight: 500,
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'flex-end',
+              minWidth: '200px', // Fixed minimum width for the info section
+              flexShrink: 0,
+              gap: 0.25
             }}>
-              {group.subGroups.length} Gruppen • {group.totalElements} Elemente
-            </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
+                <Typography variant="body2" sx={{ 
+                  color: "text.secondary",
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                  whiteSpace: 'nowrap'
+                }}>
+                  {group.subGroups.length} Gruppen
+                </Typography>
+                <Typography variant="body2" sx={{ 
+                  color: "text.secondary",
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                  whiteSpace: 'nowrap'
+                }}>
+                  •
+                </Typography>
+                <Typography variant="body2" sx={{ 
+                  color: "text.secondary",
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                  whiteSpace: 'nowrap'
+                }}>
+                  {group.totalElements} Elemente
+                </Typography>
+              </Box>
+              {elementsWithZeroQuantities > 0 && (
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: 0.5,
+                  backgroundColor: 'rgba(255, 152, 0, 0.08)',
+                  borderRadius: 1,
+                  px: 1,
+                  py: 0.25
+                }}>
+                  <Typography variant="caption" sx={{ 
+                    color: 'warning.main', 
+                    fontWeight: 'bold',
+                    fontSize: '0.7rem',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    ⚠ {elementsWithZeroQuantities} ohne Mengen
+                  </Typography>
+                </Box>
+              )}
+            </Box>
           </Box>
         </TableCell>
 
@@ -286,7 +353,7 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
                 <TableBody>
                   {group.subGroups.map((subGroup) => (
                     <EbkpGroupRow
-                      key={`ebkp-${subGroup.code}`}
+                      key={`${group.mainGroup}-ebkp-${subGroup.code}`}
                       group={subGroup}
                       isExpanded={expandedEbkp.includes(subGroup.code)}
                       toggleExpand={toggleExpandEbkp}

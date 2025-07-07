@@ -72,6 +72,7 @@ export interface IFCElement {
   groupedElements?: number;
   originalElementIds?: string[];
   hasPropertyDifferences?: boolean;
+  hasZeroQuantityInGroup?: boolean; // Indicates if any element in the group has zero quantities
   status?: "pending" | "active" | null | undefined;
   is_manual?: boolean;
 }
@@ -121,6 +122,7 @@ export interface ColumnWidthsType {
 export const quantityConfig: {
       [key: string]: { key: "area" | "length" | "count"; unit: string };
 } = {
+  // Area-based elements (from backend config)
   IfcWall: { key: "area", unit: "m²" },
   IfcWallStandardCase: { key: "area", unit: "m²" },
   IfcSlab: { key: "area", unit: "m²" },
@@ -130,11 +132,30 @@ export const quantityConfig: {
   IfcCurtainWall: { key: "area", unit: "m²" },
   IfcWindow: { key: "area", unit: "m²" },
   IfcDoor: { key: "area", unit: "m²" },
+  IfcBuildingElementPart: { key: "area", unit: "m²" },
+  IfcBuildingElementProxy: { key: "area", unit: "m²" },
+  IfcPile: { key: "area", unit: "m²" }, // Surface area
+  IfcRampFlight: { key: "area", unit: "m²" },
+  IfcSolarDevice: { key: "area", unit: "m²" },
+  IfcDeepFoundation: { key: "area", unit: "m²" }, // Surface area
+  IfcReinforcingMesh: { key: "area", unit: "m²" },
+  
+  // Length-based elements (from backend config)
   IfcBeam: { key: "length", unit: "m" },
   IfcBeamStandardCase: { key: "length", unit: "m" },
   IfcColumn: { key: "length", unit: "m" },
   IfcColumnStandardCase: { key: "length", unit: "m" },
   IfcRailing: { key: "length", unit: "m" },
   IfcReinforcingBar: { key: "length", unit: "m" },
+  
+  // Elements without specific quantities in backend (fallback to area)
+  IfcEarthworksCut: { key: "area", unit: "m²" },
+  IfcFooting: { key: "area", unit: "m²" },
+  IfcMember: { key: "area", unit: "m²" },
+  IfcCaissonFoundation: { key: "area", unit: "m²" },
+  IfcReinforcingElement: { key: "area", unit: "m²" },
+  IfcStairFlight: { key: "area", unit: "m²" },
+  IfcStair: { key: "area", unit: "m²" },
+  
   // Add other types as needed, default to area if not specified
 };

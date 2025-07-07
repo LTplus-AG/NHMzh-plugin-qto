@@ -105,31 +105,17 @@ const ElementRow: React.FC<ElementRowProps> = ({
   )}`;
 
   // --- Determine Quantity Key and Unit to Display/Edit ---
-  let displayQuantityKey: "area" | "length" | "count" = "area"; // Default
-  let displayUnit: string = "m²"; // Default
-
-  const originalType = element.original_quantity?.type;
-  const currentType = element.quantity?.type;
+  // Always use the quantity type based on IFC class configuration
   const defaultTypeConfig = quantityConfig[element.type] || {
     key: "area",
     unit: "m²",
   };
 
-  // 1. Prioritize original_quantity type if it's area, length, or count
-  if (originalType === "area" || originalType === "length" || originalType === "count") {
-    displayQuantityKey = originalType;
-    displayUnit = originalType === "area" ? "m²" : originalType === "length" ? "m" : "Stk";
-  }
-  // 2. Else, use current quantity type if it's area, length, or count
-  else if (currentType === "area" || currentType === "length" || currentType === "count") {
-    displayQuantityKey = currentType;
-    displayUnit = currentType === "area" ? "m²" : currentType === "length" ? "m" : "Stk";
-  }
-  // 3. Else, fall back to default based on IFC type
-  else {
-    displayQuantityKey = defaultTypeConfig.key;
-    displayUnit = defaultTypeConfig.unit;
-  }
+  const displayQuantityKey: "area" | "length" | "count" = defaultTypeConfig.key;
+  const displayUnit: string = defaultTypeConfig.unit;
+  
+  // Note: We prioritize the IFC class-based configuration over backend quantity types
+  // to ensure consistent display (e.g., IfcBeam always shows length, not area)
   // --- End Quantity Key/Unit Determination ---
 
   // Determine display status
@@ -263,6 +249,9 @@ const ElementRow: React.FC<ElementRowProps> = ({
     area: element.area,
     length: element.length,
     volume: element.volume,
+    hasZeroQuantityInGroup: element.hasZeroQuantityInGroup,
+    groupedElements: element.groupedElements,
+    type: element.type,
   };
   const hasZeroQuantity = hasZeroQuantityInAnyType(quantityForCheck);
 
@@ -288,7 +277,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
           transition: "background-color 0.3s ease",
         })}
         onClick={() => toggleExpand(element.global_id)}
-        title={hasZeroQuantity ? getZeroQuantityTooltip(element.type_name || element.name || element.type) : undefined}
+        title={hasZeroQuantity ? getZeroQuantityTooltip(element.type_name || element.name || element.type, !!(element.groupedElements && element.groupedElements > 1)) : undefined}
       >
         {/* Column 1: Expand */}
         <TableCell

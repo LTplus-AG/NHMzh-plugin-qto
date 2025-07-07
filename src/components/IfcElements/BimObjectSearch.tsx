@@ -133,7 +133,7 @@ const BimObjectSearch: React.FC<BimObjectSearchProps> = ({
             )}
             {option.is_external !== undefined && (
               <Chip
-                label={option.is_external ? "Außen" : "Innen"}
+                label={option.is_external ? "Aussen" : "Innen"}
                 size="small"
                 variant="outlined"
                 color={option.is_external ? "secondary" : "default"}
