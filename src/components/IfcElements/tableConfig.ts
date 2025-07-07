@@ -49,16 +49,16 @@ export const TABLE_COLUMNS: ColumnConfig[] = [
   {
     key: "ebene",
     label: "Ebene",
-    flex: "0 1 120px",
-    minWidth: "80px",
+    flex: "0 1 180px",
+    minWidth: "140px",
     align: "left",
     sortable: true,
   },
   {
     key: "menge",
     label: "Menge",
-    flex: "0 0 140px",
-    minWidth: "120px",
+    flex: "0 0 160px",
+    minWidth: "140px",
     align: "right",
     sortable: true,
   },
@@ -70,7 +70,7 @@ export const tableStyles = {
     width: "100%",
     borderCollapse: "collapse" as const,
     tableLayout: "fixed" as const,
-    minWidth: "800px", // Add minimum width to prevent shrinking
+    minWidth: "900px", // Add minimum width to prevent shrinking
     "& thead, & tbody": {
       display: "block",
       width: "100%",
@@ -79,7 +79,7 @@ export const tableStyles = {
     "& tr": {
       display: "flex",
       width: "100%",
-      minWidth: "800px", // Fixed minimum width for all rows
+      minWidth: "900px", // Fixed minimum width for all rows
     },
   },
   container: {
@@ -92,13 +92,14 @@ export const tableStyles = {
   headerRow: {
     display: "flex",
     width: "100%",
-    minWidth: "800px", // Fixed minimum width
+    minWidth: "1000px", // Updated to match root minWidth
     position: "sticky" as const,
     top: 0,
     zIndex: 100,
-    backgroundColor: "#fff",
+    backgroundColor: "background.paper",
     borderBottom: "2px solid rgba(0, 0, 0, 0.12)",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+    minHeight: "64px", // Increased header height
   },
   dataRow: {
     display: "flex",
@@ -131,9 +132,9 @@ export const tableStyles = {
   dataCell: {
     display: "flex",
     alignItems: "center",
-    padding: "8px",
+    padding: "16px 24px", // Consistent with header padding
     fontSize: "0.875rem",
-    borderBottom: "1px solid rgba(0, 0, 0, 0.12)",
+    borderBottom: "1px solid rgba(0, 0, 0, 0.08)", // Lighter border
     overflow: "hidden",
     position: "relative" as const,
     "& > *": {
@@ -179,4 +180,128 @@ export const responsiveBreakpoints = {
   md: 900,
   lg: 1200,
   xl: 1536,
+};
+
+// Group row layout configuration following web best practices
+export const groupRowConfig = {
+  mainGroup: {
+    expandColumn: {
+      width: "56px",
+      minWidth: "56px",
+      maxWidth: "56px",
+      padding: "12px 8px",
+    },
+    contentColumn: {
+      flex: "1 1 auto",
+      minWidth: "400px",
+      padding: "16px 24px",
+    },
+    countsColumn: {
+      width: "280px",
+      minWidth: "280px",
+      padding: "16px 24px",
+      textAlign: "right" as const,
+    },
+    statusColumn: {
+      width: "120px",
+      minWidth: "120px",
+      padding: "16px 16px",
+      textAlign: "center" as const,
+    }
+  },
+  subGroup: {
+    expandColumn: {
+      width: "56px",
+      minWidth: "56px", 
+      maxWidth: "56px",
+      padding: "12px 8px",
+    },
+    codeColumn: {
+      flex: "1 1 auto",
+      minWidth: "300px",
+      padding: "16px 24px",
+    },
+    emptyColumn: {
+      width: "120px",
+      minWidth: "120px",
+      padding: "16px 16px",
+    },
+    countsColumn: {
+      width: "280px",
+      minWidth: "280px",
+      padding: "16px 24px",
+      textAlign: "right" as const,
+    },
+    statusColumn: {
+      width: "120px",
+      minWidth: "120px",
+      padding: "16px 16px",
+      textAlign: "center" as const,
+    }
+  }
+};
+
+// Warning badge styling following Material Design principles
+export const warningBadgeStyles = {
+  backgroundColor: 'rgba(255, 152, 0, 0.08)',
+  borderRadius: 2,
+  px: 2,
+  py: 1,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 1,
+  border: '1px solid rgba(255, 152, 0, 0.2)',
+};
+
+// Typography styles for group information following web typography best practices
+export const groupInfoStyles = {
+  primary: {
+    fontSize: "0.875rem", // 14px
+    fontWeight: 500,
+    lineHeight: 1.5,
+    color: "text.secondary",
+  },
+  secondary: {
+    fontSize: "0.75rem", // 12px
+    fontWeight: 400,
+    lineHeight: 1.4,
+    color: "text.secondary",
+  },
+  warning: {
+    fontSize: '0.75rem', // 12px
+    fontWeight: 600,
+    lineHeight: 1.4,
+    color: 'warning.main',
+  },
+  title: {
+    fontSize: "1rem", // 16px
+    fontWeight: 600,
+    lineHeight: 1.5,
+    color: "text.primary",
+  },
+  subtitle: {
+    fontSize: "0.875rem", // 14px
+    fontWeight: 500,
+    lineHeight: 1.5,
+    color: "text.primary",
+  }
+};
+
+// Table spacing configuration following 8px grid system
+export const tableSpacing = {
+  cellPadding: {
+    vertical: 16,
+    horizontal: 24,
+  },
+  rowHeight: {
+    compact: 48,
+    comfortable: 56,
+    spacious: 64,
+  },
+  borderRadius: 8,
+  iconSize: {
+    small: 16,
+    medium: 20,
+    large: 24,
+  }
 }; 

@@ -9,6 +9,7 @@ import {
 } from "@mui/material";
 import InfoIcon from "@mui/icons-material/Info";
 import { IFCElement } from "../../types/types";
+import { isZeroQuantity, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 
 interface MaterialsTableProps {
   element: IFCElement;
@@ -99,23 +100,32 @@ const MaterialsTable: React.FC<MaterialsTableProps> = ({
           </TableRow>
         </TableHead>
         <TableBody>
-          {materials.map((material, materialIndex) => (
-            <TableRow key={`material-${uniqueKey}-${materialIndex}`}>
-              <TableCell component="th" scope="row">
-                {material.name}
-              </TableCell>
-              <TableCell>
-                {material.fraction !== undefined
-                  ? formatPercentage(material.fraction)
-                  : "-"}
-              </TableCell>
-              <TableCell>
-                {material.volume !== undefined
-                  ? formatNumber(material.volume)
-                  : "-"}
-              </TableCell>
-            </TableRow>
-          ))}
+          {materials.map((material, materialIndex) => {
+            const hasZeroVolume = isZeroQuantity(material.volume);
+            return (
+              <TableRow 
+                key={`material-${uniqueKey}-${materialIndex}`}
+                sx={getZeroQuantityStyles(hasZeroVolume)}
+              >
+                <TableCell component="th" scope="row">
+                  {material.name}
+                </TableCell>
+                <TableCell>
+                  {material.fraction !== undefined
+                    ? formatPercentage(material.fraction)
+                    : "-"}
+                </TableCell>
+                <TableCell sx={{
+                  fontWeight: hasZeroVolume ? 'bold' : 'normal',
+                  color: hasZeroVolume ? 'warning.main' : 'inherit'
+                }}>
+                  {material.volume !== undefined
+                    ? formatNumber(material.volume)
+                    : "-"}
+                </TableCell>
+              </TableRow>
+            );
+          })}
           {materials.length === 0 && (
             <TableRow>
               <TableCell colSpan={3}>

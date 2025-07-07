@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { IFCElement } from "../../../types/types";
 import { EbkpGroup, HierarchicalEbkpGroup } from "../types";
+import { hasZeroQuantityInAnyType } from "../../../utils/zeroQuantityHighlight";
 
 // Main EBKP group names mapping
 const EBKP_MAIN_GROUP_NAMES: Record<string, string> = {
@@ -215,12 +216,27 @@ export const useEbkpGroups = (
             const firstElement = elementsInTypeGroup[0];
             const groupElements = elementsInTypeGroup.slice(1);
 
+            // Check if any element in the group has zero quantities (including materials)
+            const hasZeroQuantityInGroup = elementsInTypeGroup.some(el => {
+              const quantityForCheck = {
+                quantity: el.quantity?.value,
+                area: el.area,
+                length: el.length,
+                volume: el.volume,
+                type: el.type,
+              };
+              
+              // Use the same zero quantity detection logic as the UI
+              return hasZeroQuantityInAnyType(quantityForCheck);
+            });
+
             const mergedElement: IFCElement = {
               ...firstElement,
               // The ID will be kept from firstElement
               global_id: firstElement.global_id,
               groupedElements: groupElements.length,
               hasPropertyDifferences: false,
+              hasZeroQuantityInGroup, // Store this information for highlighting
             };
 
             // Add grouped element IDs for reference

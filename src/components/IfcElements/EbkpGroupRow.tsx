@@ -15,8 +15,9 @@ import { IFCElement } from "../../types/types";
 import VirtualizedElementList from "./VirtualizedElementList";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
-import { tableStyles } from "./tableConfig";
+import { tableStyles, groupRowConfig, warningBadgeStyles, groupInfoStyles, tableSpacing } from "./tableConfig";
 import { checkPersistedEdit } from "../../utils/elementEditChecks";
+import { hasZeroQuantityInAnyType, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 
 interface EbkpGroup {
   code: string;
@@ -71,6 +72,40 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
   // Check if any element in the group has PERSISTED edits
   const hasPersistedEdits = useMemo(
     () => group.elements.some((el) => checkPersistedEdit(el)),
+    [group.elements]
+  );
+
+  // Check if any element in the group has zero quantities
+  const hasZeroQuantities = useMemo(
+    () => group.elements.some((el) => {
+      const quantityForCheck = {
+        quantity: el.quantity?.value,
+        area: el.area,
+        length: el.length,
+        volume: el.volume,
+        hasZeroQuantityInGroup: el.hasZeroQuantityInGroup,
+        groupedElements: el.groupedElements,
+        type: el.type,
+      };
+      return hasZeroQuantityInAnyType(quantityForCheck);
+    }),
+    [group.elements]
+  );
+
+  // Count elements with zero quantities for display
+  const elementsWithZeroQuantities = useMemo(
+    () => group.elements.filter((el) => {
+      const quantityForCheck = {
+        quantity: el.quantity?.value,
+        area: el.area,
+        length: el.length,
+        volume: el.volume,
+        hasZeroQuantityInGroup: el.hasZeroQuantityInGroup,
+        groupedElements: el.groupedElements,
+        type: el.type,
+      };
+      return hasZeroQuantityInAnyType(quantityForCheck);
+    }).length,
     [group.elements]
   );
 
@@ -130,7 +165,7 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
   return (
     <React.Fragment>
       <TableRow
-        sx={{
+        sx={getZeroQuantityStyles(hasZeroQuantities, {
           ...tableStyles.dataRow,
           "&:hover": { 
             backgroundColor: "rgba(25, 118, 210, 0.04)",
@@ -145,7 +180,7 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             : "inherit",
           transition: "all 0.2s ease-in-out",
           borderBottom: "2px solid rgba(0, 0, 0, 0.12)",
-        }}
+        })}
         onClick={() => toggleExpand(group.code)}
       >
         {/* Column 1: Expand - matches child table expand column */}
@@ -251,21 +286,44 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
         <TableCell
           sx={{
             ...tableStyles.dataCell,
-            flex: "0 1 120px",
-            minWidth: "80px",
+            flex: "0 0 200px",
+            minWidth: "180px",
             display: "flex",
-            alignItems: "center",
+            flexDirection: "column",
+            alignItems: "flex-end",
             py: 1.5,
             px: 1,
+            gap: 0.25
           }}
         >
           <Typography variant="body2" sx={{ 
             fontWeight: 600, 
             color: "primary.main",
             whiteSpace: "nowrap",
+            fontSize: "0.9rem"
           }}>
             {group.elements.length} {viewType === "grouped" ? "Typen" : "Elemente"}
           </Typography>
+          {elementsWithZeroQuantities > 0 && (
+            <Box sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 0.5,
+              backgroundColor: 'rgba(255, 152, 0, 0.08)',
+              borderRadius: 0.75,
+              px: 0.75,
+              py: 0.25
+            }}>
+              <Typography variant="caption" sx={{ 
+                color: 'warning.main', 
+                fontWeight: 'bold',
+                fontSize: '0.7rem',
+                whiteSpace: 'nowrap'
+              }}>
+                ⚠ {elementsWithZeroQuantities} ohne Mengen
+              </Typography>
+            </Box>
+          )}
         </TableCell>
 
         {/* Column 5: Status - matches child menge column */}
