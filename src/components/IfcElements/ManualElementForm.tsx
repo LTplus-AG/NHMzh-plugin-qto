@@ -73,18 +73,18 @@ const QUANTITY_TYPES = [
 
 // <<< Mapping from IFC Class to prioritized eBKP-H codes >>>
 const ifcClassToEbkpPriority: { [ifcClass: string]: string[] } = {
-  IfcWall: ["C2.1", "C2.2", "E1.1", "G1.1"],
-  IfcWallStandardCase: ["C2.1", "C2.2", "E1.1", "G1.1"],
-  IfcSlab: ["C2.4", "C1.1", "G2.1", "G2.2"],
-  IfcBeam: ["C2.4", "C2.3"],
-  IfcBeamStandardCase: ["C2.4", "C2.3"],
-  IfcColumn: ["C2.3"],
-  IfcColumnStandardCase: ["C2.3"],
-  IfcWindow: ["E1.3"],
-  IfcDoor: ["E1.3", "G1.2"],
-  IfcRoof: ["C3.1", "F1.1", "C3.2"],
-  IfcCovering: ["G2.2", "G3.2", "F1.1"],
-  IfcFooting: ["C1.2"],
+  IfcWall: ["C02.01", "C02.02", "E01.01", "G01.01"],
+  IfcWallStandardCase: ["C02.01", "C02.02", "E01.01", "G01.01"],
+  IfcSlab: ["C02.04", "C01.01", "G02.01", "G02.02"],
+  IfcBeam: ["C02.04", "C02.03"],
+  IfcBeamStandardCase: ["C02.04", "C02.03"],
+  IfcColumn: ["C02.03"],
+  IfcColumnStandardCase: ["C02.03"],
+  IfcWindow: ["E01.03"],
+  IfcDoor: ["E01.03", "G01.02"],
+  IfcRoof: ["C03.01", "F01.01", "C03.02"],
+  IfcCovering: ["G02.02", "G03.02", "F01.01"],
+  IfcFooting: ["C01.02"],
 };
 
 // Type for the form data state, aligning with ManualElementInput but using FormMaterialState

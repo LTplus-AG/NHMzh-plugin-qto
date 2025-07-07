@@ -13,15 +13,19 @@ import {
   Box,
   Tooltip,
   Button,
+  IconButton,
 } from "@mui/material";
 import { IFCElement } from "../types/types";
 import EbkpGroupRow from "./IfcElements/EbkpGroupRow";
+import MainEbkpGroupRow from "./IfcElements/MainEbkpGroupRow";
 import ElementsHeader from "./IfcElements/ElementsHeader";
 import StatusLegend from "./IfcElements/StatusLegend";
 import ViewModeToggle from "./IfcElements/ViewModeToggle";
 import { EditedQuantity } from "./IfcElements/types";
 import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import { EbkpGroup } from "./IfcElements/types";
+import { HierarchicalEbkpGroup } from "./IfcElements/types";
 import { tableStyles, TABLE_COLUMNS, getColumnStyle } from "./IfcElements/tableConfig";
 
 // --- Status Definitions ---
@@ -78,6 +82,7 @@ interface IfcElementsListProps {
   onAddManualClick: () => void;
   isAddManualDisabled: boolean;
   ebkpGroups: EbkpGroup[];
+  hierarchicalGroups?: HierarchicalEbkpGroup[];
   uniqueClassifications: Array<{ id: string; name: string; system: string }>;
   classificationFilter: string[];
   setClassificationFilter: (value: string[]) => void;
@@ -98,12 +103,14 @@ const IfcElementsList = ({
   onAddManualClick,
   isAddManualDisabled,
   ebkpGroups,
+  hierarchicalGroups,
   uniqueClassifications,
   classificationFilter,
   setClassificationFilter,
   handleEditManualClick,
   openDeleteConfirm,
 }: IfcElementsListProps) => {
+  const [expandedMainGroups, setExpandedMainGroups] = useState<string[]>([]);
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
   const [_selectedElement, setSelectedElement] = useState<IFCElement | null>(
@@ -182,6 +189,17 @@ const IfcElementsList = ({
       );
 
       if (ebkpGroup) {
+        // If using hierarchical view, also expand the main group
+        if (hierarchicalGroups) {
+          const mainGroup = hierarchicalGroups.find((mg) =>
+            mg.subGroups.some((sg) => sg.code === ebkpGroup.code)
+          );
+          
+          if (mainGroup && !expandedMainGroups.includes(mainGroup.mainGroup)) {
+            setExpandedMainGroups((prev) => [...prev, mainGroup.mainGroup]);
+          }
+        }
+
         // Expand the EBKP group if not already expanded
         if (!expandedEbkp.includes(ebkpGroup.code)) {
           setExpandedEbkp((prev) => [...prev, ebkpGroup.code]);
@@ -210,6 +228,15 @@ const IfcElementsList = ({
     }
   };
 
+  const toggleExpandMainGroup = (mainGroup: string) => {
+    setExpandedMainGroups((prev) => {
+      if (prev.includes(mainGroup)) {
+        return prev.filter((group) => group !== mainGroup);
+      }
+      return [...prev, mainGroup];
+    });
+  };
+
   const toggleExpandEbkp = (code: string) => {
     setExpandedEbkp((prev) => {
       // If code is already in the array, remove it (collapse)
@@ -231,6 +258,84 @@ const IfcElementsList = ({
       return [...prev, id];
     });
   };
+
+  // Determine if all groups are expanded
+  const areAllGroupsExpanded = useMemo(() => {
+    if (hierarchicalGroups) {
+      // Check if all main groups are expanded
+      const allMainGroupsExpanded = hierarchicalGroups.every(group => 
+        expandedMainGroups.includes(group.mainGroup)
+      );
+      
+      // Check if all sub-groups are expanded
+      const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+        group.subGroups.map(subGroup => subGroup.code)
+      );
+      const allSubGroupsExpanded = allSubGroupsCodes.every(code => 
+        expandedEbkp.includes(code)
+      );
+      
+      return allMainGroupsExpanded && allSubGroupsExpanded;
+    } else {
+      // For flat view, check if all EBKP groups are expanded
+      return ebkpGroups.every(group => expandedEbkp.includes(group.code));
+    }
+  }, [hierarchicalGroups, ebkpGroups, expandedMainGroups, expandedEbkp]);
+
+  // Function to expand all groups
+  const expandAllGroups = () => {
+    if (hierarchicalGroups) {
+      // Expand all main groups
+      const allMainGroups = hierarchicalGroups.map(group => group.mainGroup);
+      setExpandedMainGroups(allMainGroups);
+      
+      // Expand all sub-groups
+      const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+        group.subGroups.map(subGroup => subGroup.code)
+      );
+      setExpandedEbkp(allSubGroupsCodes);
+    } else {
+      // For flat view, expand all EBKP groups
+      const allCodes = ebkpGroups.map(group => group.code);
+      setExpandedEbkp(allCodes);
+    }
+  };
+
+  // Function to collapse all groups
+  const collapseAllGroups = () => {
+    setExpandedMainGroups([]);
+    setExpandedEbkp([]);
+    setExpandedElements([]); // Also collapse all elements
+  };
+
+  // Toggle expand/collapse all
+  const toggleExpandAll = () => {
+    if (areAllGroupsExpanded) {
+      collapseAllGroups();
+    } else {
+      expandAllGroups();
+    }
+  };
+
+  // Count expanded groups for dynamic header display
+  const expandedGroupsCount = useMemo(() => {
+    if (hierarchicalGroups) {
+      return expandedMainGroups.length;
+    }
+    return expandedEbkp.length;
+  }, [hierarchicalGroups, expandedMainGroups, expandedEbkp]);
+
+  const totalGroupsCount = useMemo(() => {
+    if (hierarchicalGroups) {
+      return hierarchicalGroups.length;
+    }
+    return ebkpGroups.length;
+  }, [hierarchicalGroups, ebkpGroups]);
+
+  // Count total elements
+  const totalFilteredElements = hierarchicalGroups
+    ? hierarchicalGroups.reduce((sum, group) => sum + group.totalElements, 0)
+    : ebkpGroups.reduce((sum, group) => sum + group.elements.length, 0);
 
   // If loading, show a loading indicator
   if (loading) {
@@ -260,12 +365,6 @@ const IfcElementsList = ({
   if (elements.length === 0) {
     return null;
   }
-
-  // Count total elements in all EBKP groups
-  const totalFilteredElements = ebkpGroups.reduce(
-    (sum, group) => sum + group.elements.length,
-    0
-  );
 
   return (
     <div
@@ -308,6 +407,7 @@ const IfcElementsList = ({
           >
             Elemente ({totalFilteredElements})
           </Typography>
+
           <Tooltip
             title={
               isAddManualDisabled
@@ -375,31 +475,72 @@ const IfcElementsList = ({
             minWidth: "900px", // Ensure table doesn't shrink below this
           }}>
             <TableHead>
-              <TableRow sx={tableStyles.headerRow}>
+              <TableRow sx={{ ...tableStyles.headerRow, backgroundColor: "rgba(0, 0, 0, 0.04)" }}>
                 <TableCell 
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "0 0 48px",
                     minWidth: "48px",
-                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                    py: 2,
+                    fontWeight: 'bold',
                   }}
-                />
+                >
+                  <Tooltip
+                    title={areAllGroupsExpanded ? "Alle zuklappen" : "Alle aufklappen"}
+                  >
+                    <IconButton
+                      size="small"
+                      onClick={toggleExpandAll}
+                      sx={{
+                        p: 0.5,
+                        color: "primary.main",
+                        backgroundColor: areAllGroupsExpanded ? "rgba(25, 118, 210, 0.08)" : "transparent",
+                        "&:hover": {
+                          backgroundColor: "rgba(25, 118, 210, 0.12)",
+                        },
+                        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                        transform: areAllGroupsExpanded ? "rotate(180deg)" : "rotate(0deg)",
+                      }}
+                    >
+                      <ChevronRightIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </TableCell>
                 <TableCell 
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "1 1 480px", // Combined width of type + GUID columns
                     minWidth: "320px",
-                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                    py: 2,
+                    fontWeight: 'bold',
                   }}
                 >
-                  EBKP / Bezeichnung
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <span>{hierarchicalGroups ? "EBKP Gruppe / Bezeichnung" : "EBKP / Bezeichnung"}</span>
+                    {expandedGroupsCount > 0 && (
+                      <Typography 
+                        variant="caption" 
+                        sx={{ 
+                          color: "primary.main",
+                          backgroundColor: "rgba(25, 118, 210, 0.08)",
+                          px: 1,
+                          py: 0.25,
+                          borderRadius: 1,
+                          fontWeight: 500,
+                        }}
+                      >
+                        {expandedGroupsCount}/{totalGroupsCount} aufgeklappt
+                      </Typography>
+                    )}
+                  </Box>
                 </TableCell>
                 <TableCell 
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "0 1 160px",
                     minWidth: "100px",
-                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                    py: 2,
+                    fontWeight: 'bold',
                   }}
                 />
                 <TableCell 
@@ -409,7 +550,8 @@ const IfcElementsList = ({
                     minWidth: "80px",
                     display: "flex",
                     alignItems: "center",
-                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                    py: 2,
+                    fontWeight: 'bold',
                   }}
                 >
                   {viewType === "grouped" ? "Anzahl Typen" : "Anzahl Elemente"}
@@ -422,30 +564,58 @@ const IfcElementsList = ({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    background: "linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%)",
+                    py: 2,
+                    fontWeight: 'bold',
                   }}
                 >
-                  Status
+                  Status {presentStatuses.length > 0 && 
+                    <Typography variant="caption" sx={{ ml: 0.5, color: "text.secondary" }}>
+                      ({presentStatuses.length})
+                    </Typography>
+                  }
                 </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {ebkpGroups.map((group) => (
-                <EbkpGroupRow
-                  key={`ebkp-${group.code}`}
-                  group={group}
-                  isExpanded={expandedEbkp.includes(group.code)}
-                  toggleExpand={toggleExpandEbkp}
-                  expandedElements={expandedElements}
-                  toggleExpandElement={toggleExpandElement}
-                  editedElements={editedElements}
-                  handleQuantityChange={handleQuantityChange}
-                  getElementDisplayStatus={getElementDisplayStatus}
-                  handleEditManualClick={handleEditManualClick}
-                  openDeleteConfirm={openDeleteConfirm}
-                  viewType={viewType}
-                />
-              ))}
+              {hierarchicalGroups ? (
+                // Use hierarchical view
+                hierarchicalGroups.map((mainGroup) => (
+                  <MainEbkpGroupRow
+                    key={`main-${mainGroup.mainGroup}`}
+                    group={mainGroup}
+                    isExpanded={expandedMainGroups.includes(mainGroup.mainGroup)}
+                    toggleExpand={toggleExpandMainGroup}
+                    expandedEbkp={expandedEbkp}
+                    toggleExpandEbkp={toggleExpandEbkp}
+                    expandedElements={expandedElements}
+                    toggleExpandElement={toggleExpandElement}
+                    editedElements={editedElements}
+                    handleQuantityChange={handleQuantityChange}
+                    getElementDisplayStatus={getElementDisplayStatus}
+                    handleEditManualClick={handleEditManualClick}
+                    openDeleteConfirm={openDeleteConfirm}
+                    viewType={viewType}
+                  />
+                ))
+              ) : (
+                // Use flat view (fallback)
+                ebkpGroups.map((group) => (
+                  <EbkpGroupRow
+                    key={`ebkp-${group.code}`}
+                    group={group}
+                    isExpanded={expandedEbkp.includes(group.code)}
+                    toggleExpand={toggleExpandEbkp}
+                    expandedElements={expandedElements}
+                    toggleExpandElement={toggleExpandElement}
+                    editedElements={editedElements}
+                    handleQuantityChange={handleQuantityChange}
+                    getElementDisplayStatus={getElementDisplayStatus}
+                    handleEditManualClick={handleEditManualClick}
+                    openDeleteConfirm={openDeleteConfirm}
+                    viewType={viewType}
+                  />
+                ))
+              )}
 
               {ebkpGroups.length === 0 && (
                 <TableRow>

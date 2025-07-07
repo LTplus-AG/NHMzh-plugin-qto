@@ -81,7 +81,7 @@ const MainPage = () => {
     resetEdits,
   } = useElementEditing();
 
-  const { ebkpGroups, uniqueClassifications } = useEbkpGroups(
+  const { ebkpGroups, hierarchicalGroups, uniqueClassifications } = useEbkpGroups(
     ifcElements,
     classificationFilter,
     viewType
@@ -1012,6 +1012,7 @@ const MainPage = () => {
                 !backendConnected || !selectedProject || ifcLoading
               }
               ebkpGroups={ebkpGroups}
+          hierarchicalGroups={hierarchicalGroups}
               uniqueClassifications={uniqueClassifications}
               classificationFilter={classificationFilter}
               setClassificationFilter={handleClassificationFilterChange}

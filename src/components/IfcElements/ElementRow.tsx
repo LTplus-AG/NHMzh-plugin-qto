@@ -9,8 +9,7 @@ import {
   Tooltip,
   TextField,
 } from "@mui/material";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import EditIcon from "@mui/icons-material/Edit";
 import BuildIcon from "@mui/icons-material/Build";
 import EditNoteIcon from "@mui/icons-material/EditNote";
@@ -20,6 +19,7 @@ import { EditedQuantity } from "./types";
 import { ElementDisplayStatus } from "../IfcElementsList";
 import CopyableText from "../ui/CopyableText";
 import { TABLE_COLUMNS, getColumnStyle, tableStyles } from "./tableConfig";
+import { hasZeroQuantityInAnyType, getZeroQuantityStyles, getZeroQuantityTooltip } from "../../utils/zeroQuantityHighlight";
 
 interface ElementRowProps {
   element: IFCElement;
@@ -256,12 +256,21 @@ const ElementRow: React.FC<ElementRowProps> = ({
 
   // <<< Calculate display value outside the return statement >>>
   const displayValue = getDisplayValue();
+  
+  // Check if element has zero quantity - create a compatible object
+  const quantityForCheck = {
+    quantity: element.quantity?.value,
+    area: element.area,
+    length: element.length,
+    volume: element.volume,
+  };
+  const hasZeroQuantity = hasZeroQuantityInAnyType(quantityForCheck);
 
   return (
     <React.Fragment>
       <TableRow
         id={`element-row-${element.global_id}`}
-        sx={{
+        sx={getZeroQuantityStyles(hasZeroQuantity, {
           ...tableStyles.dataRow,
           "&:hover": { backgroundColor: "rgba(25, 118, 210, 0.04)" },
           cursor: "pointer",
@@ -277,15 +286,17 @@ const ElementRow: React.FC<ElementRowProps> = ({
             ? "rgba(0, 0, 0, 0.02)" // Zebra stripe for odd rows
             : "inherit", // Default
           transition: "background-color 0.3s ease",
-        }}
+        })}
         onClick={() => toggleExpand(element.global_id)}
+        title={hasZeroQuantity ? getZeroQuantityTooltip(element.type_name || element.name || element.type) : undefined}
       >
         {/* Column 1: Expand */}
         <TableCell
           sx={{
             ...tableStyles.dataCell,
             ...getColumnStyle(TABLE_COLUMNS[0]),
-            padding: "0", // Override for expand button cell
+            py: 1,
+            px: 1,
             justifyContent: "center",
           }}
         >
@@ -297,9 +308,15 @@ const ElementRow: React.FC<ElementRowProps> = ({
                 e.stopPropagation();
                 toggleExpand(element.global_id);
               }}
-              sx={tableStyles.expandButton}
+              sx={{
+                ...tableStyles.expandButton,
+                p: 0.5,
+              }}
             >
-              {isExpanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                              <ChevronRightIcon sx={{ 
+                  transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s ease'
+                }} />
             </IconButton>
           )}
           {!isExpanded && element.is_manual && (
@@ -325,6 +342,8 @@ const ElementRow: React.FC<ElementRowProps> = ({
           sx={{
             ...tableStyles.dataCell,
             ...getColumnStyle(TABLE_COLUMNS[1]),
+            py: 1,
+            px: 1,
           }}
         >
           <Box sx={{ 
@@ -387,6 +406,8 @@ const ElementRow: React.FC<ElementRowProps> = ({
           sx={{
             ...tableStyles.dataCell,
             ...getColumnStyle(TABLE_COLUMNS[2]),
+            py: 1,
+            px: 1,
           }}
         >
           <CopyableText text={element.global_id} showFullText={true} />
@@ -397,6 +418,8 @@ const ElementRow: React.FC<ElementRowProps> = ({
           sx={{
             ...tableStyles.dataCell,
             ...getColumnStyle(TABLE_COLUMNS[3]),
+            py: 1,
+            px: 1,
           }}
         >
           <Typography sx={{
@@ -414,6 +437,8 @@ const ElementRow: React.FC<ElementRowProps> = ({
           sx={{
             ...tableStyles.dataCell,
             ...getColumnStyle(TABLE_COLUMNS[4]),
+            py: 1,
+            px: 1,
           }}
         >
           <Typography sx={{
@@ -431,6 +456,8 @@ const ElementRow: React.FC<ElementRowProps> = ({
           sx={{
             ...tableStyles.dataCell,
             ...getColumnStyle(TABLE_COLUMNS[5]),
+            py: 1,
+            px: 1,
             ...((isLocallyEdited || isPersistedEdit) && {
               backgroundColor: "rgba(255, 152, 0, 0.08)",
             }),

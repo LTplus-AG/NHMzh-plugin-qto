@@ -8,7 +8,7 @@ import {
   Box,
   Tooltip,
 } from "@mui/material";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import EditIcon from "@mui/icons-material/Edit";
 import BuildIcon from "@mui/icons-material/Build";
 import { IFCElement } from "../../types/types";
@@ -16,6 +16,7 @@ import VirtualizedElementList from "./VirtualizedElementList";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
 import { tableStyles } from "./tableConfig";
+import { checkPersistedEdit } from "../../utils/elementEditChecks";
 
 interface EbkpGroup {
   code: string;
@@ -23,21 +24,7 @@ interface EbkpGroup {
   elements: IFCElement[];
 }
 
-const checkPersistedEdit = (element: IFCElement): boolean => {
-  const currentVal = element.quantity?.value;
-  const originalVal = element.original_quantity?.value;
-  if (
-    currentVal !== null &&
-    currentVal !== undefined &&
-    !isNaN(currentVal) &&
-    originalVal !== null &&
-    originalVal !== undefined &&
-    !isNaN(originalVal)
-  ) {
-    return Math.abs(currentVal - originalVal) > 1e-9;
-  }
-  return false;
-};
+
 
 interface EbkpGroupRowProps {
   group: EbkpGroup;
@@ -172,7 +159,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            padding: 0,
+            py: 1.5,
+            px: 1,
           }}
         >
           <IconButton
@@ -184,11 +172,12 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             }}
             sx={{
               ...tableStyles.expandButton,
+              p: 0.5,
               transition: "transform 0.2s ease",
-              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+              transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
             }}
           >
-            <KeyboardArrowDownIcon />
+            <ChevronRightIcon />
           </IconButton>
         </TableCell>
 
@@ -198,6 +187,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             ...tableStyles.dataCell,
             flex: "1 1 480px", // Combined flex of type + GUID columns
             minWidth: "320px",
+            py: 1.5,
+            px: 2,
           }}
         >
           <Box sx={{ 
@@ -251,6 +242,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             ...tableStyles.dataCell,
             flex: "0 1 160px",
             minWidth: "100px",
+            py: 1.5,
+            px: 1,
           }}
         />
 
@@ -262,6 +255,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             minWidth: "80px",
             display: "flex",
             alignItems: "center",
+            py: 1.5,
+            px: 1,
           }}
         >
           <Typography variant="body2" sx={{ 
@@ -282,6 +277,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            py: 1.5,
+            px: 1,
           }}
         >
           <Tooltip title={statusLabel} arrow>
