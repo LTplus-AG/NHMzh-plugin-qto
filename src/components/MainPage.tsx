@@ -35,6 +35,10 @@ import { v4 as uuidv4 } from "uuid";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { BatchElementData } from "../types/batchUpdateTypes";
 import { ElementQuantityUpdate } from "../api/types";
+import { useExcelDialog } from "../hooks/useExcelDialog";
+import { ExcelService, ExcelImportData } from "../utils/excelService";
+import SmartExcelButton from "./SmartExcelButton";
+import ExcelImportDialog from "./ExcelImportDialog";
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -80,6 +84,24 @@ const MainPage = () => {
     handleQuantityChange,
     resetEdits,
   } = useElementEditing();
+
+  // Excel dialog state
+  const {
+    isOpen: excelDialogOpen,
+    openDialog: openExcelDialog,
+    closeDialog: closeExcelDialog,
+    isImporting,
+    isExporting,
+    setIsExporting,
+    lastImportTime,
+    setLastImportTime,
+    lastExportTime,
+    setLastExportTime,
+    importCount,
+    setImportCount,
+    exportCount,
+    setExportCount,
+  } = useExcelDialog();
 
   const { ebkpGroups, hierarchicalGroups, uniqueClassifications } = useEbkpGroups(
     ifcElements,
@@ -634,6 +656,122 @@ const MainPage = () => {
     setDeleteConfirmOpen(false);
   };
 
+  // Excel import/export handlers
+  const handleExcelExport = async (): Promise<void> => {
+    setIsExporting(true);
+    try {
+      await ExcelService.exportToExcel(ifcElements, {
+        fileName: `mengendaten-${selectedProject}-${new Date().toISOString().split('T')[0]}`,
+        includeGuid: true,
+        includeQuantities: true,
+        includeUnits: true,
+        includeMaterials: true
+      });
+      setLastExportTime(new Date());
+      setExportCount(exportCount + 1);
+    } catch (error) {
+      console.error('Excel export failed:', error);
+      setKafkaError('Export fehlgeschlagen. Bitte versuchen Sie es erneut.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExcelImport = () => {
+    openExcelDialog();
+  };
+
+  const handleExcelImportComplete = (importedData: ExcelImportData[]) => {
+    console.log('Excel import completed with', importedData.length, 'elements');
+    setLastImportTime(new Date());
+    setImportCount(importCount + 1);
+    
+    // Update local elements with imported data
+    setIfcElements(prevElements => {
+      const updatedElements = [...prevElements];
+      
+      importedData.forEach(importItem => {
+        const existingIndex = updatedElements.findIndex(el => el.global_id === importItem.global_id);
+        
+        if (existingIndex !== -1) {
+          // Update existing element
+          const updatedElement = { ...updatedElements[existingIndex] };
+          
+          if (importItem.quantity) {
+            updatedElement.quantity = importItem.quantity;
+          }
+          if (importItem.area !== undefined) {
+            updatedElement.area = importItem.area;
+          }
+          if (importItem.length !== undefined) {
+            updatedElement.length = importItem.length;
+          }
+          if (importItem.volume !== undefined) {
+            updatedElement.volume = importItem.volume;
+          }
+          if (importItem.name) {
+            updatedElement.name = importItem.name;
+          }
+          if (importItem.type) {
+            updatedElement.type = importItem.type;
+          }
+          if (importItem.level) {
+            updatedElement.level = importItem.level;
+          }
+          if (importItem.classification_id) {
+            updatedElement.classification_id = importItem.classification_id;
+          }
+          if (importItem.classification_name) {
+            updatedElement.classification_name = importItem.classification_name;
+          }
+          if (importItem.materials) {
+            updatedElement.materials = importItem.materials;
+          }
+          
+          updatedElements[existingIndex] = updatedElement;
+        } else {
+          // Add new element
+          const newElement: LocalIFCElement = {
+            global_id: importItem.global_id,
+            name: importItem.name || '',
+            type: importItem.type || '',
+            type_name: importItem.type,
+            description: '',
+            properties: {},
+            material_volumes: null,
+            level: importItem.level || null,
+            classification_id: importItem.classification_id || null,
+            classification_name: importItem.classification_name || null,
+            classification_system: null,
+            quantity: importItem.quantity || null,
+            original_quantity: null,
+            area: importItem.area || null,
+            length: importItem.length || null,
+            volume: importItem.volume || null,
+            category: importItem.type,
+            is_structural: false,
+            is_external: false,
+            ebkph: importItem.classification_id || null,
+            materials: importItem.materials || null,
+            classification: {
+              id: importItem.classification_id,
+              name: importItem.classification_name,
+              system: null
+            },
+            status: 'active',
+            is_manual: true
+          };
+          
+          updatedElements.push(newElement);
+        }
+      });
+      
+      return updatedElements;
+    });
+    
+    setKafkaSuccess(true);
+  };
+
   const handleDeleteConfirm = async () => {
     if (!elementToDelete || !selectedProject) return;
 
@@ -960,6 +1098,20 @@ const MainPage = () => {
                 </Button>
 
                 {ifcElements.length > 0 && (
+                  <SmartExcelButton
+                    onExport={handleExcelExport}
+                    onImport={handleExcelImport}
+                    isExporting={isExporting}
+                    isImporting={isImporting}
+                    lastExportTime={lastExportTime || undefined}
+                    lastImportTime={lastImportTime || undefined}
+                    exportCount={exportCount}
+                    importCount={importCount}
+                    disabled={!backendConnected || ifcLoading}
+                  />
+                )}
+
+                {ifcElements.length > 0 && (
                   <Button
                     variant="contained"
                     color="primary"
@@ -1055,6 +1207,14 @@ const MainPage = () => {
           />
         </DialogContent>
       </Dialog>
+
+      {/* Excel Import Dialog */}
+      <ExcelImportDialog
+        open={excelDialogOpen}
+        onClose={closeExcelDialog}
+        onImportComplete={handleExcelImportComplete}
+        existingElements={ifcElements}
+      />
     </div>
   );
 };
