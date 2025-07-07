@@ -83,9 +83,9 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
     [allElements]
   );
 
-  // Check if any element in the main group has zero quantities
-  const hasZeroQuantities = useMemo(
-    () => allElements.some((el) => {
+  // Check for zero quantities - compute once and derive both values
+  const zeroQuantityElements = useMemo(
+    () => allElements.filter((el) => {
       const quantityForCheck = {
         quantity: el.quantity?.value,
         area: el.area,
@@ -99,23 +99,9 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
     }),
     [allElements]
   );
-
-  // Count elements with zero quantities for display
-  const elementsWithZeroQuantities = useMemo(
-    () => allElements.filter((el) => {
-      const quantityForCheck = {
-        quantity: el.quantity?.value,
-        area: el.area,
-        length: el.length,
-        volume: el.volume,
-        hasZeroQuantityInGroup: el.hasZeroQuantityInGroup,
-        groupedElements: el.groupedElements,
-        type: el.type,
-      };
-      return hasZeroQuantityInAnyType(quantityForCheck);
-    }).length,
-    [allElements]
-  );
+  
+  const hasZeroQuantities = zeroQuantityElements.length > 0;
+  const elementsWithZeroQuantities = zeroQuantityElements.length;
 
   // Aggregate status for the main group based on priorities
   const aggregateStatus = useMemo(() => {

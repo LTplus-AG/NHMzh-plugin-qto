@@ -254,16 +254,6 @@ const ElementRow: React.FC<ElementRowProps> = ({
     type: element.type,
   };
   const hasZeroQuantity = hasZeroQuantityInAnyType(quantityForCheck);
-  
-  // Debug logging for elements with 0 values
-  if (displayValue === "0" || displayValue === "0.000") {
-    console.log("Element with 0 value:", {
-      type: element.type,
-      displayValue: displayValue,
-      hasZeroQuantity: hasZeroQuantity,
-      quantityForCheck: quantityForCheck
-    });
-  }
 
   return (
     <React.Fragment>
