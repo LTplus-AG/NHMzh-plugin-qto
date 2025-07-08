@@ -11,14 +11,18 @@ import InfoIcon from "@mui/icons-material/Info";
 import { IFCElement } from "../../types/types";
 import { isZeroQuantity, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 
+import { EditedQuantity } from "./types";
+
 interface MaterialsTableProps {
   element: IFCElement;
   uniqueKey: string;
+  editedElement?: EditedQuantity;
 }
 
 const MaterialsTable: React.FC<MaterialsTableProps> = ({
   element,
   uniqueKey,
+  editedElement,
 }) => {
   // Function to get materials from either materials array or material_volumes object
   const getElementMaterials = (element: IFCElement) => {
@@ -45,7 +49,50 @@ const MaterialsTable: React.FC<MaterialsTableProps> = ({
     return `${(fraction * 100).toFixed(1)}%`;
   };
 
-  const materials = getElementMaterials(element);
+  const calculateAdjustedVolume = (): number | null => {
+    const materialsVolume = element.volume ?? element.original_volume ?? null;
+    if (editedElement?.newQuantity && editedElement.newQuantity.value !== null) {
+      const newVal = editedElement.newQuantity.value;
+      const qType = editedElement.newQuantity.type;
+
+      if (qType === "volume") {
+        return typeof newVal === "number" ? newVal : materialsVolume;
+      }
+
+      if (qType === "area") {
+        const baseArea = element.original_area ?? element.area;
+        if (materialsVolume !== null && baseArea && typeof newVal === "number") {
+          return materialsVolume * (newVal / baseArea);
+        }
+      }
+
+      if (qType === "length") {
+        const baseLength = element.original_length ?? element.length;
+        if (
+          materialsVolume !== null &&
+          baseLength &&
+          typeof newVal === "number"
+        ) {
+          return materialsVolume * (newVal / baseLength);
+        }
+      }
+    }
+
+    return materialsVolume;
+  };
+
+  const adjustedVolume = calculateAdjustedVolume();
+
+  const materials = getElementMaterials(element).map((mat) => {
+    if (
+      adjustedVolume !== null &&
+      mat.fraction !== undefined &&
+      typeof mat.fraction === "number"
+    ) {
+      return { ...mat, volume: mat.fraction * adjustedVolume };
+    }
+    return mat;
+  });
 
   return (
     <>
