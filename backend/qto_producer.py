@@ -10,12 +10,20 @@ from pymongo import MongoClient, UpdateOne, InsertOne
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
 from pymongo.errors import BulkWriteError
-from models import BatchElementData # Import the necessary model
+from models import BatchElementData  # Import the necessary model
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, 
+logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def _round_value(value: Any, digits: int = 5) -> Optional[float]:
+    """Helper to safely round numeric values."""
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
 
 def is_running_in_docker():
     """Check if we're running inside a Docker container"""
@@ -447,48 +455,103 @@ class MongoDBHelper:
         
         for update in updates:
             element_ifc_id = None
-            new_quantity_dict = None
             try:
-                # Access attributes directly from Pydantic model
-                element_ifc_id = update.global_id 
+                element_ifc_id = update.global_id
                 new_quantity_model = update.new_quantity
-                
-                # Check if the model and its value are valid
+
                 if not element_ifc_id or not new_quantity_model or new_quantity_model.value is None:
-                    logger.warning(f"Skipping invalid update data (missing ID or quantity value): {update.model_dump() if hasattr(update, 'model_dump') else update}") # Use model_dump if available
+                    logger.warning(
+                        f"Skipping invalid update data (missing ID or quantity value): {update.model_dump() if hasattr(update, 'model_dump') else update}"
+                    )
                     error_count += 1
                     continue
 
-                # Convert Pydantic QuantityData back to dict for MongoDB
                 new_quantity_dict = {
                     "value": new_quantity_model.value,
                     "type": new_quantity_model.type,
-                    "unit": new_quantity_model.unit
-                } if new_quantity_model else None
+                    "unit": new_quantity_model.unit,
+                }
 
-                if not new_quantity_dict: # Double check conversion
-                    logger.warning(f"Skipping update due to inability to create quantity dict for element: {element_ifc_id}")
+                filter_criteria = {"project_id": project_id, "global_id": element_ifc_id}
+                element_doc = self.db.elements.find_one(filter_criteria)
+                if not element_doc:
+                    logger.warning(
+                        f"No element found matching project {project_id} and global_id {element_ifc_id}. Update skipped."
+                    )
                     error_count += 1
                     continue
 
-                # Find the element by project_id and global_id
-                filter_criteria = {"project_id": project_id, "global_id": element_ifc_id}
-                
-                # Prepare the update operation
-                update_operation = {
-                    "$set": {
-                        "quantity": new_quantity_dict, # Use the dictionary
-                        "updated_at": datetime.now(timezone.utc)
-                    }
+                update_fields = {
+                    "quantity": new_quantity_dict,
+                    "updated_at": datetime.now(timezone.utc),
                 }
-                
-                result = self.db.elements.update_one(filter_criteria, update_operation)
-                
+
+                q_type = new_quantity_model.type
+                q_value = new_quantity_model.value
+                old_volume = element_doc.get("volume") or element_doc.get("original_volume")
+
+                if q_type == "area":
+                    update_fields["area"] = q_value
+                    old_area = element_doc.get("area") or element_doc.get("original_area")
+                    if old_volume is not None and old_area and old_area > 0:
+                        scale = q_value / old_area
+                        new_vol = old_volume * scale
+                        update_fields["volume"] = _round_value(new_vol)
+                        if isinstance(element_doc.get("materials"), list):
+                            new_mats = []
+                            for mat in element_doc["materials"]:
+                                frac = mat.get("fraction")
+                                if frac is None and old_volume:
+                                    mv = mat.get("volume")
+                                    if mv is not None:
+                                        frac = mv / old_volume
+                                if frac is not None:
+                                    mat["volume"] = _round_value(new_vol * frac)
+                                new_mats.append(mat)
+                            update_fields["materials"] = new_mats
+
+                elif q_type == "length":
+                    update_fields["length"] = q_value
+                    old_length = element_doc.get("length") or element_doc.get("original_length")
+                    if old_volume is not None and old_length and old_length > 0:
+                        scale = q_value / old_length
+                        new_vol = old_volume * scale
+                        update_fields["volume"] = _round_value(new_vol)
+                        if isinstance(element_doc.get("materials"), list):
+                            new_mats = []
+                            for mat in element_doc["materials"]:
+                                frac = mat.get("fraction")
+                                if frac is None and old_volume:
+                                    mv = mat.get("volume")
+                                    if mv is not None:
+                                        frac = mv / old_volume
+                                if frac is not None:
+                                    mat["volume"] = _round_value(new_vol * frac)
+                                new_mats.append(mat)
+                            update_fields["materials"] = new_mats
+
+                elif q_type == "volume":
+                    update_fields["volume"] = q_value
+                    if isinstance(element_doc.get("materials"), list):
+                        base_vol = old_volume
+                        if base_vol is None or base_vol == 0:
+                            base_vol = sum((m.get("volume") or 0) for m in element_doc.get("materials", [])) or 1.0
+                        new_mats = []
+                        for mat in element_doc["materials"]:
+                            frac = mat.get("fraction")
+                            if frac is None and base_vol:
+                                mv = mat.get("volume")
+                                if mv is not None:
+                                    frac = mv / base_vol
+                            if frac is not None:
+                                mat["volume"] = _round_value(q_value * frac)
+                            new_mats.append(mat)
+                        update_fields["materials"] = new_mats
+
+                result = self.db.elements.update_one(filter_criteria, {"$set": update_fields})
+
                 if result.matched_count == 0:
-                    logger.warning(f"No element found matching project {project_id} and global_id {element_ifc_id}. Update skipped.")
                     error_count += 1
-                elif result.modified_count == 0:
-                    success_count += 1 
                 else:
                     success_count += 1
                     
