@@ -61,7 +61,7 @@ const MaterialsTable: React.FC<MaterialsTableProps> = ({
 
       if (qType === "area") {
         const baseArea = element.original_area ?? element.area;
-        if (materialsVolume !== null && baseArea && typeof newVal === "number") {
+        if (materialsVolume !== null && baseArea && baseArea > 0 && typeof newVal === "number") {
           return materialsVolume * (newVal / baseArea);
         }
       }
@@ -71,6 +71,7 @@ const MaterialsTable: React.FC<MaterialsTableProps> = ({
         if (
           materialsVolume !== null &&
           baseLength &&
+          baseLength > 0 &&
           typeof newVal === "number"
         ) {
           return materialsVolume * (newVal / baseLength);
