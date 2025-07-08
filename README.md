@@ -8,7 +8,7 @@
 [![License: AGPL](https://img.shields.io/badge/License-AGPL-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
 [![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg?style=for-the-badge)](https://github.com/LTplus-AG/NHMzh-plugin-qto)
 
-A comprehensive Quantity Take-Off (QTO) module for the Nachhaltigkeitsmonitoring der Stadt Zürich (NHMzh) that extracts, manipulates, and visualizes quantities from IFC models.
+Quantity Take-Off (QTO) module for the Nachhaltigkeitsmonitoring der Stadt Zürich (NHMzh) that extracts, manipulates, and visualizes quantities from IFC models.
 
 ## 📋 Table of Contents
 
