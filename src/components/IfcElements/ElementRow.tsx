@@ -600,7 +600,11 @@ const ElementRow: React.FC<ElementRowProps> = ({
               <Typography variant="subtitle2" gutterBottom component="div">
                 Materialien
               </Typography>
-              <MaterialsTable element={element} uniqueKey={uniqueKey} />
+              <MaterialsTable
+                element={element}
+                uniqueKey={uniqueKey}
+                editedElement={editedElement}
+              />
             </Box>
           </Collapse>
         </TableCell>

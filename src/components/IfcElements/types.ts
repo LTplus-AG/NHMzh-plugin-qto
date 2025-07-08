@@ -8,11 +8,11 @@ export interface EditedQuantity {
 
   originalQuantity?: {
     value: number | null;
-    type: "area" | "length" | "count";
+    type: "area" | "length" | "count" | "volume";
   } | null;
   newQuantity?: {
     value: number | null;
-    type: "area" | "length" | "count";
+    type: "area" | "length" | "count" | "volume";
   } | null;
 }
 
