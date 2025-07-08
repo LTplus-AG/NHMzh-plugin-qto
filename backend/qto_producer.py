@@ -473,14 +473,59 @@ class MongoDBHelper:
 
                 # Find the element by project_id and global_id
                 filter_criteria = {"project_id": project_id, "global_id": element_ifc_id}
-                
-                # Prepare the update operation
-                update_operation = {
-                    "$set": {
-                        "quantity": new_quantity_dict, # Use the dictionary
-                        "updated_at": datetime.now(timezone.utc)
-                    }
+
+                # Retrieve existing element to compute scaling factors
+                existing_element = self.db.elements.find_one(filter_criteria)
+
+                # Base fields for update
+                update_fields = {
+                    "quantity": new_quantity_dict,
+                    "updated_at": datetime.now(timezone.utc),
                 }
+
+                q_type = new_quantity_model.type
+                q_value = new_quantity_model.value
+
+                if q_type == "area":
+                    update_fields["area"] = q_value
+                elif q_type == "length":
+                    update_fields["length"] = q_value
+                elif q_type == "volume":
+                    update_fields["volume"] = q_value
+
+                new_volume = None
+                if existing_element and q_value is not None:
+                    try:
+                        if q_type == "area":
+                            orig_area = existing_element.get("original_area")
+                            orig_volume = existing_element.get("original_volume")
+                            if orig_area and orig_volume:
+                                scale = q_value / orig_area
+                                new_volume = orig_volume * scale
+                        elif q_type == "length":
+                            orig_length = existing_element.get("original_length")
+                            orig_volume = existing_element.get("original_volume")
+                            if orig_length and orig_volume:
+                                scale = q_value / orig_length
+                                new_volume = orig_volume * scale
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed volume auto-adjust for element {element_ifc_id}: {e}"
+                        )
+
+                if new_volume is not None:
+                    update_fields["volume"] = new_volume
+                    materials = existing_element.get("materials", [])
+                    updated_materials = []
+                    for mat in materials:
+                        fraction = mat.get("fraction")
+                        if isinstance(fraction, (int, float)):
+                            mat["volume"] = fraction * new_volume
+                        updated_materials.append(mat)
+                    if updated_materials:
+                        update_fields["materials"] = updated_materials
+
+                update_operation = {"$set": update_fields}
                 
                 result = self.db.elements.update_one(filter_criteria, update_operation)
                 
