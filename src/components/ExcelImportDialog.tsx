@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -64,6 +64,16 @@ const ExcelImportDialog: React.FC<Props> = ({
   const [importResult, setImportResult] = useState<ExcelImportResult | null>(null);
   const [showErrors, setShowErrors] = useState(false);
   const [showWarnings, setShowWarnings] = useState(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -108,12 +118,18 @@ const ExcelImportDialog: React.FC<Props> = ({
 
     onImportComplete(importResult.data);
     setActiveStep('complete');
-    setTimeout(() => {
+    timeoutRef.current = setTimeout(() => {
       handleClose();
     }, 1500);
   };
 
   const handleClose = () => {
+    // Clear any pending timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    
     setActiveStep('file-selection');
     setSelectedFile(null);
     setImportResult(null);

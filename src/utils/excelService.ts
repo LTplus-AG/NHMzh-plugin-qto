@@ -1,5 +1,6 @@
 import * as ExcelJS from 'exceljs';
 import { IFCElement } from '../types/types';
+import { getQuantityTypeFromUnit } from '../types/excelTypes';
 
 export interface ExcelExportConfig {
   fileName: string;
@@ -253,15 +254,7 @@ export class ExcelService {
             let quantityType = 'area'; // default
             
             if (unitValue) {
-              if (unitValue.includes('m²')) {
-                quantityType = 'area';
-              } else if (unitValue.includes('m³')) {
-                quantityType = 'volume';
-              } else if (unitValue.includes('m') && !unitValue.includes('m²') && !unitValue.includes('m³')) {
-                quantityType = 'length';
-              } else if (unitValue.includes('Stk') || unitValue.includes('Stück')) {
-                quantityType = 'count';
-              }
+              quantityType = getQuantityTypeFromUnit(unitValue);
             }
             
             quantity = {
@@ -353,6 +346,6 @@ export class ExcelService {
     // Create a sample with first few elements or empty template
     const sampleElements = elements.slice(0, 5);
     
-    await this.exportToExcel(sampleElements, config);
+    await ExcelService.exportToExcel(sampleElements, config);
   }
 } 

@@ -20,7 +20,7 @@ import {
   FileUpload,
   TableView,
   CheckCircle,
-  Error,
+  Error as ErrorIcon,
   Schedule,
   KeyboardArrowDown
 } from '@mui/icons-material';
@@ -141,7 +141,7 @@ const SmartExcelButton: React.FC<Props> = ({
         };
       case 'error':
         return {
-          icon: <Error />,
+          icon: <ErrorIcon />,
           text: 'Fehler',
           color: 'error' as const,
           disabled: false
