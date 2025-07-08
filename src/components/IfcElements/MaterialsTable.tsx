@@ -11,14 +11,18 @@ import InfoIcon from "@mui/icons-material/Info";
 import { IFCElement } from "../../types/types";
 import { isZeroQuantity, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 
+import { EditedQuantity } from "./types";
+
 interface MaterialsTableProps {
   element: IFCElement;
   uniqueKey: string;
+  editedElement?: EditedQuantity;
 }
 
 const MaterialsTable: React.FC<MaterialsTableProps> = ({
   element,
   uniqueKey,
+  editedElement,
 }) => {
   // Function to get materials from either materials array or material_volumes object
   const getElementMaterials = (element: IFCElement) => {
@@ -45,7 +49,28 @@ const MaterialsTable: React.FC<MaterialsTableProps> = ({
     return `${(fraction * 100).toFixed(1)}%`;
   };
 
-  const materials = getElementMaterials(element);
+  let materials = getElementMaterials(element);
+
+  // --- Auto adjust material volumes based on edited quantity ---
+  if (
+    editedElement?.newQuantity?.value !== undefined &&
+    editedElement.originalQuantity?.value !== undefined &&
+    typeof editedElement.newQuantity.value === "number" &&
+    typeof editedElement.originalQuantity.value === "number" &&
+    editedElement.originalQuantity.value !== 0 &&
+    editedElement.newQuantity.type === editedElement.originalQuantity.type &&
+    materials.length > 0
+  ) {
+    const ratio = editedElement.newQuantity.value / editedElement.originalQuantity.value;
+    if (isFinite(ratio)) {
+      materials = materials.map((mat) => {
+        if (typeof mat.volume === "number") {
+          return { ...mat, volume: mat.volume * ratio };
+        }
+        return mat;
+      });
+    }
+  }
 
   return (
     <>
