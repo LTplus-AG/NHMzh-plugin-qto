@@ -15,7 +15,7 @@ import { IFCElement } from "../../types/types";
 import VirtualizedElementList from "./VirtualizedElementList";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
-import { tableStyles, groupRowConfig, warningBadgeStyles, groupInfoStyles, tableSpacing } from "./tableConfig";
+import { tableStyles } from "./tableConfig";
 import { checkPersistedEdit } from "../../utils/elementEditChecks";
 import { hasZeroQuantityInAnyType, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
 

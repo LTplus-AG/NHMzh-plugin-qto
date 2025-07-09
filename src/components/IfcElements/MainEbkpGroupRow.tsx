@@ -1,26 +1,25 @@
-import React, { useMemo } from "react";
-import {
-  Table,
-  TableBody,
-  TableRow,
-  TableCell,
-  IconButton,
-  Typography,
-  Collapse,
-  Box,
-  Tooltip,
-} from "@mui/material";
+import BuildIcon from "@mui/icons-material/Build";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import EditIcon from "@mui/icons-material/Edit";
-import BuildIcon from "@mui/icons-material/Build";
-import { HierarchicalEbkpGroup } from "./types";
-import EbkpGroupRow from "./EbkpGroupRow";
+import {
+  Box,
+  Collapse,
+  IconButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import React, { useMemo } from "react";
 import { IFCElement } from "../../types/types";
-import { EditedQuantity } from "./types";
-import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
-import { tableStyles, groupRowConfig, warningBadgeStyles, groupInfoStyles, tableSpacing } from "./tableConfig";
 import { checkPersistedEdit } from "../../utils/elementEditChecks";
-import { hasZeroQuantityInAnyType, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
+import { getZeroQuantityStyles, hasZeroQuantityInAnyType } from "../../utils/zeroQuantityHighlight";
+import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
+import EbkpGroupRow from "./EbkpGroupRow";
+import { tableStyles, groupRowConfig, tableSpacing } from "./tableConfig";
+import { EditedQuantity, HierarchicalEbkpGroup } from "./types";
 
 interface MainEbkpGroupRowProps {
   group: HierarchicalEbkpGroup;

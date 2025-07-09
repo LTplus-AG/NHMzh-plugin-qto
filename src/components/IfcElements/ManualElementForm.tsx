@@ -33,6 +33,7 @@ import {
   ManualQuantityInput,
 } from "../../types/manualTypes";
 import { IFCElement as LocalIFCElement } from "../../types/types";
+import logger from '../../utils/logger';
 
 // Interface for material state within the form
 interface FormMaterialState {
@@ -237,7 +238,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
         const classes = await apiClient.getTargetIfcClasses();
         setTargetIfcClasses(classes.sort());
       } catch (err) {
-        console.error("Failed to fetch IFC classes", err);
+        logger.error("Failed to fetch IFC classes", err);
       } finally {
         setIfcClassesLoading(false);
       }
@@ -538,7 +539,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
 
   const handleSubmitWithoutMaterials = () => {
     if (!isStep1Valid || !isStep2Valid) {
-      console.error("Steps 1/2 invalid");
+      logger.error("Steps 1/2 invalid");
       setStep(1);
       return;
     }
@@ -579,7 +580,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
       formData.materials.length === 0 ||
       !isStep3Valid
     ) {
-      console.error(
+      logger.error(
         "Submit triggered but form state is invalid for materials path."
       );
       if (!isStep1Valid || !isStep2Valid) setStep(1);
@@ -617,7 +618,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
         0
       );
       if (Math.abs(recalcFractionSum - 1.0) > 1e-5) {
-        console.error("Final calculated fractions do not sum to 1!");
+        logger.error("Final calculated fractions do not sum to 1!");
         setMaterialFractionError(
           "Materialanteile ergeben keine 100%. Bitte prüfen."
         );

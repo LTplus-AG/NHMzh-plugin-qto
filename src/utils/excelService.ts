@@ -96,7 +96,7 @@ export class ExcelService {
     
     // Add data rows
     elements.forEach(element => {
-      const row: any[] = [];
+      const row: (string | number | null | undefined)[] = [];
       
       if (config.includeGuid !== false) {
         row.push(element.global_id);
@@ -266,18 +266,9 @@ export class ExcelService {
         }
         
         // Parse individual measurements
-        const parseNumberValue = (value: any): number | null => {
-          if (typeof value === 'number') return value;
-          if (typeof value === 'string') {
-            const parsed = parseFloat(value.trim());
-            return isNaN(parsed) ? null : parsed;
-          }
-          return null;
-        };
-        
-        const area = parseNumberValue(row.getCell(areaIndex).value);
-        const length = parseNumberValue(row.getCell(lengthIndex).value);
-        const volume = parseNumberValue(row.getCell(volumeIndex).value);
+        const area = this.parseNumberValue(row.getCell(areaIndex).value);
+        const length = this.parseNumberValue(row.getCell(lengthIndex).value);
+        const volume = this.parseNumberValue(row.getCell(volumeIndex).value);
         
         // Parse materials if present
         let materials: Array<{name: string; fraction?: number; volume?: number; unit?: string}> | undefined;
@@ -347,5 +338,26 @@ export class ExcelService {
     const sampleElements = elements.slice(0, 5);
     
     await ExcelService.exportToExcel(sampleElements, config);
+  }
+
+  private static parseNumberValue(value: unknown): number | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    
+    // Handle number type
+    if (typeof value === 'number') {
+      return isNaN(value) ? null : value;
+    }
+    
+    // Handle string type
+    if (typeof value === 'string') {
+      const cleanValue = value.trim().replace(',', '.');
+      const parsed = parseFloat(cleanValue);
+      return isNaN(parsed) ? null : parsed;
+    }
+    
+    // Handle other types
+    return null;
   }
 } 

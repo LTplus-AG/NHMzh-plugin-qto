@@ -39,6 +39,7 @@ import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService, ExcelImportData } from "../utils/excelService";
 import SmartExcelButton from "./SmartExcelButton";
 import ExcelImportDialog from "./ExcelImportDialog";
+import logger from '../utils/logger';
 
 // Get target IFC classes from environment variable
 const TARGET_IFC_CLASSES = import.meta.env.VITE_TARGET_IFC_CLASSES
@@ -148,12 +149,12 @@ const MainPage = () => {
       setShowConnectionError(false);
     } catch (error) {
       if (retries > 0) {
-        console.warn(
+        logger.warn(
           `Backend health check failed. Retrying in 4 seconds... (${retries} retries left)`
         );
         setTimeout(() => checkBackendConnectivity(retries - 1), 4000);
       } else {
-        console.error(
+        logger.error(
           "Backend health check failed after multiple retries.",
           error
         );
@@ -173,7 +174,7 @@ const MainPage = () => {
         const fetchedProjects = projects || [];
         setProjectList(fetchedProjects);
       } catch (error) {
-        console.error("Error fetching project list:", error);
+        logger.error("Error fetching project list:", error);
         setProjectsError("Could not load project list.");
         setProjectList([]);
         setSelectedProject("");
@@ -276,7 +277,7 @@ const MainPage = () => {
       setIfcElements(mappedElements);
       if (mappedElements.length === 0) {
       }
-    } catch (error: any) {
+    } catch (error) {
       if (error instanceof Error && error.message.includes("Not Found")) {
       } else {
         setIfcError(
@@ -295,7 +296,7 @@ const MainPage = () => {
       const metadata = await apiClient.getProjectMetadata(projectName);
       setProjectMetadata(metadata);
     } catch (error) {
-      console.error(
+      logger.error(
         `Error fetching metadata for project ${projectName}:`,
         error
       );
@@ -395,7 +396,7 @@ const MainPage = () => {
       // --- End data preparation modification ---
 
       // 2. Call the APPROVE API endpoint
-      console.log(
+      logger.info(
         `Sending ${quantityUpdates.length} quantity updates to /approve endpoint...`
       );
       // Ensure apiClient has an 'approveProject' method
@@ -421,7 +422,7 @@ const MainPage = () => {
         );
       }
     } catch (error) {
-      console.error("Error during project approval:", error);
+      logger.error("Error during project approval:", error);
       setKafkaError(
         `Fehler: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -620,7 +621,7 @@ const MainPage = () => {
         // --- Remove Refetch ---
         // fetchProjectElements(selectedProject); // <<< REMOVED
       } else {
-        console.error("Failed to save manual element:", response?.message);
+        logger.error("Failed to save manual element:", response?.message);
         setKafkaError(
           `Fehler beim Speichern des manuellen Elements: ${
             response?.message || "Unbekannter Fehler"
@@ -628,7 +629,7 @@ const MainPage = () => {
         );
       }
     } catch (error) {
-      console.error("Error saving manual element:", error);
+      logger.error("Error saving manual element:", error);
       setKafkaError(
         `Fehler: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -669,8 +670,9 @@ const MainPage = () => {
       });
       setLastExportTime(new Date());
       setExportCount(exportCount + 1);
+      logger.info('Excel export completed successfully');
     } catch (error) {
-      console.error('Excel export failed:', error);
+      logger.error('Excel export failed:', error);
       setKafkaError('Export fehlgeschlagen. Bitte versuchen Sie es erneut.');
     } finally {
       setIsExporting(false);
@@ -682,7 +684,7 @@ const MainPage = () => {
   };
 
   const handleExcelImportComplete = (importedData: ExcelImportData[]) => {
-    console.log('Excel import completed with', importedData.length, 'elements');
+    logger.info('Excel import completed with', importedData.length, 'elements');
     setLastImportTime(new Date());
     setImportCount(importCount + 1);
     
@@ -793,7 +795,7 @@ const MainPage = () => {
         setIfcElements((prev) => prev.filter((el) => el.global_id !== idToDelete)); // Update local state
         setKafkaSuccess(true);
       } catch (error) {
-        console.error(`Error deleting element ${idToDelete}:`, error);
+        logger.error(`Error deleting element ${idToDelete}:`, error);
         setKafkaError(
           `Fehler beim Löschen: ${
             error instanceof Error ? error.message : String(error)
@@ -1023,7 +1025,7 @@ const MainPage = () => {
                             }
                           );
                         } catch (e) {
-                          console.error("[Debug] Error formatting date:", e);
+                          logger.error("[Debug] Error formatting date:", e);
                           return "Invalid Date";
                         }
                       })()}

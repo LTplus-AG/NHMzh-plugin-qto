@@ -3,6 +3,7 @@ import React from "react";
 import { IFCElement } from "../../types/types";
 import BimObjectSearch from "./BimObjectSearch";
 import ClassificationFilter from "./ClassificationFilter";
+import { EbkpGroup } from "./types";
 
 interface ElementsHeaderProps {
   totalFilteredElements: number;
@@ -17,7 +18,8 @@ interface ElementsHeaderProps {
   elements?: IFCElement[];
   onElementSelect?: (element: IFCElement | null) => void;
   viewType?: string;
-  ebkpGroups?: any[];
+  ebkpGroups?: EbkpGroup[];
+  onSearchResults: (results: IFCElement[]) => void;
 }
 
 const ElementsHeader: React.FC<ElementsHeaderProps> = ({

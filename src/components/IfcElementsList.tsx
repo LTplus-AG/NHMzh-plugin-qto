@@ -27,6 +27,7 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import { EbkpGroup } from "./IfcElements/types";
 import { HierarchicalEbkpGroup } from "./IfcElements/types";
 import { tableStyles, TABLE_COLUMNS, getColumnStyle } from "./IfcElements/tableConfig";
+import logger from '../utils/logger';
 
 // --- Status Definitions ---
 export type ElementDisplayStatus = "pending" | "edited" | "active" | "manual";
@@ -153,7 +154,7 @@ const IfcElementsList = ({
     } else {
       // Fallback for non-manual elements without a clear status (should ideally not happen)
       // Defaulting to 'active' might be safest visually, but log a warning.
-      console.warn(
+      logger.warn(
         `Element ${element.global_id} (IFC) has unexpected status: ${element.status}. Defaulting display to 'active'.`
       );
       return "active";
