@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
 import { IFCElement } from "../../types/types";
-import { EbkpGroup } from "./types";
 
 // Use IFCElement as the base type with optional additional fields
 export interface BimElement extends Omit<IFCElement, "level"> {
@@ -11,7 +10,7 @@ export interface BimElement extends Omit<IFCElement, "level"> {
 const useBimSearch = (
   elements: IFCElement[],
   viewType: string = "grouped",
-  ebkpGroups?: EbkpGroup[]
+  ebkpGroups?: any[]
 ) => {
   const [inputValue, setInputValue] = useState("");
   const [open, setOpen] = useState(false);

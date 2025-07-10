@@ -277,7 +277,7 @@ const MainPage = () => {
       setIfcElements(mappedElements);
       if (mappedElements.length === 0) {
       }
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof Error && error.message.includes("Not Found")) {
       } else {
         setIfcError(

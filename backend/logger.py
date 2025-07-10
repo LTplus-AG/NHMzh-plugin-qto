@@ -1,6 +1,5 @@
 import logging
 import os
-from datetime import datetime
 
 class QTOLogger:
     def __init__(self, name='QTO-Backend', level=None):

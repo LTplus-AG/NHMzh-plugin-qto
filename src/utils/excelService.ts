@@ -266,9 +266,9 @@ export class ExcelService {
         }
         
         // Parse individual measurements
-        const area = this.parseNumberValue(row.getCell(areaIndex).value);
-        const length = this.parseNumberValue(row.getCell(lengthIndex).value);
-        const volume = this.parseNumberValue(row.getCell(volumeIndex).value);
+        const area = ExcelService.parseNumberValue(row.getCell(areaIndex).value);
+        const length = ExcelService.parseNumberValue(row.getCell(lengthIndex).value);
+        const volume = ExcelService.parseNumberValue(row.getCell(volumeIndex).value);
         
         // Parse materials if present
         let materials: Array<{name: string; fraction?: number; volume?: number; unit?: string}> | undefined;
