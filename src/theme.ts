@@ -44,7 +44,7 @@ const theme = createTheme({
       disabled: "rgba(0, 0, 0, 0.38)",
     },
     background: {
-      default: "#f5f5f5",
+      default: "#ffffff",
       paper: "#fff",
     },
   },

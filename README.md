@@ -1,299 +1,139 @@
-# 📊 NHMzh Plugin QTO (Quantity Take-Off)
+# 📊 NHMzh Plugin-QTO: Mengenermittlung (Quantity Take-Off)
 
-[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Material-UI](https://img.shields.io/badge/Material--UI-0081CB?style=for-the-badge&logo=material-ui&logoColor=white)](https://mui.com/)
+[![React](https://img.shields.io/badge/React-18.3-61DAFB.svg?style=for-the-badge&logo=react)](https://reactjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![License: AGPL](https://img.shields.io/badge/License-AGPL-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
-[![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg?style=for-the-badge)](https://github.com/LTplus-AG/NHMzh-plugin-qto)
+[![Python](https://img.shields.io/badge/Python-3.8-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
 
-Quantity Take-Off (QTO) module for the Nachhaltigkeitsmonitoring der Stadt Zürich (NHMzh) that extracts, manipulates, and visualizes quantities from IFC models.
+Zentrales Modul für die Mengenermittlung (QTO) aus IFC-Modellen im Nachhaltigkeitsmonitoring der Stadt Zürich (NHMzh).
 
-## 📋 Table of Contents
+## 📋 Inhaltsverzeichnis
 
-- [Features](#-features)
-- [Architecture](#-architecture)
-- [Project Structure](#-project-structure)
+- [Architektur](#-architektur)
+- [Datenfluss und Integration](#-datenfluss-und-integration)
+- [Funktionsumfang](#-funktionsumfang)
+- [API-Endpunkte](#-api-endpunkte)
+- [Datenbank-Schema](#-datenbank-schema)
 - [Installation](#-installation)
-- [Kafka Topics](#-kafka-topics)
-- [Usage](#-usage)
-- [API Endpoints](#-api-endpoints)
-- [Data Models](#-data-models)
-- [Tech Stack](#-tech-stack)
-- [Integration](#-integration)
-- [License](#-license)
+- [Lizenz](#-lizenz)
 
-## ✨ Features
+---
 
-- 📊 Interactive eBKP structure with expandable/collapsible rows
-- 📤 Drag-and-drop IFC model upload and smart parsing
-- 🔍 Intelligent IFC elements grouping by type and classification
-- 📐 Automatic quantity extraction based on element type (area, length, volume)
-- 🧮 Material volume calculation and analysis
-- 🔎 Advanced search with autocomplete for finding elements
-- ✏️ Quantity editing with change tracking and history
-- 📡 Integration with Kafka for event publishing
-- 💾 Data persistence with MongoDB
-- 🚦 Classification filtering (EBKP, etc.)
-- 🔄 Event-driven architecture for integration with other NHMzh modules
+### 🏛️ Architektur
 
-## 🔧 Architecture
+Das QTO-Plugin besteht aus einem Frontend und einem Backend:
 
-### Backend
+- **Frontend**: Eine **React/TypeScript**-Anwendung, die das interaktive UI für die Mengenermittlung (QTO) bereitstellt. Anstatt IFC-Dateien direkt hochzuladen, wählen Benutzer:innen ein Projekt aus, dessen IFC-Modell bereits vom Backend verarbeitet wurde. Das Frontend visualisiert die extrahierten Bauteile sowie deren Mengen und ermöglicht:
+  - Die Bearbeitung der ermittelten Mengen.
+  - Das manuelle Hinzufügen von neuen Elementen (z.B. für nicht-modellierte Bauteile).
+  - Den Import und Export von Mengendaten via Excel.
+  - Die finale Freigabe der Daten zur Nutzung durch nachgelagerte Module.
+- **Backend**: Eine **Python/FastAPI**-Anwendung, die für die Verarbeitung der IFC-Dateien zuständig ist. Sie nutzt **IfcOpenShell** zum Parsen der Modelle und extrahiert Mengen, Materialien und Eigenschaften gemäss den [IFC-Modellierungsrichtlinien](./../../NHMzh-docs/IFC-Modellierungsrichtlinien_NHMzh.md).
 
-- **FastAPI** application with endpoints for IFC processing
-- **IfcOpenShell** for parsing IFC files
-- **Kafka Producer** for publishing QTO events
-- **MongoDB** for storing element and project data
+### 🔄 Datenfluss und Integration
 
-### Frontend
+Das QTO-Plugin verarbeitet IFC-Modelle, die über einen asynchronen Workflow bereitgestellt werden. Der Upload-Prozess ist vom QTO-Frontend entkoppelt und wird durch den `qto_ifc-msg`-Service gesteuert.
 
-- **React/TypeScript** with Material-UI components
-- **MUI DataGrid** for efficient element display
-- **Component-based** architecture for maintainability
+1.  **Nachrichten-basierter Trigger**: Der `qto_ifc-msg`-Service empfängt eine Kafka-Nachricht über eine neue IFC-Datei, die von einem vorgelagerten Prozess in MinIO abgelegt wurde.
+2.  **Datei-Übermittlung**: Der Service holt die IFC-Datei aus MinIO und leitet sie zur Verarbeitung an den `/upload-ifc/`-Endpunkt des QTO-Backends weiter.
+3.  **Asynchrone Verarbeitung im Backend**: Das Backend parst das IFC-Modell in einer Hintergrundaufgabe.
+4.  **Datenspeicherung**: Die extrahierten Daten (Elemente, Mengen, Materialien) werden in der `qto`-MongoDB-Datenbank gespeichert.
+5.  **Visualisierung im Frontend**: Das QTO-Frontend lädt die verarbeiteten Projekte aus der Datenbank. Benutzer können die Daten hier einsehen, bearbeiten und zur weiteren Nutzung freigeben. Es findet **kein direkter IFC-Upload** über das Frontend statt.
+6.  **Datenquelle für andere Module**: Die `qto`-Datenbank dient als primäre Datenquelle für nachgelagerte Module wie **Plugin-Cost** und **Plugin-LCA**.
 
-## 🗂️ Project Structure
+Die Kommunikation zwischen den Modulen erfolgt **ausschliesslich über direkte Datenbankabfragen**. Das QTO-Plugin publiziert keine Elementdaten mehr an Kafka.
 
-```
-plugin-qto/
-  ├── src/              # Frontend React app
-  │   ├── components/   # React components
-  │   │   ├── IfcElements/  # Element-related components
-  │   ├── types/        # TypeScript type definitions
-  ├── backend/          # Python FastAPI backend for IFC parsing
-  │   ├── main.py       # Main API application
-  │   ├── qto_producer.py  # Kafka producer for QTO data
-  │   ├── ifc_quantities_config.py  # Configuration for quantity extraction
-  ├── public/           # Public assets
-  ├── data/             # Static data files
-  └── dist/             # Build output
-```
+### ✨ Funktionsumfang
 
-## 🚀 Installation
+- **IFC-Parsing**: Extraktion von Geometrie, Mengen (Flächen, Längen, Volumen) und Eigenschaften aus IFC2x3- und IFC4-Dateien.
+- **Material- und Schichtaufbau-Analyse**: Detaillierte Auswertung von `IfcMaterial` und `IfcMaterialLayerSet`.
+- **eBKP-Klassifizierung**: Erkennung und Zuordnung von eBKP-Codes.
+- **Interaktive Datenvisualisierung**: Anzeige der extrahierten Daten in einer anpassbaren Tabelle.
+- **Manuelle Datenbearbeitung**: Möglichkeit zur Korrektur und Ergänzung von Mengen und Attributen.
+- **Asynchroner Upload**: Nicht-blockierende Verarbeitung grosser IFC-Modelle.
 
-### Prerequisites
+### 🔌 API-Endpunkte
 
-- Docker and Docker Compose
-- Python 3.8+
-- Node.js 16+
+Die FastAPI-Anwendung stellt unter anderem folgende Endpunkte bereit:
 
-### Using Docker
+| Endpunkt                 | Methode | Beschreibung                               |
+| ------------------------ | ------- | ------------------------------------------ |
+| `/upload-ifc/`           | POST    | Lädt eine IFC-Datei zur Verarbeitung hoch. |
+| `/ifc-jobs/{job_id}`     | GET     | Ruft den Status eines Verarbeitungsjobs ab.|
+| `/projects/`             | GET     | Listet alle verfügbaren Projekte auf.      |
+| `/projects/{name}/elements/` | GET     | Ruft alle Elemente eines Projekts ab.      |
+| `/projects/{name}/approve/`| POST    | Schliesst die Bearbeitung eines Projekts ab.|
 
-1. Clone the repository:
+### 💾 Datenbank-Schema
 
-```bash
-git clone https://github.com/LTplus-AG/NHMzh-plugin-qto.git
-cd NHMzh-plugin-qto
-```
+Die primäre Sammlung in der `qto`-Datenbank ist `elements`. Jedes Dokument repräsentiert ein extrahiertes IFC-Bauteil.
 
-2. Start with Docker Compose:
-
-```bash
-docker-compose up -d
-```
-
-This will start:
-
-- Kafka broker and UI
-- Backend API on port 8000
-- Frontend development server on port 3004
-
-3. For production deployment:
-
-```bash
-docker-compose up frontend
-```
-
-### Local Development
-
-#### Frontend (React)
-
-```bash
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-```
-
-#### Backend (Python)
-
-```bash
-# Navigate to backend directory
-cd backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On Windows
-venv\Scripts\activate
-# On macOS/Linux
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the backend server
-uvicorn main:app --reload
-```
-
-## 📡 Kafka Topics
-
-The QTO plugin publishes element and project data to Kafka topics. Based on the implementation in `qto_producer.py`:
-
-- Project updates are sent with an `eventType` of `PROJECT_UPDATED` containing project metadata
-- Element data is structured with properties including:
-  - IFC class information
-  - Element quantity data (area, volume, etc.)
-  - Classification information (EBKP)
-  - Material composition and volumes 
-  - Structural properties
-
-Elements are sent in batched format for efficient processing by downstream modules. The QTO plugin serves as the primary data source for the NHMzh ecosystem, providing the foundation for both cost calculations and LCA analyses.
-
-## 📖 Usage
-
-1. Open the application in your browser (default: http://localhost:3004)
-2. Drag and drop an IFC file in the upload area
-3. Explore the eBKP structure in the top table
-4. Analyze the extracted IFC elements grouped by type in the bottom section
-5. Use the search feature to find specific elements
-6. Edit quantities as needed
-7. Send QTO data to other NHMzh modules for integration
-
-## 🔌 API Endpoints
-
-| Endpoint                   | Method | Description                            |
-| -------------------------- | ------ | -------------------------------------- |
-| `/`                        | GET    | Welcome message                        |
-| `/upload-ifc/`             | POST   | Upload an IFC file for processing      |
-| `/ifc-elements/{model_id}` | GET    | Retrieve elements from a model         |
-| `/send-qto/`               | POST   | Send QTO data to Kafka                 |
-| `/qto-elements/{model_id}` | GET    | Get elements formatted for QTO display |
-| `/models`                  | GET    | List all uploaded models               |
-| `/models/{model_id}`       | DELETE | Delete a model                         |
-| `/health`                  | GET    | Check service health                   |
-
-## 💾 Data Models
-
-### Element Data Format
-
-When sending data to Kafka, a notification message is sent with project metadata and element count:
-
+**`qto.elements` Beispiel-Dokument:**
 ```json
 {
-  "eventType": "PROJECT_UPDATED",
-  "timestamp": "2023-01-01T12:00:00Z",
-  "producer": "plugin-qto",
-  "payload": {
-    "projectId": "67e39625158688f60bbd807a",
-    "projectName": "Project Name",
-    "elementCount": 100
-  },
-  "metadata": {
-    "version": "1.0",
-    "correlationId": "abc123"
-  }
-}
-```
-
-Each element in MongoDB is stored with the following structure:
-
-```json
-{
-  "_id": {
-    "$oid": "67f2d5c1e266a64f97f4c87c"
-  },
-  "project_id": {
-    "$oid": "67e39625158688f60bbd807a"
-  },
-  "ifc_id": "3DqaUydM99ehywE4_2hm1u",
+  "_id": "ObjectId",
+  "project_id": "ObjectId",
   "global_id": "3DqaUydM99ehywE4_2hm1u",
   "ifc_class": "IfcWall",
-  "name": "Basic Wall:Holz Aussenwand_470mm:2270026",
-  "type_name": "Basic Wall:Holz Aussenwand_470mm",
+  "name": "Aussenwand_470mm",
   "level": "U1.UG_RDOK",
   "quantity": {
     "value": 555,
     "type": "area",
     "unit": "m²"
   },
-  "original_quantity": {
-    "value": 68.8941199200415,
-    "type": "area"
-  },
-  "is_structural": true,
-  "is_external": false,
   "classification": {
-    "id": "C4",
-    "name": "Deckenkonstruktion, Dachkonstruktion",
-    "system": "EBKP"
+    "id": "C2.01",
+    "name": "Aussenwandkonstruktion",
+    "system": "eBKP"
   },
   "materials": [
     {
-      "name": "_Holz_wg",
-      "unit": "m³",
-      "volume": 1.35783,
-      "fraction": 0.04255
-    },
-    {
-      "name": "_Staenderkonstruktion_ungedaemmt_wg",
-      "unit": "m³",
-      "volume": 1.69729,
-      "fraction": 0.05319
+      "name": "Holzfaserdämmung",
+      "volume": 8.5,
+      "fraction": 0.875,
+      "unit": "m³"
     }
   ],
   "properties": {
-    "Pset_BuildingStoreyElevation": {
-      "Name": "U1.UG_RDOK"
-    },
-    "Qto_WallBaseQuantities.Height": "3.500",
-    "Qto_WallBaseQuantities.Length": "19.684",
-    "Qto_WallBaseQuantities.Width": "0.470",
-    "Qto_WallBaseQuantities.GrossSideArea": "68.894",
-    "Pset_WallCommon.IsExternal": "True",
-    "Pset_WallCommon.LoadBearing": "True"
+    "Pset_WallCommon.IsExternal": "True"
   },
   "status": "active",
-  "created_at": {
-    "$date": "2025-04-06T19:28:01.209Z"
-  },
-  "updated_at": {
-    "$date": "2025-04-06T19:28:01.209Z"
-  }
+  "created_at": "ISODate"
 }
 ```
 
-## 🛠️ Tech Stack
+### 🚀 Installation
 
-### Frontend
+#### Voraussetzungen
 
-- **React** - UI library
-- **Material-UI** - Component library
-- **TypeScript** - Type-safe JavaScript
+- Docker und Docker Compose
+- Python 3.8+
+- Node.js 16+
 
-### Backend
+#### Lokale Entwicklung
 
-- **Python** - Backend language
-- **FastAPI** - API framework
-- **IfcOpenShell** - IFC parsing library
-- **Kafka** - Message broker
-- **MongoDB** - Database for element storage
+**Frontend (React):**
+```bash
+# Abhängigkeiten installieren
+npm install
+# Entwicklungsserver starten
+npm run dev
+```
 
-## 🔗 Integration
+**Backend (Python):**
+```bash
+cd backend
+# Virtuelle Umgebung erstellen und aktivieren
+python -m venv venv
+source venv/bin/activate
+# Abhängigkeiten installieren
+pip install -r requirements.txt
+# Backend-Server starten
+uvicorn main:app --reload
+```
 
-The QTO plugin is a core component of the NHMzh ecosystem and integrates with:
+### 📄 Lizenz
 
-- **Cost Plugin**: Provides element quantities for cost calculations (see [NHMzh-plugin-cost](https://github.com/LTplus-AG/NHMzh-plugin-cost))
-- **LCA Plugin**: Supplies material volumes for life cycle assessment (see [NHMzh-plugin-lca](https://github.com/LTplus-AG/NHMzh-plugin-lca))
-- **Central Database**: Stores element data for the entire NHMzh platform
-
-## 📄 License
-
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
-
-GNU Affero General Public License v3.0 (AGPL-3.0): This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-See <https://www.gnu.org/licenses/agpl-3.0.html> for details.
+Dieses Projekt ist unter der GNU Affero General Public License v3.0 (AGPL-3.0) lizenziert.

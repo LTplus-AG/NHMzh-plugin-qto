@@ -1,5 +1,6 @@
 import { BatchElementData } from "../types/batchUpdateTypes";
 import { ElementQuantityUpdate } from "./types.ts"; // Correct relative path
+import logger from '../utils/logger';
 
 // <<< ADDED: Interface for nested quantity data >>>
 export interface QuantityData {
@@ -121,7 +122,7 @@ const getApiBaseUrl = () => {
 
   // Log the selected URL for debugging
   const finalUrl = baseUrl || (isProd ? "/api" : localFallbackUrl); // Use /api for prod fallback, explicit URL for local
-  console.log(`Using API Base URL: ${finalUrl}`);
+  logger.info(`Using API Base URL: ${finalUrl}`);
 
   // Return the selected URL or fallback
   return finalUrl;
@@ -178,18 +179,18 @@ export class QTOApiClient {
     const encodedProjectName = encodeURIComponent(projectName);
     // Define the endpoint outside the try block for broader scope
     const endpoint = `/projects/${encodedProjectName}/elements/`;
+    logger.info(`Fetching elements using endpoint: ${endpoint}`);
     try {
-      console.log(`Fetching elements using endpoint: ${endpoint}`);
       const response = await fetch(`${this.baseUrl}${endpoint}`);
 
       if (response.ok) {
         const elements = await response.json();
-        console.log(
+        logger.info(
           `Successfully retrieved ${elements.length} elements using ${endpoint}`
         );
         return elements;
       } else {
-        console.error(
+        logger.error(
           // Changed to error for clarity
           `Endpoint ${endpoint} returned status ${response.status}. Returning empty array.`
         );
@@ -197,7 +198,7 @@ export class QTOApiClient {
       }
     } catch (error) {
       // Handle potential fetch errors
-      console.error(
+      logger.error(
         // Changed to error for clarity
         `Error fetching elements for '${projectName}' from ${endpoint}: ${error}`
       );
@@ -220,20 +221,20 @@ export class QTOApiClient {
       if (!response.ok) {
         // Handle non-OK responses (e.g., 404 Not Found)
         const errorText = await response.text();
-        console.error(
+        logger.error(
           `Failed to fetch metadata for '${projectName}': ${response.status} - ${errorText}`
         );
         // Return an empty object or throw an error based on desired handling
         return {}; // Returning empty object for now
       }
       const metadata = await response.json();
-      console.log(
+      logger.info(
         `Successfully retrieved metadata for project '${projectName}':`,
         metadata
       );
       return metadata;
     } catch (error) {
-      console.error(
+      logger.error(
         `Network or other error fetching metadata for '${projectName}': ${error}`
       );
       // Return an empty object or throw an error
@@ -256,12 +257,12 @@ export class QTOApiClient {
   ): Promise<{ status: string; message: string; project: string }> {
     const encodedProjectName = encodeURIComponent(projectName);
     const endpoint = `/projects/${encodedProjectName}/approve/`;
+    logger.info(
+      `Approving elements (and potentially updating ${
+        updates?.length || 0
+      } quantities) for project: ${projectName}`
+    );
     try {
-      console.log(
-        `Approving elements (and potentially updating ${
-          updates?.length || 0
-        } quantities) for project: ${projectName}`
-      );
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         method: "POST",
         headers: {
@@ -278,10 +279,10 @@ export class QTOApiClient {
       }
 
       const result = await response.json();
-      console.log(`Successfully approved elements for project ${projectName}`);
+      logger.info(`Successfully approved elements for project ${projectName}`);
       return result;
     } catch (error) {
-      console.error(
+      logger.error(
         `Error approving elements for project '${projectName}': ${error}`
       );
       throw error;
@@ -316,12 +317,12 @@ export class QTOApiClient {
       }
 
       const result = await response.json();
-      console.log(
+      logger.info(
         `Successfully batch updated elements for project ${projectName}`
       );
       return result;
     } catch (error) {
-      console.error(
+      logger.error(
         `Error batch updating elements for project '${projectName}': ${error}`
       );
       throw error;
@@ -341,10 +342,10 @@ export class QTOApiClient {
         );
       }
       const result = await response.json();
-      console.log("Successfully fetched target IFC classes:", result);
+      logger.info("Successfully fetched target IFC classes:", result);
       return result || []; // Return empty array if null/undefined
     } catch (error) {
-      console.error("Error fetching target IFC classes:", error);
+      logger.error("Error fetching target IFC classes:", error);
       throw error;
     }
   }
@@ -373,7 +374,7 @@ export class QTOApiClient {
         ? { success: true }
         : await response.json();
     } catch (error) {
-      console.error(
+      logger.error(
         `Error deleting element ${elementId} from project '${projectName}': ${error}`
       );
       throw error;
@@ -405,10 +406,10 @@ export class QTOApiClient {
       }
 
       const result = await response.json();
-      console.log(`Successfully approved project ${projectName}`);
+      logger.info(`Successfully approved project ${projectName}`);
       return result;
     } catch (error) {
-      console.error(`Error approving project ${projectName}:`, error);
+      logger.error(`Error approving project ${projectName}:`, error);
       throw error;
     }
   }

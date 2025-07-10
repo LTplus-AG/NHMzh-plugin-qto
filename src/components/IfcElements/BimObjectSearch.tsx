@@ -13,6 +13,7 @@ import {
 import SearchIcon from "@mui/icons-material/Search";
 import useBimSearch from "./useBimSearch";
 import { IFCElement } from "../../types/types";
+import { EbkpGroup } from "./types";
 
 interface BimObjectSearchProps {
   elements: IFCElement[];
@@ -20,7 +21,7 @@ interface BimObjectSearchProps {
   placeholder?: string;
   width?: number | string;
   viewType?: string;
-  ebkpGroups?: any[];
+  ebkpGroups?: EbkpGroup[];
 }
 
 const BimObjectSearch: React.FC<BimObjectSearchProps> = ({

@@ -9,7 +9,6 @@ export default defineConfig(({ mode }) => {
 
   console.log(`Running in ${mode} mode`);
   console.log(`API URL: ${env.VITE_API_URL}`);
-  console.log(`WebSocket URL: ${env.VITE_WEBSOCKET_URL}`);
 
   // Default to localhost:8000 if API_URL is not defined
   const apiUrl = env.VITE_API_URL || "http://localhost:8000";
@@ -30,9 +29,6 @@ export default defineConfig(({ mode }) => {
     define: {
       // Expose environment variables to the client
       "import.meta.env.VITE_API_URL": JSON.stringify(apiUrl),
-      "import.meta.env.VITE_WEBSOCKET_URL": JSON.stringify(
-        env.VITE_WEBSOCKET_URL
-      ),
     },
     build: {
       target: "esnext",

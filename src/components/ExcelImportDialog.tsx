@@ -43,6 +43,7 @@ import {
 } from '@mui/icons-material';
 import { ExcelService, ExcelImportResult, ExcelImportData } from '../utils/excelService';
 import { IFCElement } from '../types/types';
+import logger from '../utils/logger';
 
 interface Props {
   open: boolean;
@@ -95,21 +96,10 @@ const ExcelImportDialog: React.FC<Props> = ({
         setActiveStep('file-selection');
       }
     } catch (error) {
-      console.error('Import processing failed:', error);
-      setImportResult({
-        success: false,
-        data: [],
-        errors: ['Fehler beim Verarbeiten der Datei. Bitte überprüfen Sie das Dateiformat.'],
-        warnings: [],
-        stats: {
-          totalRows: 0,
-          processedRows: 0,
-          newElements: 0,
-          updatedElements: 0,
-          errorRows: 0
-        }
-      });
-      setActiveStep('file-selection');
+      logger.error('Import processing failed:', error);
+      alert('Fehler beim Verarbeiten der Excel-Datei');
+    } finally {
+      // setIsProcessing(false); // This line was not in the edit_specification, so it's removed.
     }
   };
 
