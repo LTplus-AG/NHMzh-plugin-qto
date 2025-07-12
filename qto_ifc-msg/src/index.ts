@@ -49,7 +49,7 @@ async function main() {
           fileID = message.value.toString().split("/").pop();
           if (!fileID) {
             log.error(
-              "Could not extract fileID from download link – skipping",
+              "Could not extract fileID from download link - skipping",
               {
                 link: message.value.toString(),
                 offset: message.offset,
@@ -126,17 +126,14 @@ async function main() {
           log.info(`Offset ${message.offset} resolved.`);
         } catch (error: any) {
           log.error(
-            `Error processing Kafka message for fileID '${
-              fileID || "unknown"
+            `Error processing Kafka message for fileID '${fileID || "unknown"
             }':`,
             { err: error, offset: message.offset }
           );
           resolveOffset(message.offset);
           log.warn(
-            `Offset ${
-              message.offset
-            } resolved after error to prevent Kafka loop. Check logs for details about FileID '${
-              fileID || "unknown"
+            `Offset ${message.offset
+            } resolved after error to prevent Kafka loop. Check logs for details about FileID '${fileID || "unknown"
             }'.`
           );
         }
