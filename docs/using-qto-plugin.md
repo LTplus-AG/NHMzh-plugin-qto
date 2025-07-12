@@ -2,7 +2,7 @@
 id: qto-plugin-guide
 slug: /qto-plugin-guide
 title: Using the QTO Plugin
-sidebar_label: Getting Started
+sidebar_label: Plugin Guide
 ---
 
 > **Audience:** BIM authors, quantity surveyors, and project coordinators who need to upload IFC models and validate extracted quantities.
