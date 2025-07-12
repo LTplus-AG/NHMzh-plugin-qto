@@ -55,6 +55,9 @@ docker-compose.override.yml
 # IFC files
 *.ifc
 
+# Documentation testing environment
+docs-test/
+
 # Misc
 *.local
 *.bak
