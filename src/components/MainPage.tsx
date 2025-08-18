@@ -39,6 +39,9 @@ import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService, ExcelImportData } from "../utils/excelService";
 import SmartExcelButton from "./SmartExcelButton";
 import ExcelImportDialog from "./ExcelImportDialog";
+import EmptyState from "./ui/EmptyState";
+import { Upload as UploadIcon } from "@mui/icons-material";
+import { navigateToIfcUploader, getCurrentPlugin } from "../utils/navigation";
 import logger from '../utils/logger';
 
 // Get target IFC classes from environment variable
@@ -684,7 +687,7 @@ const MainPage = () => {
   };
 
   const handleExcelImportComplete = (importedData: ExcelImportData[]) => {
-    logger.info('Excel import completed with', importedData.length, 'elements');
+    logger.info(`Excel import completed with ${importedData.length} elements`);
     setLastImportTime(new Date());
     setImportCount(importCount + 1);
     
@@ -1130,20 +1133,41 @@ const MainPage = () => {
             </Box>
           )}
 
-          {!selectedProject && backendConnected && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Bitte wählen Sie ein Projekt aus der Liste aus.
-            </Alert>
+          {projectList.length === 0 && !projectsLoading && !projectsError && backendConnected && (
+            <EmptyState
+              icon="upload"
+              title="Keine Projekte vorhanden"
+              description="Um zu starten, laden Sie eine IFC-Datei über den IFC Uploader in ein Projekt hoch, oder wenden Sie sich an die zuständige Person für die Datenbereitstellung."
+              actions={[
+                {
+                  label: "IFC Uploader öffnen",
+                  onClick: () => navigateToIfcUploader(getCurrentPlugin()),
+                  variant: "contained",
+                  startIcon: <UploadIcon />
+                }
+              ]}
+            />
           )}
+          
           {selectedProject &&
             !ifcLoading &&
             ifcElements.length === 0 &&
             !ifcError && (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                Keine Elemente für dieses Projekt gefunden oder die Daten werden
-                noch verarbeitet. Versuchen Sie, das Projekt neu zu laden.
-              </Alert>
+              <EmptyState
+                icon="upload"
+                title="Noch keine IFC-Daten in diesem Projekt"
+                description="Für dieses Projekt sind noch keine IFC-Elemente verfügbar. Laden Sie eine IFC-Datei über den IFC Uploader in dieses Projekt hoch, oder kontaktieren Sie die zuständige Person."
+                actions={[
+                  {
+                    label: "IFC Uploader öffnen",
+                    onClick: () => navigateToIfcUploader(getCurrentPlugin()),
+                    variant: "contained",
+                    startIcon: <UploadIcon />
+                  }
+                ]}
+              />
             )}
+          
           {ifcError && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {ifcError}
