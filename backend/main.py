@@ -5,6 +5,11 @@ from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from fastapi.openapi.utils import get_openapi
 import os
 import ifcopenshell
+from auth_middleware import (
+    User, verify_token, require_read_permission, 
+    require_write_permission, require_delete_permission,
+    check_project_access, project_service, security
+)
 import tempfile
 import logging
 from typing import List, Dict, Any, Optional
@@ -942,21 +947,47 @@ async def get_ifc_job_status(job_id_str: str, db: Database = Depends(get_db)):
 # <<< END ADDED >>>
 
 @app.get("/projects/", response_model=List[str])
-async def list_projects(db: Database = Depends(get_db)): # <<< Inject DB
-    """Returns a list of available project names from the parsed data."""
+async def list_projects(
+    db: Database = Depends(get_db),
+    user: User = Depends(require_read_permission),
+    credentials = Depends(security)
+): # <<< Inject DB and auth
+    """Returns a list of available project names that the user has access to."""
     try:
-        # Use the injected db object
+        # Get user's authorized projects from project service
+        user_projects = await project_service.get_user_projects(user, credentials.credentials)
+        authorized_project_names = [p.get("projectName") for p in user_projects if p.get("projectName")]
+        authorized_project_codes = [p.get("erzProjectCode") for p in user_projects if p.get("erzProjectCode")]
+        
+        # Get all projects from database
         collection = db.projects
         distinct_projects = collection.distinct("name")
-        return distinct_projects
+        
+        # Filter to only include projects user has access to
+        # Check both project name and ERZ code
+        filtered_projects = []
+        for project in distinct_projects:
+            if project in authorized_project_names or project in authorized_project_codes:
+                filtered_projects.append(project)
+            # Also check if user is admin
+            elif user.has_role("Admin"):
+                filtered_projects.append(project)
+        
+        return filtered_projects
     except Exception as e:
         logger.error(f"Error listing projects from DB: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving project list")
 
 @app.get("/projects/{project_name}/elements/", response_model=List[IFCElement])
-async def get_project_elements(project_name: str, db: Database = Depends(get_db)): # <<< Inject DB
+async def get_project_elements(
+    project_name: str, 
+    db: Database = Depends(get_db),
+    user: User = Depends(require_read_permission)
+): # <<< Inject DB and auth
     """Retrieves element data for a given project name directly from the elements collection."""
     try:
+        # Check project-specific access
+        await check_project_access(project_name, "read", user, None)
         # 1. Fetch Project ID using injected db
         project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
@@ -1225,8 +1256,11 @@ async def get_project_metadata(project_name: str, db: Database = Depends(get_db)
 async def approve_project(
     project_name: str,
     updates: Optional[List[ElementQuantityUpdate]] = None, # <<< ACCEPT updates in body
-    db: Database = Depends(get_db) # <<< Inject DB
+    db: Database = Depends(get_db), # <<< Inject DB
+    user: User = Depends(require_write_permission)
 ):
+    # Check project-specific access
+    await check_project_access(project_name, "write", user, None)
     """
     Updates element quantities based on provided edits AND approves the project's elements
     by updating their status to 'active'.
@@ -1340,9 +1374,16 @@ def health_check(request: Request):
 
 # <<< ADDED: Endpoint for Creating Manual Elements >>>
 @app.post("/projects/{project_name}/elements/manual", response_model=IFCElement)
-async def add_manual_element(project_name: str, element_data: ManualElementInput, db: Database = Depends(get_db)): # <<< Inject DB
+async def add_manual_element(
+    project_name: str, 
+    element_data: ManualElementInput, 
+    db: Database = Depends(get_db),
+    user: User = Depends(require_write_permission)
+): # <<< Inject DB and auth
     """Adds a new manually defined element to a project."""
     try:
+        # Check project-specific access
+        await check_project_access(project_name, "write", user, None)
         # 1. Find Project ID using injected db
         project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
         if not project:
@@ -1442,7 +1483,14 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
         raise HTTPException(status_code=500, detail=f"Internal server error adding manual element: {str(e)}")
 
 @app.post("/projects/{project_name}/elements/batch-update", status_code=status.HTTP_200_OK)
-async def batch_update_elements(project_name: str, request_data: BatchUpdateRequest, db: Database = Depends(get_db)): # <<< Inject DB
+async def batch_update_elements(
+    project_name: str, 
+    request_data: BatchUpdateRequest, 
+    db: Database = Depends(get_db),
+    user: User = Depends(require_write_permission)
+): # <<< Inject DB and auth
+    # Check project-specific access
+    await check_project_access(project_name, "write", user, None)
     # mongodb = MongoDBHelper() # Don't create a new instance
     try:
         # Find project using injected db
@@ -1536,7 +1584,14 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
         raise HTTPException(status_code=500, detail=f"Internal server error during batch update: {e}")
 
 @app.delete("/projects/{project_name}/elements/{element_id}", status_code=status.HTTP_200_OK)
-async def delete_element_endpoint(project_name: str, element_id: str, db: Database = Depends(get_db)): # <<< Inject DB
+async def delete_element_endpoint(
+    project_name: str, 
+    element_id: str, 
+    db: Database = Depends(get_db),
+    user: User = Depends(require_delete_permission)
+): # <<< Inject DB and auth
+    # Check project-specific access
+    await check_project_access(project_name, "delete", user, None)
     # mongodb = MongoDBHelper() # Don't create a new instance
     try:
         # Find project using injected db

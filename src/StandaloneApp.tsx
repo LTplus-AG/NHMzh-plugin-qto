@@ -1,15 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import App from "./App";
+import AuthenticatedApp from "./AuthenticatedApp";
 
+// This component now wraps the app with authentication
 function StandaloneApp() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Navigate to="/plugin-qto" replace />} />
-        <Route path="/plugin-qto/*" element={<App />} />
-      </Routes>
-    </BrowserRouter>
-  );
+  return <AuthenticatedApp />;
 }
 
 export default StandaloneApp;

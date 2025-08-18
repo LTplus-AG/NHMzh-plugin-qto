@@ -132,7 +132,7 @@ const getApiBaseUrl = () => {
  * QTO API Client Class
  */
 export class QTOApiClient {
-  private baseUrl: string;
+  protected baseUrl: string;
 
   /**
    * Creates a new QTO API client
