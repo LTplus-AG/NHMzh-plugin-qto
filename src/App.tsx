@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 import { ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import MainPage from "./components/MainPage";
+import { ApiProvider } from "./contexts/ApiContext";
 import logger from './utils/logger';
 import theme from './theme';
 import "./App.css";
@@ -17,9 +18,11 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Routes>
-        <Route path="/" element={<MainPage />} />
-      </Routes>
+      <ApiProvider>
+        <Routes>
+          <Route path="/" element={<MainPage />} />
+        </Routes>
+      </ApiProvider>
     </ThemeProvider>
   );
 }
