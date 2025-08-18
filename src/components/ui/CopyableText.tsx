@@ -8,6 +8,7 @@ import {
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CheckIcon from "@mui/icons-material/Check";
+import logger from '../../utils/logger';
 
 interface CopyableTextProps {
   text: string;
@@ -38,7 +39,7 @@ const CopyableText: React.FC<CopyableTextProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 1000);
     } catch (err) {
-      console.error("Failed to copy text: ", err);
+      logger.error("Failed to copy text: ", err);
     }
   };
 
