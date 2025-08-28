@@ -25,6 +25,7 @@ export interface ExcelImportData {
   level?: string;
   classification_id?: string;
   classification_name?: string;
+  classification_system?: string;
   materials?: Array<{
     name: string;
     fraction?: number;
@@ -293,6 +294,19 @@ export class ExcelService {
           }
         }
         
+        const classId = row.getCell(classificationIdIndex).value?.toString();
+        const className = row.getCell(classificationNameIndex).value?.toString();
+
+        let classificationSystem: string | undefined;
+        if (classId || className) {
+          const ebkpRegex = /^[A-J]\d{2}\.\d{2}(?:\.\d{2})?$/;
+          if (classId && !ebkpRegex.test(classId)) {
+            result.warnings.push(`Zeile ${rowNumber}: Ungültiger eBKP-Code '${classId}'`);
+          } else {
+            classificationSystem = 'eBKP';
+          }
+        }
+
         const importData: ExcelImportData = {
           global_id: guid,
           name,
@@ -302,8 +316,9 @@ export class ExcelService {
           length,
           volume,
           level,
-          classification_id: row.getCell(classificationIdIndex).value?.toString(),
-          classification_name: row.getCell(classificationNameIndex).value?.toString(),
+          classification_id: classId,
+          classification_name: className,
+          classification_system: classificationSystem,
           materials
         };
         

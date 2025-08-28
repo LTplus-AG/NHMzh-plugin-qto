@@ -725,9 +725,18 @@ const MainPage = () => {
           }
           if (importItem.classification_id) {
             updatedElement.classification_id = importItem.classification_id;
+            updatedElement.ebkph = importItem.classification_id;
           }
           if (importItem.classification_name) {
             updatedElement.classification_name = importItem.classification_name;
+          }
+          if (importItem.classification_system || importItem.classification_id || importItem.classification_name) {
+            updatedElement.classification_system = importItem.classification_system || 'eBKP';
+            updatedElement.classification = {
+              id: importItem.classification_id,
+              name: importItem.classification_name,
+              system: importItem.classification_system || 'eBKP'
+            };
           }
           if (importItem.materials) {
             updatedElement.materials = importItem.materials;
@@ -747,7 +756,7 @@ const MainPage = () => {
             level: importItem.level || null,
             classification_id: importItem.classification_id || null,
             classification_name: importItem.classification_name || null,
-            classification_system: null,
+            classification_system: importItem.classification_system || (importItem.classification_id ? 'eBKP' : null),
             quantity: importItem.quantity || null,
             original_quantity: null,
             area: importItem.area || null,
@@ -761,7 +770,7 @@ const MainPage = () => {
             classification: {
               id: importItem.classification_id,
               name: importItem.classification_name,
-              system: null
+              system: importItem.classification_system || (importItem.classification_id ? 'eBKP' : null)
             },
             status: 'active',
             is_manual: true

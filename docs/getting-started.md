@@ -16,7 +16,8 @@ Follow this roadmap to move from raw IFC to clean, quantity-rich data that can f
 | 3️⃣ Validate quantities | [Quantity Reference](/qto-quantities) • [Highlight Rules](/qto-highlights) | Required QuantitySets and colour-coded warnings. |
 | 4️⃣ Confirm classification | [Classification Flow](/qto-classification) | How eBKP codes are extracted and why they matter. |
 | 5️⃣ Manage versions | [Incremental Uploads](/qto-versioning) | Re-upload logic, merging, rollback. |
-| 6️⃣ Share data | [Excel Export](/qto-export) | Contents of the .xlsx and typical use cases. |
+| 6️⃣ Ergänzen | [Excel Import](/qto-import) | Fehlende Mengen und eBKP-Codes per Excel einspielen. |
+| 7️⃣ Share data | [Excel Export](/qto-export) | Contents of the .xlsx and typical use cases. |
 
 ---
 

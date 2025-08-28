@@ -22,6 +22,7 @@ export interface ExcelElementData {
   volume?: number | null;
   classification_id?: string;
   classification_name?: string;
+  classification_system?: string;
   materials?: ExcelMaterialData[];
 }
 

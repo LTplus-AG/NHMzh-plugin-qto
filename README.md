@@ -49,6 +49,7 @@ Die Kommunikation zwischen den Modulen erfolgt **ausschliesslich über direkte D
 - **IFC-Parsing**: Extraktion von Geometrie, Mengen (Flächen, Längen, Volumen) und Eigenschaften aus IFC2x3- und IFC4-Dateien.
 - **Material- und Schichtaufbau-Analyse**: Detaillierte Auswertung von `IfcMaterial` und `IfcMaterialLayerSet`.
 - **eBKP-Klassifizierung**: Erkennung und Zuordnung von eBKP-Codes.
+- **Excel-Import**: Ergänzt Elemente über die GUID und übernimmt eBKP-Klassifikationen aus Excel-Dateien.
 - **Interaktive Datenvisualisierung**: Anzeige der extrahierten Daten in einer anpassbaren Tabelle.
 - **Manuelle Datenbearbeitung**: Möglichkeit zur Korrektur und Ergänzung von Mengen und Attributen.
 - **Asynchroner Upload**: Nicht-blockierende Verarbeitung grosser IFC-Modelle.
