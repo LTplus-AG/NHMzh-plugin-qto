@@ -37,6 +37,7 @@ import { BatchElementData } from "../types/batchUpdateTypes";
 import { ElementQuantityUpdate } from "../api/types";
 import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService, ExcelImportData } from "../utils/excelService";
+import { getEbkpNameFromCode } from "../data/ebkpData";
 import SmartExcelButton from "./SmartExcelButton";
 import ExcelImportDialog from "./ExcelImportDialog";
 import EmptyState from "./ui/EmptyState";
@@ -726,25 +727,35 @@ const MainPage = () => {
           if (importItem.classification_id) {
             updatedElement.classification_id = importItem.classification_id;
             updatedElement.ebkph = importItem.classification_id;
+            // Infer classification name from code if not provided
+            const inferredName = getEbkpNameFromCode(importItem.classification_id);
+            if (inferredName) {
+              updatedElement.classification_name = inferredName;
+            }
           }
-          if (importItem.classification_name) {
-            updatedElement.classification_name = importItem.classification_name;
-          }
-          if (importItem.classification_system || importItem.classification_id || importItem.classification_name) {
+          if (importItem.classification_system || importItem.classification_id) {
             updatedElement.classification_system = importItem.classification_system || 'eBKP';
+            // Infer classification name from code if not provided
+            const inferredName = importItem.classification_id ? getEbkpNameFromCode(importItem.classification_id) : null;
             updatedElement.classification = {
               id: importItem.classification_id,
-              name: importItem.classification_name,
+              name: inferredName,
               system: importItem.classification_system || 'eBKP'
             };
           }
           if (importItem.materials) {
             updatedElement.materials = importItem.materials;
           }
-          
+
+          // Reset status to pending since element data has been modified and needs re-confirmation
+          updatedElement.status = 'pending';
+
           updatedElements[existingIndex] = updatedElement;
         } else {
           // Add new element
+          // Infer classification name from code if provided
+          const inferredName = importItem.classification_id ? getEbkpNameFromCode(importItem.classification_id) : null;
+
           const newElement: LocalIFCElement = {
             global_id: importItem.global_id,
             name: importItem.name || '',
@@ -755,7 +766,7 @@ const MainPage = () => {
             material_volumes: null,
             level: importItem.level || null,
             classification_id: importItem.classification_id || null,
-            classification_name: importItem.classification_name || null,
+            classification_name: inferredName,
             classification_system: importItem.classification_system || (importItem.classification_id ? 'eBKP' : null),
             quantity: importItem.quantity || null,
             original_quantity: null,
@@ -769,10 +780,10 @@ const MainPage = () => {
             materials: importItem.materials || null,
             classification: {
               id: importItem.classification_id,
-              name: importItem.classification_name,
+              name: inferredName,
               system: importItem.classification_system || (importItem.classification_id ? 'eBKP' : null)
             },
-            status: 'active',
+            status: 'pending', // New imported elements should also require confirmation
             is_manual: true
           };
           

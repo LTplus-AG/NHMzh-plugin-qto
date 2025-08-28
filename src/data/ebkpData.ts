@@ -5,6 +5,36 @@ export interface EbkpDataItem {
   // Add other fields if necessary, e.g., description, level
 }
 
+// Helper function to normalize EBKP codes (ensure leading zeros)
+const normalizeEbkpCode = (code: string): string => {
+  // Match pattern like C2.3 or C02.03
+  const match = code.match(/^([A-J])(\d{1,2})\.(\d{1,2})$/);
+  if (match) {
+    const [, letter, group, element] = match;
+    // Pad with leading zeros to ensure 2 digits
+    const paddedGroup = group.padStart(2, '0');
+    const paddedElement = element.padStart(2, '0');
+    return `${letter}${paddedGroup}.${paddedElement}`;
+  }
+  return code; // Return original if it doesn't match the pattern
+};
+
+// Function to infer classification name from code
+export const getEbkpNameFromCode = (code: string | null | undefined): string | null => {
+  if (!code) return null;
+
+  const normalizedCode = normalizeEbkpCode(code.trim());
+  const ebkpItem = ebkpData.find(item => item.code === normalizedCode);
+  return ebkpItem ? ebkpItem.name : null;
+};
+
+// Function to check if a code is a valid eBKP code
+export const isValidEbkpCode = (code: string | null | undefined): boolean => {
+  if (!code) return false;
+  const normalizedCode = normalizeEbkpCode(code.trim());
+  return ebkpData.some(item => item.code === normalizedCode);
+};
+
 export const ebkpData: EbkpDataItem[] = [
 /*   { code: "A01.01", name: "Grundstückserwerb" },
   { code: "A01.02", name: "Baurechtserwerb" },

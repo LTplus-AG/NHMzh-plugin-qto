@@ -24,7 +24,7 @@ export interface ExcelImportData {
   volume?: number | null;
   level?: string;
   classification_id?: string;
-  classification_name?: string;
+  // classification_name removed - will be inferred from code
   classification_system?: string;
   materials?: Array<{
     name: string;
@@ -84,7 +84,7 @@ export class ExcelService {
       headers.push('Materialien');
     }
     
-    headers.push('Klassifikation ID', 'Klassifikation Name');
+    headers.push('Klassifikation ID');
     
     // Add headers
     const headerRow = worksheet.addRow(headers);
@@ -126,10 +126,7 @@ export class ExcelService {
         row.push(materialsText);
       }
       
-      row.push(
-        element.classification_id || '',
-        element.classification_name || ''
-      );
+      row.push(element.classification_id || '');
       
       worksheet.addRow(row);
     });
@@ -207,7 +204,6 @@ export class ExcelService {
       const lengthIndex = headers.indexOf('Länge (m)');
       const volumeIndex = headers.indexOf('Volumen (m³)');
       const classificationIdIndex = headers.indexOf('Klassifikation ID');
-      const classificationNameIndex = headers.indexOf('Klassifikation Name');
       const materialsIndex = headers.indexOf('Materialien');
       
       if (guidIndex === -1) {
@@ -295,12 +291,11 @@ export class ExcelService {
         }
         
         const classId = row.getCell(classificationIdIndex).value?.toString();
-        const className = row.getCell(classificationNameIndex).value?.toString();
 
         let classificationSystem: string | undefined;
-        if (classId || className) {
+        if (classId) {
           const ebkpRegex = /^[A-J]\d{2}\.\d{2}(?:\.\d{2})?$/;
-          if (classId && !ebkpRegex.test(classId)) {
+          if (!ebkpRegex.test(classId)) {
             result.warnings.push(`Zeile ${rowNumber}: Ungültiger eBKP-Code '${classId}'`);
           } else {
             classificationSystem = 'eBKP';
@@ -317,7 +312,6 @@ export class ExcelService {
           volume,
           level,
           classification_id: classId,
-          classification_name: className,
           classification_system: classificationSystem,
           materials
         };

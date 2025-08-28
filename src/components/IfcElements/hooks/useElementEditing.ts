@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { EditedQuantity } from "../types";
 import logger from '../../../utils/logger';
 

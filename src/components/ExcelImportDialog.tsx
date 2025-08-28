@@ -1,49 +1,63 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
+  Add,
+  CheckCircle,
+  Close,
+  CloudUpload,
+  FileDownload,
+  Info,
+  Refresh,
+  Search,
+  TableView,
+  Warning,
+  ArrowUpward,
+  ArrowDownward
+} from '@mui/icons-material';
+import {
   Box,
-  Typography,
+  Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Fade,
+  IconButton,
+  InputAdornment,
+  LinearProgress,
   Paper,
+  Snackbar,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Alert,
-  AlertTitle,
-  Chip,
-  LinearProgress,
-  IconButton,
-  Card,
-  CardContent,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
-  Fade,
-  Collapse
+  TextField,
+  Tooltip,
+  Typography,
 } from '@mui/material';
-import {
-  CloudUpload,
-  CheckCircle,
-  Error as ErrorIcon,
-  Warning,
-  Info,
-  Close,
-  FileDownload,
-  Refresh,
-  ExpandMore,
-  ExpandLess,
-  TableView
-} from '@mui/icons-material';
-import { ExcelService, ExcelImportResult, ExcelImportData } from '../utils/excelService';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { IFCElement } from '../types/types';
+import { ExcelImportData, ExcelImportResult, ExcelService } from '../utils/excelService';
+import { getEbkpNameFromCode } from '../data/ebkpData';
 import logger from '../utils/logger';
+
+// Custom debounce hook for performance optimization
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
 
 interface Props {
   open: boolean;
@@ -63,8 +77,15 @@ const ExcelImportDialog: React.FC<Props> = ({
   const [activeStep, setActiveStep] = useState<ImportStep>('file-selection');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importResult, setImportResult] = useState<ExcelImportResult | null>(null);
-  const [showErrors, setShowErrors] = useState(false);
-  const [showWarnings, setShowWarnings] = useState(false);
+
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [copiedGuid, setCopiedGuid] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortField, setSortField] = useState<string>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  
+  // Debounced search for performance optimization
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup timeout on unmount
@@ -123,8 +144,6 @@ const ExcelImportDialog: React.FC<Props> = ({
     setActiveStep('file-selection');
     setSelectedFile(null);
     setImportResult(null);
-    setShowErrors(false);
-    setShowWarnings(false);
     onClose();
   };
 
@@ -142,21 +161,461 @@ const ExcelImportDialog: React.FC<Props> = ({
 
   const getUpdatedElements = () => {
     if (!importResult?.data) return [];
-    
+
     const existingGuids = new Set(existingElements.map(el => el.global_id));
     return importResult.data.filter(item => existingGuids.has(item.global_id));
   };
+
+  // Helper function to normalize values for comparison
+  const normalizeValue = (value: any): any => {
+    if (value === null || value === undefined || value === '' || value === '-') {
+      return null;
+    }
+    // Also handle string representations of null/empty
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed === '' || trimmed === '-' || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') {
+        return null;
+      }
+    }
+    return value;
+  };
+
+  // Helper function to check if a field has changed
+  const hasFieldChanged = (item: ExcelImportData, existingElement: IFCElement | undefined, fieldName: string): boolean => {
+    if (!existingElement) return false;
+
+    switch (fieldName) {
+      case 'name':
+        return normalizeValue(item.name) !== normalizeValue(existingElement.name);
+      case 'type':
+        return normalizeValue(item.type) !== normalizeValue(existingElement.type);
+      case 'quantity':
+        const itemQuantity = item.quantity;
+        const existingQuantity = existingElement.quantity;
+        if (!itemQuantity && !existingQuantity) return false;
+        if (!itemQuantity || !existingQuantity) return true;
+        return itemQuantity.value !== existingQuantity.value ||
+               normalizeValue(itemQuantity.unit) !== normalizeValue(existingQuantity.unit);
+      case 'area':
+        return normalizeValue(item.area) !== normalizeValue(existingElement.area);
+      case 'length':
+        return normalizeValue(item.length) !== normalizeValue(existingElement.length);
+      case 'volume':
+        return normalizeValue(item.volume) !== normalizeValue(existingElement.volume);
+      case 'level':
+        return normalizeValue(item.level) !== normalizeValue(existingElement.level);
+      case 'classification_id':
+        return normalizeValue(item.classification_id) !== normalizeValue(existingElement.classification_id);
+      case 'classification_name':
+        const itemName = getEbkpNameFromCode(item.classification_id);
+        const existingName = getEbkpNameFromCode(existingElement.classification_id);
+        return normalizeValue(itemName) !== normalizeValue(existingName);
+      default:
+        return false;
+    }
+  };
+
+  // Get existing element for comparison
+  const getExistingElement = (globalId: string): IFCElement | undefined => {
+    return existingElements.find(el => el.global_id === globalId);
+  };
+
+  // Handle column sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Helper function to create beautiful highlighting styles
+  const getChangedCellStyle = (hasChanged: boolean, minWidth: number = 80) => ({
+    backgroundColor: hasChanged 
+      ? 'rgba(255, 193, 7, 0.08)' 
+      : 'transparent',
+    borderLeft: hasChanged
+      ? '3px solid #ffc107'
+      : '3px solid transparent',
+    position: 'relative' as const,
+    transition: 'all 0.15s ease-in-out',
+    minWidth,
+    '&::after': hasChanged ? {
+      content: '""',
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      background: 'linear-gradient(90deg, rgba(255, 193, 7, 0.03) 0%, transparent 100%)',
+      pointerEvents: 'none'
+    } : {}
+  });
+
+  // Memoized filter and sort elements for performance optimization
+  const getFilteredAndSortedElements = useMemo(() => {
+    return (newElements: ExcelImportData[], updatedElements: ExcelImportData[]) => {
+      let elements = [...newElements, ...updatedElements];
+
+      // Apply search filter with debounced search term
+      if (debouncedSearchTerm) {
+        const searchLower = debouncedSearchTerm.toLowerCase();
+        elements = elements.filter(item => {
+          const existingElement = getExistingElement(item.global_id);
+          return (
+            item.global_id.toLowerCase().includes(searchLower) ||
+            (item.name || '').toLowerCase().includes(searchLower) ||
+            (item.type || '').toLowerCase().includes(searchLower) ||
+            (item.classification_id || '').toLowerCase().includes(searchLower) ||
+            (getEbkpNameFromCode(item.classification_id) || '').toLowerCase().includes(searchLower) ||
+            (existingElement?.name || '').toLowerCase().includes(searchLower) ||
+            (existingElement?.type || '').toLowerCase().includes(searchLower)
+          );
+        });
+      }
+
+      // Apply sorting
+      if (sortField) {
+        elements.sort((a, b) => {
+          let aValue: any = '';
+          let bValue: any = '';
+
+          switch (sortField) {
+            case 'guid':
+              aValue = a.global_id;
+              bValue = b.global_id;
+              break;
+            case 'name':
+              aValue = a.name || '';
+              bValue = b.name || '';
+              break;
+            case 'type':
+              aValue = a.type || '';
+              bValue = b.type || '';
+              break;
+            case 'quantity':
+              aValue = a.quantity?.value || 0;
+              bValue = b.quantity?.value || 0;
+              break;
+            case 'area':
+              aValue = a.area || 0;
+              bValue = b.area || 0;
+              break;
+            case 'length':
+              aValue = a.length || 0;
+              bValue = b.length || 0;
+              break;
+            case 'volume':
+              aValue = a.volume || 0;
+              bValue = b.volume || 0;
+              break;
+            case 'classificationId':
+              aValue = a.classification_id || '';
+              bValue = b.classification_id || '';
+              break;
+            case 'classificationName':
+              aValue = getEbkpNameFromCode(a.classification_id) || '';
+              bValue = getEbkpNameFromCode(b.classification_id) || '';
+              break;
+          }
+
+          if (typeof aValue === 'string') {
+            aValue = aValue.toLowerCase();
+            bValue = bValue.toLowerCase();
+          }
+
+          if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+          if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+          return 0;
+        });
+      }
+
+      return elements;
+    };
+  }, [debouncedSearchTerm, sortField, sortDirection, getExistingElement]);
+
+  // Memoized filtered and sorted elements for performance
+  const filteredAndSortedElements = useMemo(() => {
+    if (!importResult) return [];
+    const newElements = getNewElements();
+    const updatedElements = getUpdatedElements();
+    return getFilteredAndSortedElements(newElements, updatedElements);
+  }, [importResult, getFilteredAndSortedElements, getNewElements, getUpdatedElements]);
+
+  // Virtualized table row component for performance with large datasets
+  const VirtualizedTableRow = React.memo(({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const item = filteredAndSortedElements[index];
+    const existingElement = getExistingElement(item.global_id);
+
+    return (
+      <div style={{
+        ...style,
+        display: 'flex',
+        alignItems: 'stretch',
+        borderBottom: '1px solid rgba(224, 224, 224, 1)',
+        backgroundColor: index % 2 === 0 ? 'rgba(0, 0, 0, 0.01)' : 'transparent'
+      }}>
+        {/* GUID */}
+        <Box sx={{ 
+          ...getChangedCellStyle(false, 120), 
+          display: 'flex', 
+          alignItems: 'center',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          <Tooltip
+            title={copySuccess && copiedGuid === item.global_id ? "Kopiert!" : "Zum Kopieren klicken"}
+            placement="top"
+            arrow
+          >
+            <Typography
+              variant="body2"
+              sx={{
+                fontFamily: 'monospace',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+                color: 'primary.main',
+                '&:hover': { textDecoration: 'underline' }
+              }}
+              onClick={() => copyGuidToClipboard(item.global_id)}
+            >
+              {item.global_id.substring(0, 8)}...
+            </Typography>
+          </Tooltip>
+        </Box>
+
+        {/* Name */}
+        <Box sx={{ 
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'name'), 150),
+          display: 'flex', 
+          alignItems: 'center',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
+            {item.name || '-'}
+          </Typography>
+        </Box>
+
+        {/* Type */}
+        <Box sx={{ 
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'type'), 100),
+          display: 'flex', 
+          alignItems: 'center',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          {item.type || '-'}
+        </Box>
+
+        {/* Quantity */}
+        <Box sx={{ 
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 80),
+          display: 'flex', 
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          {item.quantity?.value !== undefined && item.quantity?.value !== null ? item.quantity.value.toFixed(2) : '-'}
+        </Box>
+
+        {/* Unit */}
+        <Box sx={{ 
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 60),
+          display: 'flex', 
+          alignItems: 'center',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          <Chip
+            label={item.quantity?.unit || '-'}
+            size="small"
+            variant="outlined"
+            color={item.quantity?.unit ? 'primary' : 'default'}
+          />
+        </Box>
+
+        {/* Area */}
+        <Box sx={{ 
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'area'), 80),
+          display: 'flex', 
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          {item.area !== undefined && item.area !== null ? `${item.area.toFixed(2)} m²` : '-'}
+        </Box>
+
+        {/* Length */}
+        <Box sx={{ 
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'length'), 80),
+          display: 'flex', 
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          {item.length !== undefined && item.length !== null ? `${item.length.toFixed(2)} m` : '-'}
+        </Box>
+
+        {/* Volume */}
+        <Box sx={{ 
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'volume'), 80),
+          display: 'flex', 
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          {item.volume !== undefined && item.volume !== null ? `${item.volume.toFixed(2)} m³` : '-'}
+        </Box>
+
+        {/* Classification ID */}
+        <Box sx={{
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_id'), 120),
+          display: 'flex',
+          alignItems: 'center',
+          px: 2,
+          py: 1,
+          borderRight: '1px solid rgba(224, 224, 224, 1)'
+        }}>
+          {item.classification_id ? (
+            <Chip
+              label={item.classification_id}
+              size="small"
+              variant="outlined"
+              color="primary"
+              sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 120 }}
+            />
+          ) : '-'}
+        </Box>
+
+        {/* Classification Name */}
+        <Box sx={{
+          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_name'), 150),
+          display: 'flex',
+          alignItems: 'center',
+          px: 2,
+          py: 1
+        }}>
+          {item.classification_id ? (
+            <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
+              {getEbkpNameFromCode(item.classification_id) || 'Unbekannt'}
+            </Typography>
+          ) : '-'}
+        </Box>
+      </div>
+    );
+  });
+
+  VirtualizedTableRow.displayName = 'VirtualizedTableRow';
+
+  // Copy GUID to clipboard
+  const copyGuidToClipboard = async (guid: string) => {
+    try {
+      await navigator.clipboard.writeText(guid);
+      setCopiedGuid(guid);
+      setCopySuccess(true);
+      // Auto-hide after 2 seconds
+      setTimeout(() => {
+        setCopySuccess(false);
+        setCopiedGuid('');
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy GUID:', err);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = guid;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopiedGuid(guid);
+        setCopySuccess(true);
+        setTimeout(() => {
+          setCopySuccess(false);
+          setCopiedGuid('');
+        }, 2000);
+      } catch (fallbackErr) {
+        console.error('Fallback copy failed:', fallbackErr);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // Sortable header component
+  const SortableTableCell = ({
+    field,
+    children,
+    align = 'left',
+    sx = {}
+  }: {
+    field: string;
+    children: React.ReactNode;
+    align?: 'left' | 'right' | 'center';
+    sx?: any;
+  }) => (
+    <TableCell align={align} sx={sx}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          cursor: 'pointer',
+          '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.04)' },
+          borderRadius: 1,
+          px: 1,
+          py: 0.5
+        }}
+        onClick={() => handleSort(field)}
+      >
+        <Typography variant="body2" sx={{ fontWeight: 600, mr: 0.5 }}>
+          {children}
+        </Typography>
+        <Box sx={{ display: 'flex', flexDirection: 'column', ml: 'auto' }}>
+          <ArrowUpward
+            sx={{
+              fontSize: 12,
+              color: sortField === field && sortDirection === 'asc' ? 'primary.main' : 'text.disabled',
+              lineHeight: 0.5
+            }}
+          />
+          <ArrowDownward
+            sx={{
+              fontSize: 12,
+              color: sortField === field && sortDirection === 'desc' ? 'primary.main' : 'text.disabled',
+              lineHeight: 0.5,
+              mt: -0.5
+            }}
+          />
+        </Box>
+      </Box>
+    </TableCell>
+  );
 
   const renderFileSelection = () => (
     <Box sx={{ textAlign: 'center', py: 4 }}>
       <CloudUpload sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
       <Typography variant="h6" gutterBottom>
-        Excel-Datei mit Mengendaten auswählen
+Excel-Datei für Mengenimport
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Wählen Sie eine Excel-Datei (.xlsx) mit Ihren Mengendaten aus.
+        Wählen Sie Ihre Excel-Datei (.xlsx) mit aktualisierten Mengendaten aus.
         <br />
-        Spalten sollten GUID, Menge und Einheit enthalten.
+        <strong>Erforderlich:</strong> GUID-Spalte für die Zuordnung zu vorhandenen Elementen
+        <br />
+        <strong>Optional:</strong> Mengen, Klassifikationen und weitere Eigenschaften
       </Typography>
       
       <input
@@ -185,17 +644,29 @@ const ExcelImportDialog: React.FC<Props> = ({
           onClick={downloadTemplate}
           size="small"
         >
-          Vorlage herunterladen
+Beispiel-Vorlage herunterladen
         </Button>
       </Box>
 
       {importResult && !importResult.success && (
-        <Alert severity="error" sx={{ mt: 3, textAlign: 'left' }}>
-          <AlertTitle>Import fehlgeschlagen</AlertTitle>
+        <Box sx={{
+          mt: 3,
+          p: 2,
+          border: 1,
+          borderColor: 'error.main',
+          borderRadius: 1,
+          bgcolor: 'error.light',
+          color: 'error.contrastText'
+        }}>
+          <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+            Import fehlgeschlagen
+          </Typography>
           {importResult.errors.map((error, index) => (
-            <Typography key={index} variant="body2">{error}</Typography>
+            <Typography key={index} variant="body2" sx={{ mb: 0.5 }}>
+              {error}
+            </Typography>
           ))}
-        </Alert>
+        </Box>
       )}
     </Box>
   );
@@ -220,176 +691,512 @@ const ExcelImportDialog: React.FC<Props> = ({
     const totalChanges = newElements.length + updatedElements.length;
 
     return (
-      <Box>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h6">
-            Import-Vorschau: Mengendaten
-          </Typography>
-          <Chip 
-            label={`${totalChanges} Änderungen`}
-            color={totalChanges > 0 ? 'primary' : 'default'}
-            variant="filled"
-          />
+      <Box sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0
+      }}>
+        {/* Beautiful Header Section */}
+        <Box sx={{
+          background: 'linear-gradient(135deg, rgba(25, 118, 210, 0.03) 0%, rgba(25, 118, 210, 0.08) 100%)',
+          borderRadius: 2,
+          p: 2.5,
+          mb: 2.5,
+          border: '1px solid',
+          borderColor: 'rgba(25, 118, 210, 0.08)'
+        }}>
+          {/* Top Row: Title and Statistics */}
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 2,
+            mb: 1.5
+          }}>
+            {/* Left: Title + Change Count + Status */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+              <Typography 
+                variant="h5" 
+                sx={{ 
+                  fontWeight: 600,
+                  color: 'primary.main',
+                  letterSpacing: '-0.025em',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                Änderungsvorschau
+              </Typography>
+              <Chip
+                label={`${totalChanges} Änderungen`}
+                color="primary"
+                variant="filled"
+                size="small"
+                sx={{ fontWeight: 600 }}
+              />
+              {updatedElements.length > 0 && (
+                <Tooltip
+                  title={
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                        Wichtiger Hinweis zum Status:
+                      </Typography>
+                      <Typography variant="body2">
+                        {updatedElements.length} Elemente werden zurückgesetzt
+                      </Typography>
+                      <Box sx={{ mt: 1 }}>
+                        <Typography variant="body2">• Status: "Bestätigt" → "Ausstehend"</Typography>
+                        <Typography variant="body2">• Grund: Daten wurden geändert</Typography>
+                        <Typography variant="body2">• Nächster Schritt: Elemente müssen erneut bestätigt werden</Typography>
+                      </Box>
+                    </Box>
+                  }
+                  placement="bottom-start"
+                  arrow
+                >
+                  <Chip
+                    icon={<Warning fontSize="small" />}
+                    label="Status Reset"
+                    color="warning"
+                    variant="outlined"
+                    size="small"
+                    sx={{ fontWeight: 500 }}
+                  />
+                </Tooltip>
+              )}
+            </Box>
+
+            {/* Right: Compact Statistics Cards */}
+            <Box sx={{
+              display: 'flex',
+              gap: 1,
+              flexWrap: 'nowrap',
+              alignItems: 'center'
+            }}>
+            {/* Verarbeitet */}
+            <Box sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+              p: 1,
+              minWidth: 'fit-content',
+              backgroundColor: 'background.paper',
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'rgba(46, 125, 50, 0.2)',
+              transition: 'all 0.2s ease-in-out',
+              '&:hover': {
+                transform: 'translateY(-1px)',
+                boxShadow: '0 2px 8px rgba(46, 125, 50, 0.15)'
+              }
+            }}>
+              <Box sx={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(46, 125, 50, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <CheckCircle sx={{ fontSize: 16, color: 'success.main' }} />
+              </Box>
+              <Box>
+                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'success.main' }}>
+                  {importResult.stats.processedRows}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                  Verarbeitet
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* Neu */}
+            <Box sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+              p: 1,
+              minWidth: 'fit-content',
+              backgroundColor: 'background.paper',
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'rgba(25, 118, 210, 0.2)',
+              transition: 'all 0.2s ease-in-out',
+              '&:hover': {
+                transform: 'translateY(-1px)',
+                boxShadow: '0 2px 8px rgba(25, 118, 210, 0.15)'
+              }
+            }}>
+              <Box sx={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(25, 118, 210, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Add sx={{ fontSize: 16, color: 'primary.main' }} />
+              </Box>
+              <Box>
+                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'primary.main' }}>
+                  {newElements.length}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                  Neu
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* Aktualisiert */}
+            <Box sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+              p: 1,
+              minWidth: 'fit-content',
+              backgroundColor: 'background.paper',
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'rgba(245, 124, 0, 0.2)',
+              transition: 'all 0.2s ease-in-out',
+              '&:hover': {
+                transform: 'translateY(-1px)',
+                boxShadow: '0 2px 8px rgba(245, 124, 0, 0.15)'
+              }
+            }}>
+              <Box sx={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(245, 124, 0, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Refresh sx={{ fontSize: 16, color: 'warning.main' }} />
+              </Box>
+              <Box>
+                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'warning.main' }}>
+                  {updatedElements.length}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                  Aktualisiert
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* Zeilen Total */}
+            <Box sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+              p: 1,
+              minWidth: 'fit-content',
+              backgroundColor: 'background.paper',
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'rgba(156, 39, 176, 0.2)',
+              transition: 'all 0.2s ease-in-out',
+              '&:hover': {
+                transform: 'translateY(-1px)',
+                boxShadow: '0 2px 8px rgba(156, 39, 176, 0.15)'
+              }
+            }}>
+              <Box sx={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(156, 39, 176, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <TableView sx={{ fontSize: 16, color: '#9c27b0' }} />
+              </Box>
+              <Box>
+                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: '#9c27b0' }}>
+                  {importResult.stats.totalRows}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                  Zeilen
+                </Typography>
+              </Box>
+            </Box>
+          </Box>
+
+          {/* Bottom Row: Search Section */}
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'flex-end',
+            gap: 1,
+            mb: 1
+          }}>
+            <TextField
+              size="small"
+              placeholder="Elemente durchsuchen..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Search fontSize="small" />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ 
+                minWidth: 240,
+                '& .MuiOutlinedInput-root': {
+                  backgroundColor: 'background.paper',
+                  transition: 'all 0.2s ease-in-out',
+                  '&:hover': {
+                    backgroundColor: 'background.paper',
+                    boxShadow: '0 2px 8px rgba(25, 118, 210, 0.1)'
+                  },
+                  '&.Mui-focused': {
+                    backgroundColor: 'background.paper',
+                    boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)'
+                  }
+                }
+              }}
+            />
+            {(debouncedSearchTerm || sortField) && (
+              <Chip
+                label={`${filteredAndSortedElements.length}/${totalChanges}`}
+                size="small"
+                variant="outlined"
+                color="primary"
+              />
+            )}
+            <Tooltip
+              title={
+                <Box>
+                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                    Was bedeuten die farbigen Markierungen?
+                  </Typography>
+                  <Typography variant="body2">• Gelb markierte Zellen: Hier ändern sich die Werte</Typography>
+                  <Typography variant="body2">• Leere Zellen: Werden nur markiert, wenn sie einen bestehenden Wert überschreiben</Typography>
+                </Box>
+              }
+              placement="bottom-end"
+              arrow
+            >
+              <IconButton 
+                size="small" 
+                color="info"
+                sx={{
+                  backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                    transform: 'scale(1.05)'
+                  },
+                  transition: 'all 0.2s ease-in-out'
+                }}
+              >
+                <Info fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
         </Box>
 
-        {/* Statistics Cards */}
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2, mb: 3 }}>
-          <Card variant="outlined">
-            <CardContent sx={{ py: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <CheckCircle color="success" />
+        {/* Compact Status Bar */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexShrink: 0 }}>
+          {/* Errors and Warnings as Compact Chips */}
+          {importResult.errors.length > 0 && (
+            <Tooltip
+              title={
                 <Box>
-                  <Typography variant="h6">{importResult.stats.processedRows}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Verarbeitet
+                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                    Fehler ({importResult.errors.length})
                   </Typography>
+                  {importResult.errors.map((error, index) => (
+                    <Typography key={index} variant="body2" sx={{ mb: 0.5 }}>
+                      • {error}
+                    </Typography>
+                  ))}
                 </Box>
-              </Box>
-            </CardContent>
-          </Card>
+              }
+              placement="bottom"
+              arrow
+            >
+              <Chip
+                label={`Fehler: ${importResult.errors.length}`}
+                color="error"
+                size="small"
+                variant="outlined"
+              />
+            </Tooltip>
+          )}
 
-          <Card variant="outlined">
-            <CardContent sx={{ py: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Info color="primary" />
+          {importResult.warnings.length > 0 && (
+            <Tooltip
+              title={
                 <Box>
-                  <Typography variant="h6">{newElements.length}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Neue Elemente
+                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                    Warnungen ({importResult.warnings.length})
                   </Typography>
+                  {importResult.warnings.map((warning, index) => (
+                    <Typography key={index} variant="body2" sx={{ mb: 0.5 }}>
+                      • {warning}
+                    </Typography>
+                  ))}
                 </Box>
-              </Box>
-            </CardContent>
-          </Card>
-
-          <Card variant="outlined">
-            <CardContent sx={{ py: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Refresh color="warning" />
-                <Box>
-                  <Typography variant="h6">{updatedElements.length}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Aktualisierungen
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-
-          <Card variant="outlined">
-            <CardContent sx={{ py: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TableView color="info" />
-                <Box>
-                  <Typography variant="h6">{importResult.stats.totalRows}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Gesamt Zeilen
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
+              }
+              placement="bottom"
+              arrow
+            >
+              <Chip
+                label={`Warnungen: ${importResult.warnings.length}`}
+                color="warning"
+                size="small"
+                variant="outlined"
+              />
+            </Tooltip>
+          )}
         </Box>
 
-        {/* Errors and Warnings */}
-        {importResult.errors.length > 0 && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            <AlertTitle>
-              Fehler ({importResult.errors.length})
-              <IconButton size="small" onClick={() => setShowErrors(!showErrors)}>
-                {showErrors ? <ExpandLess /> : <ExpandMore />}
-              </IconButton>
-            </AlertTitle>
-            <Collapse in={showErrors}>
-              <List dense>
-                {importResult.errors.map((error, index) => (
-                  <ListItem key={index}>
-                    <ListItemIcon><ErrorIcon fontSize="small" /></ListItemIcon>
-                    <ListItemText primary={error} />
-                  </ListItem>
-                ))}
-              </List>
-            </Collapse>
-          </Alert>
-        )}
-
-        {importResult.warnings.length > 0 && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            <AlertTitle>
-              Warnungen ({importResult.warnings.length})
-              <IconButton size="small" onClick={() => setShowWarnings(!showWarnings)}>
-                {showWarnings ? <ExpandLess /> : <ExpandMore />}
-              </IconButton>
-            </AlertTitle>
-            <Collapse in={showWarnings}>
-              <List dense>
-                {importResult.warnings.map((warning, index) => (
-                  <ListItem key={index}>
-                    <ListItemIcon><Warning fontSize="small" /></ListItemIcon>
-                    <ListItemText primary={warning} />
-                  </ListItem>
-                ))}
-              </List>
-            </Collapse>
-          </Alert>
-        )}
-
-        {/* Preview Table */}
+        {/* Beautiful Preview Table */}
         {totalChanges > 0 && (
-          <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400 }}>
-            <Table stickyHeader size="small">
+          <TableContainer
+            component={Paper}
+            variant="outlined"
+            sx={{
+              flex: 1,
+              minHeight: { xs: 300, sm: 400, md: 500 },
+              maxHeight: { xs: '50vh', sm: '60vh', md: '70vh' },
+              overflow: 'auto',
+              borderRadius: 2,
+              border: '1px solid',
+              borderColor: 'rgba(25, 118, 210, 0.08)',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)',
+              '&:hover': {
+                boxShadow: '0 6px 16px rgba(0, 0, 0, 0.08)'
+              },
+              transition: 'all 0.2s ease-in-out'
+            }}
+          >
+            <Table 
+              stickyHeader 
+              size="small" 
+              sx={{ 
+                minWidth: 800,
+                '& .MuiTableHead-root .MuiTableCell-root': {
+                  backgroundColor: '#f5f7fa !important',
+                  background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important',
+                  fontWeight: 600,
+                  fontSize: '0.875rem',
+                  color: 'primary.main',
+                  borderBottom: '2px solid',
+                  borderBottomColor: 'rgba(25, 118, 210, 0.15)',
+                  backdropFilter: 'none !important'
+                },
+                '& .MuiTableBody-root .MuiTableRow-root': {
+                  '&:hover': {
+                    backgroundColor: 'rgba(25, 118, 210, 0.02)',
+                    cursor: 'default'
+                  },
+                  '&:nth-of-type(even)': {
+                    backgroundColor: 'rgba(0, 0, 0, 0.01)'
+                  }
+                },
+                '& .MuiTableCell-root': {
+                  transition: 'all 0.15s ease-in-out'
+                }
+              }}
+            >
               <TableHead>
                 <TableRow>
-                  <TableCell>GUID</TableCell>
-                  <TableCell>Name</TableCell>
-                  <TableCell>Typ</TableCell>
-                  <TableCell align="right">Menge</TableCell>
-                  <TableCell>Einheit</TableCell>
-                  <TableCell align="right">Fläche</TableCell>
-                  <TableCell align="right">Länge</TableCell>
-                  <TableCell align="right">Volumen</TableCell>
-                  <TableCell>Status</TableCell>
+                  <SortableTableCell field="guid" sx={{ minWidth: 120 }}>GUID</SortableTableCell>
+                  <SortableTableCell field="name" sx={{ minWidth: 150 }}>Name</SortableTableCell>
+                  <SortableTableCell field="type" sx={{ minWidth: 100 }}>Typ</SortableTableCell>
+                  <SortableTableCell field="quantity" align="right" sx={{ minWidth: 80 }}>Menge</SortableTableCell>
+                  <TableCell sx={{ minWidth: 60 }}>Einheit</TableCell>
+                  <SortableTableCell field="area" align="right" sx={{ minWidth: 80 }}>Fläche</SortableTableCell>
+                  <SortableTableCell field="length" align="right" sx={{ minWidth: 80 }}>Länge</SortableTableCell>
+                  <SortableTableCell field="volume" align="right" sx={{ minWidth: 80 }}>Volumen</SortableTableCell>
+                  <SortableTableCell field="classificationId" sx={{ minWidth: 120 }}>Klassifikation ID</SortableTableCell>
+                  <SortableTableCell field="classificationName" sx={{ minWidth: 150 }}>Klassifikation Name</SortableTableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {[...newElements, ...updatedElements].map((item, index) => {
-                  const isNew = !existingElements.some(el => el.global_id === item.global_id);
-                  
-                  return (
-                    <TableRow key={index}>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                          {item.global_id.substring(0, 8)}...
+                {filteredAndSortedElements.map((item, index) => {
+                    const existingElement = getExistingElement(item.global_id);
+
+                    return (
+                      <TableRow key={`${item.global_id}-${index}`}>
+                      <TableCell sx={{ minWidth: 120 }}>
+                        <Tooltip
+                          title={copySuccess && copiedGuid === item.global_id ? "Kopiert!" : "Zum Kopieren klicken"}
+                          placement="top"
+                          arrow
+                        >
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontFamily: 'monospace',
+                              fontSize: '0.75rem',
+                              cursor: 'pointer',
+                              '&:hover': {
+                                backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                                borderRadius: '4px',
+                                padding: '4px 6px',
+                                margin: '-4px -6px'
+                              }
+                            }}
+                            onClick={() => copyGuidToClipboard(item.global_id)}
+                          >
+                            {item.global_id.substring(0, 8)}...
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'name'), 150)}>
+                        <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
+                          {item.name || '-'}
                         </Typography>
                       </TableCell>
-                      <TableCell>{item.name || '-'}</TableCell>
-                      <TableCell>{item.type || '-'}</TableCell>
-                      <TableCell align="right">
+                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'type'), 100)}>
+                        {item.type || '-'}
+                      </TableCell>
+                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 80)}>
                         {item.quantity?.value !== undefined && item.quantity?.value !== null ? item.quantity.value.toFixed(2) : '-'}
                       </TableCell>
-                      <TableCell>
-                        <Chip 
-                          label={item.quantity?.unit || '-'} 
-                          size="small" 
+                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 60)}>
+                        <Chip
+                          label={item.quantity?.unit || '-'}
+                          size="small"
                           variant="outlined"
                           color={item.quantity?.unit ? 'primary' : 'default'}
                         />
                       </TableCell>
-                      <TableCell align="right">
+                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'area'), 80)}>
                         {item.area !== undefined && item.area !== null ? `${item.area.toFixed(2)} m²` : '-'}
                       </TableCell>
-                      <TableCell align="right">
+                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'length'), 80)}>
                         {item.length !== undefined && item.length !== null ? `${item.length.toFixed(2)} m` : '-'}
                       </TableCell>
-                      <TableCell align="right">
+                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'volume'), 80)}>
                         {item.volume !== undefined && item.volume !== null ? `${item.volume.toFixed(2)} m³` : '-'}
                       </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={isNew ? 'Neu' : 'Update'}
-                          color={isNew ? 'success' : 'warning'}
-                          size="small"
-                        />
+                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_id'), 120)}>
+                        {item.classification_id ? (
+                          <Chip
+                            label={item.classification_id}
+                            size="small"
+                            variant="outlined"
+                            color="primary"
+                            sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 120 }}
+                          />
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_name'), 150)}>
+                        {item.classification_id ? (
+                          <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
+                            {getEbkpNameFromCode(item.classification_id) || 'Unbekannt'}
+                          </Typography>
+                        ) : '-'}
                       </TableCell>
                     </TableRow>
                   );
@@ -400,12 +1207,25 @@ const ExcelImportDialog: React.FC<Props> = ({
         )}
 
         {totalChanges === 0 && (
-          <Alert severity="info">
-            <AlertTitle>Keine Änderungen</AlertTitle>
-            Alle importierten Elemente entsprechen den vorhandenen Daten.
-          </Alert>
+          <Box sx={{
+            p: 2,
+            border: 1,
+            borderColor: 'info.main',
+            borderRadius: 1,
+            bgcolor: 'info.light',
+            color: 'info.contrastText'
+          }}>
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+              Alles bereits aktuell
+            </Typography>
+            <Typography variant="body2">
+              Alle Daten in Ihrer Excel-Datei sind bereits in der Datenbank vorhanden.
+              Keine Aktualisierungen notwendig.
+            </Typography>
+          </Box>
         )}
       </Box>
+    </Box>
     );
   };
 
@@ -415,10 +1235,10 @@ const ExcelImportDialog: React.FC<Props> = ({
         <Box>
           <CheckCircle sx={{ fontSize: 64, color: 'success.main', mb: 2 }} />
           <Typography variant="h6" gutterBottom>
-            Import erfolgreich!
+Import erfolgreich abgeschlossen!
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Die Mengendaten wurden erfolgreich importiert.
+            Ihre Excel-Daten wurden erfolgreich importiert und sind bereit zur Überprüfung.
           </Typography>
         </Box>
       </Fade>
@@ -447,55 +1267,178 @@ const ExcelImportDialog: React.FC<Props> = ({
     <Dialog
       open={open}
       onClose={handleClose}
-      maxWidth="lg"
+      maxWidth={false}
       fullWidth
       PaperProps={{
         sx: {
-          minHeight: 600,
-          maxHeight: '90vh'
+          // Different sizes based on active step
+          ...(activeStep === 'file-selection' || activeStep === 'processing' || activeStep === 'complete'
+            ? {
+                width: { xs: '90vw', sm: '500px', md: '600px' },
+                height: 'auto',
+                maxWidth: '600px',
+                minHeight: '400px'
+              }
+            : {
+                width: '95vw',
+                maxWidth: '1400px',
+                height: '95vh',
+                maxHeight: '95vh'
+              }
+          ),
+          m: 0,
+          '& .MuiDialogContent-root': {
+            p: 0,
+            ...(activeStep === 'preview'
+              ? { height: 'calc(100% - 140px)', overflow: 'auto' }
+              : { height: 'auto', overflow: 'visible' }
+            )
+          }
         }
       }}
     >
       <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h6">Excel Import: Mengendaten</Typography>
+        <Typography variant="h6">Excel-Import für Mengen & Klassifikationen</Typography>
         <IconButton onClick={handleClose} size="small">
           <Close />
         </IconButton>
       </DialogTitle>
       
-      <DialogContent>
-        {getStepContent()}
+      <DialogContent sx={{
+        px: activeStep === 'preview' ? 0 : { xs: 2, sm: 3 },
+        py: activeStep === 'preview' ? 0 : { xs: 1, sm: 2 },
+        display: 'flex',
+        flexDirection: 'column',
+        gap: activeStep === 'preview' ? 0 : 2,
+        ...(activeStep === 'preview' && {
+          height: '100%',
+          overflow: 'hidden'
+        })
+      }}>
+        {activeStep === 'preview' ? (
+          <Box sx={{
+            px: { xs: 2, sm: 3 },
+            py: { xs: 1, sm: 2 },
+            height: '100%',
+            overflow: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2
+          }}>
+            {getStepContent()}
+          </Box>
+        ) : (
+          getStepContent()
+        )}
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 3 }}>
+      <DialogActions sx={{
+        px: activeStep === 'preview' ? 0 : { xs: 2, sm: 3 },
+        pb: activeStep === 'preview' ? 0 : { xs: 2, sm: 3 },
+        pt: activeStep === 'preview' ? 0 : 2,
+        flexDirection: { xs: 'column', sm: 'row' },
+        gap: { xs: 1, sm: 1 },
+        ...(activeStep === 'preview' && {
+          background: 'linear-gradient(135deg, rgba(25, 118, 210, 0.02) 0%, rgba(25, 118, 210, 0.04) 100%)',
+          px: { xs: 2, sm: 3 },
+          pb: { xs: 2, sm: 3 },
+          pt: 2,
+          borderTop: '1px solid',
+          borderTopColor: 'rgba(25, 118, 210, 0.08)'
+        })
+      }}>
         {activeStep === 'file-selection' && (
-          <Button onClick={handleClose}>
+          <Button
+            onClick={handleClose}
+            fullWidth
+            sx={{
+              py: 1.25,
+              fontSize: '0.95rem',
+              fontWeight: 500,
+              borderRadius: 1.5,
+              transition: 'all 0.2s ease-in-out',
+              '&:hover': {
+                backgroundColor: 'rgba(0, 0, 0, 0.08)'
+              }
+            }}
+          >
             Abbrechen
           </Button>
         )}
-        
+
         {activeStep === 'preview' && (
           <>
-            <Button 
+            <Button
               onClick={() => {
                 setActiveStep('file-selection');
                 setSelectedFile(null);
                 setImportResult(null);
               }}
+              fullWidth
+              sx={{
+                py: 1.25,
+                fontSize: '0.95rem',
+                fontWeight: 500,
+                borderRadius: 1.5,
+                transition: 'all 0.2s ease-in-out',
+                '&:hover': {
+                  backgroundColor: 'rgba(0, 0, 0, 0.08)',
+                  transform: 'translateY(-1px)'
+                }
+              }}
             >
-              Neue Datei
+              Neue Datei wählen
             </Button>
             <Button
               variant="contained"
               onClick={handleImportConfirm}
               disabled={!canProceed}
               startIcon={<CheckCircle />}
+              fullWidth
+              sx={{
+                py: 1.25,
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                borderRadius: 1.5,
+                background: 'linear-gradient(135deg, #1976d2 0%, #1565c0 100%)',
+                boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+                transition: 'all 0.2s ease-in-out',
+                '&:hover': {
+                  background: 'linear-gradient(135deg, #1565c0 0%, #0d47a1 100%)',
+                  boxShadow: '0 6px 16px rgba(25, 118, 210, 0.4)',
+                  transform: 'translateY(-2px)'
+                },
+                '&:disabled': {
+                  background: 'rgba(0, 0, 0, 0.12)',
+                  boxShadow: 'none',
+                  transform: 'none'
+                }
+              }}
             >
-              Mengendaten importieren
+              Änderungen übernehmen
             </Button>
           </>
         )}
       </DialogActions>
+
+      {/* Copy Success Snackbar */}
+      <Snackbar
+        open={copySuccess}
+        autoHideDuration={2000}
+        onClose={() => setCopySuccess(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Box sx={{
+          minWidth: 300,
+          p: 2,
+          bgcolor: 'success.main',
+          color: 'success.contrastText',
+          borderRadius: 1,
+          textAlign: 'center'
+        }}>
+          GUID kopiert: {copiedGuid.substring(0, 12)}...
+        </Box>
+      </Snackbar>
     </Dialog>
   );
 };

@@ -382,6 +382,7 @@ const IfcElementsList = ({
         setClassificationFilter={setClassificationFilter}
         elements={elements}
         onElementSelect={handleElementSelect}
+        onSearchResults={() => {}}
         viewType={viewType}
         ebkpGroups={ebkpGroups}
       />
