@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build --mode production",
     "build:dev": "tsc -b && vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview --mode production"
+    "preview": "vite preview --mode production",
+    "test": "echo \"No tests yet\" && exit 0"
   },
   "dependencies": {
     "@emotion/react": "11.11.0",

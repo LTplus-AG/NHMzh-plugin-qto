@@ -263,10 +263,16 @@ export class ExcelService {
           }
         }
 
-        // Parse individual measurements
-        const area = ExcelService.parseNumberValue(row.getCell(areaIndex).value);
-        const length = ExcelService.parseNumberValue(row.getCell(lengthIndex).value);
-        const volume = ExcelService.parseNumberValue(row.getCell(volumeIndex).value);
+        // Parse individual measurements (guard optional columns)
+        const area = areaIndex !== -1
+          ? ExcelService.parseNumberValue(row.getCell(areaIndex).value)
+          : null;
+        const length = lengthIndex !== -1
+          ? ExcelService.parseNumberValue(row.getCell(lengthIndex).value)
+          : null;
+        const volume = volumeIndex !== -1
+          ? ExcelService.parseNumberValue(row.getCell(volumeIndex).value)
+          : null;
 
         // Parse materials if present
         let materials: Array<{ name: string; fraction?: number; volume?: number; unit?: string }> | undefined;

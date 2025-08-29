@@ -19,22 +19,28 @@ export const normalizeEbkpCode = (code: string): string => {
   return code; // Return original if it doesn't match the pattern
 };
 
-// Prebuilt Map for faster lookups
-const ebkpMap = new Map(ebkpData.map(i => [i.code, i.name]));
+// Prebuilt Map for faster lookups (lazy to avoid TDZ with ebkpData)
+let _ebkpMap: Map<string, string> | null = null;
+const getEbkpMap = (): Map<string, string> => {
+  if (!_ebkpMap) {
+    _ebkpMap = new Map(ebkpData.map((i) => [normalizeEbkpCode(i.code), i.name]));
+  }
+  return _ebkpMap;
+};
 
 // Function to infer classification name from code
 export const getEbkpNameFromCode = (code: string | null | undefined): string | null => {
   if (!code) return null;
 
   const normalizedCode = normalizeEbkpCode(code.trim());
-  return ebkpMap.get(normalizedCode) ?? null;
+  return getEbkpMap().get(normalizedCode) ?? null;
 };
 
 // Function to check if a code is a valid eBKP code
 export const isValidEbkpCode = (code: string | null | undefined): boolean => {
   if (!code) return false;
   const normalizedCode = normalizeEbkpCode(code);
-  return ebkpMap.has(normalizedCode);
+  return getEbkpMap().has(normalizedCode);
 };
 
 export const ebkpData: EbkpDataItem[] = [

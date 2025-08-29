@@ -114,14 +114,7 @@ const IfcElementsList = ({
   const [expandedMainGroups, setExpandedMainGroups] = useState<string[]>([]);
   const [expandedEbkp, setExpandedEbkp] = useState<string[]>([]);
   const [expandedElements, setExpandedElements] = useState<string[]>([]);
-  const [_selectedElement, setSelectedElement] = useState<IFCElement | null>(
-    null
-  );
-
-  // Stable callback for search results (no-op intentionally)
-  const _handleSearchResults = useCallback(() => {
-    // no-op (intentionally)
-  }, []);
+  const setSelectedElement = useState<IFCElement | null>(null)[1];
 
   // Refs for timeout cleanup
   const scrollTimerRef = useRef<number | null>(null);

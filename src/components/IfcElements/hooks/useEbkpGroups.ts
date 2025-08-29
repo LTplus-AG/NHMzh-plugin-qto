@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { IFCElement } from "../../../types/types";
 import { EbkpGroup, HierarchicalEbkpGroup } from "../types";
+import { normalizeEbkpCode } from "../../../data/ebkpData";
 import { hasZeroQuantityInAnyType } from "../../../utils/zeroQuantityHighlight";
 
 // Main EBKP group names mapping
@@ -17,19 +18,6 @@ const EBKP_MAIN_GROUP_NAMES: Record<string, string> = {
   J: "Ausstattung",
 };
 
-// Helper to normalize EBKP codes to ensure leading zeros
-const normalizeEbkpCode = (code: string): string => {
-  // Match pattern like C2.3 or C02.03
-  const match = code.match(/^([A-J])(\d{1,2})\.(\d{1,2})$/);
-  if (match) {
-    const [, letter, group, element] = match;
-    // Pad with leading zeros to ensure 2 digits
-    const paddedGroup = group.padStart(2, '0');
-    const paddedElement = element.padStart(2, '0');
-    return `${letter}${paddedGroup}.${paddedElement}`;
-  }
-  return code; // Return original if it doesn't match the pattern
-};
 
 // Helper to extract main group letter from EBKP code
 const getMainGroupFromEbkpCode = (code: string): string | null => {
