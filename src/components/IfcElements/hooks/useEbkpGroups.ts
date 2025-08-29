@@ -243,7 +243,7 @@ export const useEbkpGroups = (
             // const groupedElementIds = groupElements.map((el) => el.global_id);
 
             // Aggregate quantities, check for property differences, merge materials (existing logic)
-            let differentProperties = new Set<string>();
+            const differentProperties = new Set<string>();
             let totalVolume = 0;
             const materialMap = new Map<string, any>();
             

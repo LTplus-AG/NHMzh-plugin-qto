@@ -1,6 +1,7 @@
 import * as ExcelJS from 'exceljs';
 import { IFCElement } from '../types/types';
 import { getQuantityTypeFromUnit } from '../types/excelTypes';
+import { normalizeEbkpCode } from '../data/ebkpData';
 
 export interface ExcelExportConfig {
   fileName: string;
@@ -49,43 +50,43 @@ export interface ExcelImportResult {
 }
 
 export class ExcelService {
-  
+
   static async exportToExcel(
     elements: IFCElement[],
     config: ExcelExportConfig
   ): Promise<void> {
     const workbook = new ExcelJS.Workbook();
-    
+
     // Add metadata
     workbook.creator = 'QTO Plugin';
     workbook.lastModifiedBy = 'QTO Plugin';
     workbook.created = new Date();
     workbook.modified = new Date();
-    
+
     // Create main worksheet
     const worksheet = workbook.addWorksheet('Mengendaten');
-    
+
     // Setup headers based on config
     const headers: string[] = [];
-    
+
     if (config.includeGuid !== false) {
       headers.push('GUID');
     }
-    
+
     headers.push('Name', 'Typ', 'Ebene');
-    
+
     if (config.includeQuantities !== false) {
       headers.push('Menge', 'Einheit');
     }
-    
+
     headers.push('Fläche (m²)', 'Länge (m)', 'Volumen (m³)');
-    
+
     if (config.includeMaterials) {
       headers.push('Materialien');
     }
-    
+
     headers.push('Klassifikation ID');
-    
+
     // Add headers
     const headerRow = worksheet.addRow(headers);
     headerRow.fill = {
@@ -94,17 +95,17 @@ export class ExcelService {
       fgColor: { argb: 'FF4472C4' }
     };
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    
+
     // Add data rows
     elements.forEach(element => {
       const row: (string | number | null | undefined)[] = [];
-      
+
       if (config.includeGuid !== false) {
         row.push(element.global_id);
       }
-      
+
       row.push(element.name || '', element.type || '', element.level || '');
-      
+
       if (config.includeQuantities !== false) {
         if (element.quantity) {
           row.push(element.quantity.value, element.quantity.unit || '');
@@ -112,25 +113,25 @@ export class ExcelService {
           row.push('', '');
         }
       }
-      
+
       row.push(
         element.area || '',
         element.length || '',
         element.volume || ''
       );
-      
+
       if (config.includeMaterials) {
-        const materialsText = element.materials?.map(m => 
+        const materialsText = element.materials?.map(m =>
           `${m.name}${m.fraction ? ` (${(m.fraction * 100).toFixed(1)}%)` : ''}`
         ).join(', ') || '';
         row.push(materialsText);
       }
-      
+
       row.push(element.classification_id || '');
-      
+
       worksheet.addRow(row);
     });
-    
+
     // Auto-fit columns
     worksheet.columns.forEach(column => {
       if (column && column.eachCell) {
@@ -144,13 +145,13 @@ export class ExcelService {
         column.width = Math.min(maxLength + 2, 50);
       }
     });
-    
+
     // Create buffer and download
     const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { 
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     });
-    
+
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -160,7 +161,7 @@ export class ExcelService {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
   }
-  
+
   static async importFromExcel(file: File): Promise<ExcelImportResult> {
     const result: ExcelImportResult = {
       success: false,
@@ -175,24 +176,24 @@ export class ExcelService {
         errorRows: 0
       }
     };
-    
+
     try {
       const workbook = new ExcelJS.Workbook();
       const buffer = await file.arrayBuffer();
       await workbook.xlsx.load(buffer);
-      
+
       const worksheet = workbook.getWorksheet('Mengendaten');
       if (!worksheet) {
         result.errors.push('Arbeitsblatt "Mengendaten" nicht gefunden');
         return result;
       }
-      
+
       const headerRow = worksheet.getRow(1);
       const headers: string[] = [];
       headerRow.eachCell((cell, colNumber) => {
         headers[colNumber] = cell.value?.toString() || '';
       });
-      
+
       // Find column indices (ExcelJS headers array is 1-based)
       const guidIndex = headers.indexOf('GUID');
       const nameIndex = headers.indexOf('Name');
@@ -205,38 +206,38 @@ export class ExcelService {
       const volumeIndex = headers.indexOf('Volumen (m³)');
       const classificationIdIndex = headers.indexOf('Klassifikation ID');
       const materialsIndex = headers.indexOf('Materialien');
-      
+
       if (guidIndex === -1) {
         result.errors.push('Spalte "GUID" nicht gefunden');
         return result;
       }
-      
+
       // Process data rows
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return; // Skip header
-        
+
         result.stats.totalRows++;
-        
+
         const guid = row.getCell(guidIndex).value?.toString();
         if (!guid) {
           result.warnings.push(`Zeile ${rowNumber}: GUID ist leer`);
           result.stats.errorRows++;
           return;
         }
-        
+
         const name = row.getCell(nameIndex).value?.toString();
         const type = row.getCell(typeIndex).value?.toString();
         const level = row.getCell(levelIndex).value?.toString();
-        
+
         // Parse quantity
         const quantityValue = row.getCell(quantityIndex).value;
         const unitValue = row.getCell(unitIndex).value?.toString();
-        
+
         let quantity: { value: number | null; type: string; unit: string } | undefined;
-        
+
         if (quantityValue !== undefined && quantityValue !== null) {
           let numValue: number | null = null;
-          
+
           if (typeof quantityValue === 'number') {
             numValue = quantityValue;
           } else if (typeof quantityValue === 'string') {
@@ -245,15 +246,15 @@ export class ExcelService {
               numValue = parsed;
             }
           }
-          
+
           if (numValue !== null) {
             // Determine quantity type based on unit or element type
             let quantityType = 'area'; // default
-            
+
             if (unitValue) {
               quantityType = getQuantityTypeFromUnit(unitValue);
             }
-            
+
             quantity = {
               value: numValue,
               type: quantityType,
@@ -261,14 +262,14 @@ export class ExcelService {
             };
           }
         }
-        
+
         // Parse individual measurements
         const area = ExcelService.parseNumberValue(row.getCell(areaIndex).value);
         const length = ExcelService.parseNumberValue(row.getCell(lengthIndex).value);
         const volume = ExcelService.parseNumberValue(row.getCell(volumeIndex).value);
-        
+
         // Parse materials if present
-        let materials: Array<{name: string; fraction?: number; volume?: number; unit?: string}> | undefined;
+        let materials: Array<{ name: string; fraction?: number; volume?: number; unit?: string }> | undefined;
         if (materialsIndex !== -1) {
           const materialsText = row.getCell(materialsIndex).value?.toString();
           if (materialsText) {
@@ -289,16 +290,26 @@ export class ExcelService {
             });
           }
         }
-        
-        const classId = row.getCell(classificationIdIndex).value?.toString();
 
+        // Handle classification ID - check if column exists first
+        let classId: string | undefined;
         let classificationSystem: string | undefined;
-        if (classId) {
-          const ebkpRegex = /^[A-J]\d{2}\.\d{2}(?:\.\d{2})?$/;
-          if (!ebkpRegex.test(classId)) {
-            result.warnings.push(`Zeile ${rowNumber}: Ungültiger eBKP-Code '${classId}'`);
-          } else {
-            classificationSystem = 'eBKP';
+
+        if (classificationIdIndex !== -1) {
+          const rawClassId = row.getCell(classificationIdIndex).value?.toString();
+          if (rawClassId) {
+            // Use shared eBKP helpers for consistent validation and normalization
+            const normalizedCode = normalizeEbkpCode(rawClassId);
+
+            // Check if normalization changed the code (indicates it was valid)
+            if (normalizedCode !== rawClassId) {
+              // Code was successfully normalized, so it's valid
+              classId = normalizedCode;
+              classificationSystem = 'eBKP';
+            } else {
+              // Code didn't match the pattern, so it's invalid
+              result.warnings.push(`Zeile ${rowNumber}: Ungültiger eBKP-Code '${rawClassId}'`);
+            }
           }
         }
 
@@ -315,25 +326,25 @@ export class ExcelService {
           classification_system: classificationSystem,
           materials
         };
-        
+
         result.data.push(importData);
         result.stats.processedRows++;
       });
-      
+
       // Set success if we processed at least some data
       result.success = result.data.length > 0;
-      
+
       if (result.data.length === 0) {
         result.errors.push('Keine gültigen Daten gefunden');
       }
-      
+
     } catch (error) {
       result.errors.push(`Fehler beim Lesen der Excel-Datei: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`);
     }
-    
+
     return result;
   }
-  
+
   static async generateTemplate(elements: IFCElement[]): Promise<void> {
     const config: ExcelExportConfig = {
       fileName: `mengendaten-template-${new Date().toISOString().split('T')[0]}`,
@@ -342,10 +353,10 @@ export class ExcelService {
       includeUnits: true,
       includeMaterials: true
     };
-    
+
     // Create a sample with first few elements or empty template
     const sampleElements = elements.slice(0, 5);
-    
+
     await ExcelService.exportToExcel(sampleElements, config);
   }
 
@@ -353,19 +364,19 @@ export class ExcelService {
     if (value === null || value === undefined || value === '') {
       return null;
     }
-    
+
     // Handle number type
     if (typeof value === 'number') {
       return isNaN(value) ? null : value;
     }
-    
+
     // Handle string type
     if (typeof value === 'string') {
       const cleanValue = value.trim().replace(',', '.');
       const parsed = parseFloat(cleanValue);
       return isNaN(parsed) ? null : parsed;
     }
-    
+
     // Handle other types
     return null;
   }

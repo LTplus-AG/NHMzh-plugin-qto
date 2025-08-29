@@ -37,27 +37,13 @@ import {
   Typography,
 } from '@mui/material';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useDebounce } from 'use-debounce';
 import { IFCElement } from '../types/types';
 import { ExcelImportData, ExcelImportResult, ExcelService } from '../utils/excelService';
 import { getEbkpNameFromCode } from '../data/ebkpData';
 import logger from '../utils/logger';
 
-// Custom debounce hook for performance optimization
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [value, delay]);
-
-  return debouncedValue;
-}
+// Using library debounce hook
 
 interface Props {
   open: boolean;
@@ -83,10 +69,10 @@ const ExcelImportDialog: React.FC<Props> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  
+
   // Debounced search for performance optimization
-  const debouncedSearchTerm = useDebounce(searchTerm, 300);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [debouncedSearchTerm] = useDebounce(searchTerm, 300);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -110,7 +96,7 @@ const ExcelImportDialog: React.FC<Props> = ({
     try {
       const result = await ExcelService.importFromExcel(file);
       setImportResult(result);
-      
+
       if (result.success && result.data.length > 0) {
         setActiveStep('preview');
       } else {
@@ -140,7 +126,7 @@ const ExcelImportDialog: React.FC<Props> = ({
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-    
+
     setActiveStep('file-selection');
     setSelectedFile(null);
     setImportResult(null);
@@ -154,7 +140,7 @@ const ExcelImportDialog: React.FC<Props> = ({
 
   const getNewElements = () => {
     if (!importResult?.data) return [];
-    
+
     const existingGuids = new Set(existingElements.map(el => el.global_id));
     return importResult.data.filter(item => !existingGuids.has(item.global_id));
   };
@@ -191,12 +177,14 @@ const ExcelImportDialog: React.FC<Props> = ({
       case 'type':
         return normalizeValue(item.type) !== normalizeValue(existingElement.type);
       case 'quantity':
-        const itemQuantity = item.quantity;
-        const existingQuantity = existingElement.quantity;
-        if (!itemQuantity && !existingQuantity) return false;
-        if (!itemQuantity || !existingQuantity) return true;
-        return itemQuantity.value !== existingQuantity.value ||
-               normalizeValue(itemQuantity.unit) !== normalizeValue(existingQuantity.unit);
+        {
+          const itemQuantity = item.quantity;
+          const existingQuantity = existingElement.quantity;
+          if (!itemQuantity && !existingQuantity) return false;
+          if (!itemQuantity || !existingQuantity) return true;
+          return itemQuantity.value !== existingQuantity.value ||
+            normalizeValue(itemQuantity.unit) !== normalizeValue(existingQuantity.unit);
+        }
       case 'area':
         return normalizeValue(item.area) !== normalizeValue(existingElement.area);
       case 'length':
@@ -208,18 +196,20 @@ const ExcelImportDialog: React.FC<Props> = ({
       case 'classification_id':
         return normalizeValue(item.classification_id) !== normalizeValue(existingElement.classification_id);
       case 'classification_name':
-        const itemName = getEbkpNameFromCode(item.classification_id);
-        const existingName = getEbkpNameFromCode(existingElement.classification_id);
-        return normalizeValue(itemName) !== normalizeValue(existingName);
+        {
+          const itemName = getEbkpNameFromCode(item.classification_id);
+          const existingName = getEbkpNameFromCode(existingElement.classification_id);
+          return normalizeValue(itemName) !== normalizeValue(existingName);
+        }
       default:
         return false;
     }
   };
 
   // Get existing element for comparison
-  const getExistingElement = (globalId: string): IFCElement | undefined => {
+  const getExistingElement = useCallback((globalId: string): IFCElement | undefined => {
     return existingElements.find(el => el.global_id === globalId);
-  };
+  }, [existingElements]);
 
   // Handle column sorting
   const handleSort = (field: string) => {
@@ -233,8 +223,8 @@ const ExcelImportDialog: React.FC<Props> = ({
 
   // Helper function to create beautiful highlighting styles
   const getChangedCellStyle = (hasChanged: boolean, minWidth: number = 80) => ({
-    backgroundColor: hasChanged 
-      ? 'rgba(255, 193, 7, 0.08)' 
+    backgroundColor: hasChanged
+      ? 'rgba(255, 193, 7, 0.08)'
       : 'transparent',
     borderLeft: hasChanged
       ? '3px solid #ffc107'
@@ -358,9 +348,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         backgroundColor: index % 2 === 0 ? 'rgba(0, 0, 0, 0.01)' : 'transparent'
       }}>
         {/* GUID */}
-        <Box sx={{ 
-          ...getChangedCellStyle(false, 120), 
-          display: 'flex', 
+        <Box sx={{
+          ...getChangedCellStyle(false, 120),
+          display: 'flex',
           alignItems: 'center',
           px: 2,
           py: 1,
@@ -388,9 +378,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         </Box>
 
         {/* Name */}
-        <Box sx={{ 
+        <Box sx={{
           ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'name'), 150),
-          display: 'flex', 
+          display: 'flex',
           alignItems: 'center',
           px: 2,
           py: 1,
@@ -402,9 +392,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         </Box>
 
         {/* Type */}
-        <Box sx={{ 
+        <Box sx={{
           ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'type'), 100),
-          display: 'flex', 
+          display: 'flex',
           alignItems: 'center',
           px: 2,
           py: 1,
@@ -414,9 +404,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         </Box>
 
         {/* Quantity */}
-        <Box sx={{ 
+        <Box sx={{
           ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 80),
-          display: 'flex', 
+          display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
           px: 2,
@@ -427,9 +417,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         </Box>
 
         {/* Unit */}
-        <Box sx={{ 
+        <Box sx={{
           ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 60),
-          display: 'flex', 
+          display: 'flex',
           alignItems: 'center',
           px: 2,
           py: 1,
@@ -444,9 +434,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         </Box>
 
         {/* Area */}
-        <Box sx={{ 
+        <Box sx={{
           ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'area'), 80),
-          display: 'flex', 
+          display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
           px: 2,
@@ -457,9 +447,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         </Box>
 
         {/* Length */}
-        <Box sx={{ 
+        <Box sx={{
           ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'length'), 80),
-          display: 'flex', 
+          display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
           px: 2,
@@ -470,9 +460,9 @@ const ExcelImportDialog: React.FC<Props> = ({
         </Box>
 
         {/* Volume */}
-        <Box sx={{ 
+        <Box sx={{
           ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'volume'), 80),
-          display: 'flex', 
+          display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
           px: 2,
@@ -608,7 +598,7 @@ const ExcelImportDialog: React.FC<Props> = ({
     <Box sx={{ textAlign: 'center', py: 4 }}>
       <CloudUpload sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
       <Typography variant="h6" gutterBottom>
-Excel-Datei für Mengenimport
+        Excel-Datei für Mengenimport
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Wählen Sie Ihre Excel-Datei (.xlsx) mit aktualisierten Mengendaten aus.
@@ -617,7 +607,7 @@ Excel-Datei für Mengenimport
         <br />
         <strong>Optional:</strong> Mengen, Klassifikationen und weitere Eigenschaften
       </Typography>
-      
+
       <input
         accept=".xlsx,.xls"
         style={{ display: 'none' }}
@@ -644,7 +634,7 @@ Excel-Datei für Mengenimport
           onClick={downloadTemplate}
           size="small"
         >
-Beispiel-Vorlage herunterladen
+          Beispiel-Vorlage herunterladen
         </Button>
       </Box>
 
@@ -707,9 +697,9 @@ Beispiel-Vorlage herunterladen
           borderColor: 'rgba(25, 118, 210, 0.08)'
         }}>
           {/* Top Row: Title and Statistics */}
-          <Box sx={{ 
-            display: 'flex', 
-            alignItems: 'center', 
+          <Box sx={{
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'space-between',
             flexWrap: 'wrap',
             gap: 2,
@@ -717,9 +707,9 @@ Beispiel-Vorlage herunterladen
           }}>
             {/* Left: Title + Change Count + Status */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
-              <Typography 
-                variant="h5" 
-                sx={{ 
+              <Typography
+                variant="h5"
+                sx={{
                   fontWeight: 600,
                   color: 'primary.main',
                   letterSpacing: '-0.025em',
@@ -774,458 +764,458 @@ Beispiel-Vorlage herunterladen
               flexWrap: 'nowrap',
               alignItems: 'center'
             }}>
-            {/* Verarbeitet */}
-            <Box sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.75,
-              p: 1,
-              minWidth: 'fit-content',
-              backgroundColor: 'background.paper',
-              borderRadius: 1,
-              border: '1px solid',
-              borderColor: 'rgba(46, 125, 50, 0.2)',
-              transition: 'all 0.2s ease-in-out',
-              '&:hover': {
-                transform: 'translateY(-1px)',
-                boxShadow: '0 2px 8px rgba(46, 125, 50, 0.15)'
-              }
-            }}>
+              {/* Verarbeitet */}
               <Box sx={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                backgroundColor: 'rgba(46, 125, 50, 0.1)',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center'
+                gap: 0.75,
+                p: 1,
+                minWidth: 'fit-content',
+                backgroundColor: 'background.paper',
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'rgba(46, 125, 50, 0.2)',
+                transition: 'all 0.2s ease-in-out',
+                '&:hover': {
+                  transform: 'translateY(-1px)',
+                  boxShadow: '0 2px 8px rgba(46, 125, 50, 0.15)'
+                }
               }}>
-                <CheckCircle sx={{ fontSize: 16, color: 'success.main' }} />
+                <Box sx={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  backgroundColor: 'rgba(46, 125, 50, 0.1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <CheckCircle sx={{ fontSize: 16, color: 'success.main' }} />
+                </Box>
+                <Box>
+                  <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'success.main' }}>
+                    {importResult.stats.processedRows}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                    Verarbeitet
+                  </Typography>
+                </Box>
               </Box>
-              <Box>
-                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'success.main' }}>
-                  {importResult.stats.processedRows}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
-                  Verarbeitet
-                </Typography>
+
+              {/* Neu */}
+              <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                p: 1,
+                minWidth: 'fit-content',
+                backgroundColor: 'background.paper',
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'rgba(25, 118, 210, 0.2)',
+                transition: 'all 0.2s ease-in-out',
+                '&:hover': {
+                  transform: 'translateY(-1px)',
+                  boxShadow: '0 2px 8px rgba(25, 118, 210, 0.15)'
+                }
+              }}>
+                <Box sx={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  backgroundColor: 'rgba(25, 118, 210, 0.1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Add sx={{ fontSize: 16, color: 'primary.main' }} />
+                </Box>
+                <Box>
+                  <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'primary.main' }}>
+                    {newElements.length}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                    Neu
+                  </Typography>
+                </Box>
+              </Box>
+
+              {/* Aktualisiert */}
+              <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                p: 1,
+                minWidth: 'fit-content',
+                backgroundColor: 'background.paper',
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'rgba(245, 124, 0, 0.2)',
+                transition: 'all 0.2s ease-in-out',
+                '&:hover': {
+                  transform: 'translateY(-1px)',
+                  boxShadow: '0 2px 8px rgba(245, 124, 0, 0.15)'
+                }
+              }}>
+                <Box sx={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  backgroundColor: 'rgba(245, 124, 0, 0.1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Refresh sx={{ fontSize: 16, color: 'warning.main' }} />
+                </Box>
+                <Box>
+                  <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'warning.main' }}>
+                    {updatedElements.length}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                    Aktualisiert
+                  </Typography>
+                </Box>
+              </Box>
+
+              {/* Zeilen Total */}
+              <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                p: 1,
+                minWidth: 'fit-content',
+                backgroundColor: 'background.paper',
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'rgba(156, 39, 176, 0.2)',
+                transition: 'all 0.2s ease-in-out',
+                '&:hover': {
+                  transform: 'translateY(-1px)',
+                  boxShadow: '0 2px 8px rgba(156, 39, 176, 0.15)'
+                }
+              }}>
+                <Box sx={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  backgroundColor: 'rgba(156, 39, 176, 0.1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <TableView sx={{ fontSize: 16, color: '#9c27b0' }} />
+                </Box>
+                <Box>
+                  <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: '#9c27b0' }}>
+                    {importResult.stats.totalRows}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
+                    Zeilen
+                  </Typography>
+                </Box>
               </Box>
             </Box>
 
-            {/* Neu */}
+            {/* Bottom Row: Search Section */}
             <Box sx={{
               display: 'flex',
               alignItems: 'center',
-              gap: 0.75,
-              p: 1,
-              minWidth: 'fit-content',
-              backgroundColor: 'background.paper',
-              borderRadius: 1,
-              border: '1px solid',
-              borderColor: 'rgba(25, 118, 210, 0.2)',
-              transition: 'all 0.2s ease-in-out',
-              '&:hover': {
-                transform: 'translateY(-1px)',
-                boxShadow: '0 2px 8px rgba(25, 118, 210, 0.15)'
-              }
+              justifyContent: 'flex-end',
+              gap: 1,
+              mb: 1
             }}>
-              <Box sx={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                backgroundColor: 'rgba(25, 118, 210, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Add sx={{ fontSize: 16, color: 'primary.main' }} />
-              </Box>
-              <Box>
-                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'primary.main' }}>
-                  {newElements.length}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
-                  Neu
-                </Typography>
-              </Box>
-            </Box>
-
-            {/* Aktualisiert */}
-            <Box sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.75,
-              p: 1,
-              minWidth: 'fit-content',
-              backgroundColor: 'background.paper',
-              borderRadius: 1,
-              border: '1px solid',
-              borderColor: 'rgba(245, 124, 0, 0.2)',
-              transition: 'all 0.2s ease-in-out',
-              '&:hover': {
-                transform: 'translateY(-1px)',
-                boxShadow: '0 2px 8px rgba(245, 124, 0, 0.15)'
-              }
-            }}>
-              <Box sx={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                backgroundColor: 'rgba(245, 124, 0, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Refresh sx={{ fontSize: 16, color: 'warning.main' }} />
-              </Box>
-              <Box>
-                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: 'warning.main' }}>
-                  {updatedElements.length}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
-                  Aktualisiert
-                </Typography>
-              </Box>
-            </Box>
-
-            {/* Zeilen Total */}
-            <Box sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.75,
-              p: 1,
-              minWidth: 'fit-content',
-              backgroundColor: 'background.paper',
-              borderRadius: 1,
-              border: '1px solid',
-              borderColor: 'rgba(156, 39, 176, 0.2)',
-              transition: 'all 0.2s ease-in-out',
-              '&:hover': {
-                transform: 'translateY(-1px)',
-                boxShadow: '0 2px 8px rgba(156, 39, 176, 0.15)'
-              }
-            }}>
-              <Box sx={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                backgroundColor: 'rgba(156, 39, 176, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <TableView sx={{ fontSize: 16, color: '#9c27b0' }} />
-              </Box>
-              <Box>
-                <Typography variant="body2" fontWeight="bold" sx={{ lineHeight: 1.2, color: '#9c27b0' }}>
-                  {importResult.stats.totalRows}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1, fontSize: '0.7rem' }}>
-                  Zeilen
-                </Typography>
-              </Box>
+              <TextField
+                size="small"
+                placeholder="Elemente durchsuchen..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Search fontSize="small" />
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{
+                  minWidth: 240,
+                  '& .MuiOutlinedInput-root': {
+                    backgroundColor: 'background.paper',
+                    transition: 'all 0.2s ease-in-out',
+                    '&:hover': {
+                      backgroundColor: 'background.paper',
+                      boxShadow: '0 2px 8px rgba(25, 118, 210, 0.1)'
+                    },
+                    '&.Mui-focused': {
+                      backgroundColor: 'background.paper',
+                      boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)'
+                    }
+                  }
+                }}
+              />
+              {(debouncedSearchTerm || sortField) && (
+                <Chip
+                  label={`${filteredAndSortedElements.length}/${totalChanges}`}
+                  size="small"
+                  variant="outlined"
+                  color="primary"
+                />
+              )}
+              <Tooltip
+                title={
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                      Was bedeuten die farbigen Markierungen?
+                    </Typography>
+                    <Typography variant="body2">• Gelb markierte Zellen: Hier ändern sich die Werte</Typography>
+                    <Typography variant="body2">• Leere Zellen: Werden nur markiert, wenn sie einen bestehenden Wert überschreiben</Typography>
+                  </Box>
+                }
+                placement="bottom-end"
+                arrow
+              >
+                <IconButton
+                  size="small"
+                  color="info"
+                  sx={{
+                    backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                      transform: 'scale(1.05)'
+                    },
+                    transition: 'all 0.2s ease-in-out'
+                  }}
+                >
+                  <Info fontSize="small" />
+                </IconButton>
+              </Tooltip>
             </Box>
           </Box>
 
-          {/* Bottom Row: Search Section */}
-          <Box sx={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'flex-end',
-            gap: 1,
-            mb: 1
-          }}>
-            <TextField
-              size="small"
-              placeholder="Elemente durchsuchen..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Search fontSize="small" />
-                  </InputAdornment>
-                ),
-              }}
-              sx={{ 
-                minWidth: 240,
-                '& .MuiOutlinedInput-root': {
-                  backgroundColor: 'background.paper',
-                  transition: 'all 0.2s ease-in-out',
-                  '&:hover': {
-                    backgroundColor: 'background.paper',
-                    boxShadow: '0 2px 8px rgba(25, 118, 210, 0.1)'
-                  },
-                  '&.Mui-focused': {
-                    backgroundColor: 'background.paper',
-                    boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)'
-                  }
+          {/* Compact Status Bar */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexShrink: 0 }}>
+            {/* Errors and Warnings as Compact Chips */}
+            {importResult.errors.length > 0 && (
+              <Tooltip
+                title={
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                      Fehler ({importResult.errors.length})
+                    </Typography>
+                    {importResult.errors.map((error, index) => (
+                      <Typography key={index} variant="body2" sx={{ mb: 0.5 }}>
+                        • {error}
+                      </Typography>
+                    ))}
+                  </Box>
                 }
-              }}
-            />
-            {(debouncedSearchTerm || sortField) && (
-              <Chip
-                label={`${filteredAndSortedElements.length}/${totalChanges}`}
-                size="small"
-                variant="outlined"
-                color="primary"
-              />
+                placement="bottom"
+                arrow
+              >
+                <Chip
+                  label={`Fehler: ${importResult.errors.length}`}
+                  color="error"
+                  size="small"
+                  variant="outlined"
+                />
+              </Tooltip>
             )}
-            <Tooltip
-              title={
-                <Box>
-                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                    Was bedeuten die farbigen Markierungen?
-                  </Typography>
-                  <Typography variant="body2">• Gelb markierte Zellen: Hier ändern sich die Werte</Typography>
-                  <Typography variant="body2">• Leere Zellen: Werden nur markiert, wenn sie einen bestehenden Wert überschreiben</Typography>
-                </Box>
-              }
-              placement="bottom-end"
-              arrow
+
+            {importResult.warnings.length > 0 && (
+              <Tooltip
+                title={
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                      Warnungen ({importResult.warnings.length})
+                    </Typography>
+                    {importResult.warnings.map((warning, index) => (
+                      <Typography key={index} variant="body2" sx={{ mb: 0.5 }}>
+                        • {warning}
+                      </Typography>
+                    ))}
+                  </Box>
+                }
+                placement="bottom"
+                arrow
+              >
+                <Chip
+                  label={`Warnungen: ${importResult.warnings.length}`}
+                  color="warning"
+                  size="small"
+                  variant="outlined"
+                />
+              </Tooltip>
+            )}
+          </Box>
+
+          {/* Beautiful Preview Table */}
+          {totalChanges > 0 && (
+            <TableContainer
+              component={Paper}
+              variant="outlined"
+              sx={{
+                flex: 1,
+                minHeight: { xs: 300, sm: 400, md: 500 },
+                maxHeight: { xs: '50vh', sm: '60vh', md: '70vh' },
+                overflow: 'auto',
+                borderRadius: 2,
+                border: '1px solid',
+                borderColor: 'rgba(25, 118, 210, 0.08)',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)',
+                '&:hover': {
+                  boxShadow: '0 6px 16px rgba(0, 0, 0, 0.08)'
+                },
+                transition: 'all 0.2s ease-in-out'
+              }}
             >
-              <IconButton 
-                size="small" 
-                color="info"
+              <Table
+                stickyHeader
+                size="small"
                 sx={{
-                  backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(25, 118, 210, 0.08)',
-                    transform: 'scale(1.05)'
+                  minWidth: 800,
+                  '& .MuiTableHead-root .MuiTableCell-root': {
+                    backgroundColor: '#f5f7fa !important',
+                    background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important',
+                    fontWeight: 600,
+                    fontSize: '0.875rem',
+                    color: 'primary.main',
+                    borderBottom: '2px solid',
+                    borderBottomColor: 'rgba(25, 118, 210, 0.15)',
+                    backdropFilter: 'none !important'
                   },
-                  transition: 'all 0.2s ease-in-out'
+                  '& .MuiTableBody-root .MuiTableRow-root': {
+                    '&:hover': {
+                      backgroundColor: 'rgba(25, 118, 210, 0.02)',
+                      cursor: 'default'
+                    },
+                    '&:nth-of-type(even)': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.01)'
+                    }
+                  },
+                  '& .MuiTableCell-root': {
+                    transition: 'all 0.15s ease-in-out'
+                  }
                 }}
               >
-                <Info fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Box>
-        </Box>
-
-        {/* Compact Status Bar */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexShrink: 0 }}>
-          {/* Errors and Warnings as Compact Chips */}
-          {importResult.errors.length > 0 && (
-            <Tooltip
-              title={
-                <Box>
-                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                    Fehler ({importResult.errors.length})
-                  </Typography>
-                  {importResult.errors.map((error, index) => (
-                    <Typography key={index} variant="body2" sx={{ mb: 0.5 }}>
-                      • {error}
-                    </Typography>
-                  ))}
-                </Box>
-              }
-              placement="bottom"
-              arrow
-            >
-              <Chip
-                label={`Fehler: ${importResult.errors.length}`}
-                color="error"
-                size="small"
-                variant="outlined"
-              />
-            </Tooltip>
-          )}
-
-          {importResult.warnings.length > 0 && (
-            <Tooltip
-              title={
-                <Box>
-                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                    Warnungen ({importResult.warnings.length})
-                  </Typography>
-                  {importResult.warnings.map((warning, index) => (
-                    <Typography key={index} variant="body2" sx={{ mb: 0.5 }}>
-                      • {warning}
-                    </Typography>
-                  ))}
-                </Box>
-              }
-              placement="bottom"
-              arrow
-            >
-              <Chip
-                label={`Warnungen: ${importResult.warnings.length}`}
-                color="warning"
-                size="small"
-                variant="outlined"
-              />
-            </Tooltip>
-          )}
-        </Box>
-
-        {/* Beautiful Preview Table */}
-        {totalChanges > 0 && (
-          <TableContainer
-            component={Paper}
-            variant="outlined"
-            sx={{
-              flex: 1,
-              minHeight: { xs: 300, sm: 400, md: 500 },
-              maxHeight: { xs: '50vh', sm: '60vh', md: '70vh' },
-              overflow: 'auto',
-              borderRadius: 2,
-              border: '1px solid',
-              borderColor: 'rgba(25, 118, 210, 0.08)',
-              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)',
-              '&:hover': {
-                boxShadow: '0 6px 16px rgba(0, 0, 0, 0.08)'
-              },
-              transition: 'all 0.2s ease-in-out'
-            }}
-          >
-            <Table 
-              stickyHeader 
-              size="small" 
-              sx={{ 
-                minWidth: 800,
-                '& .MuiTableHead-root .MuiTableCell-root': {
-                  backgroundColor: '#f5f7fa !important',
-                  background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important',
-                  fontWeight: 600,
-                  fontSize: '0.875rem',
-                  color: 'primary.main',
-                  borderBottom: '2px solid',
-                  borderBottomColor: 'rgba(25, 118, 210, 0.15)',
-                  backdropFilter: 'none !important'
-                },
-                '& .MuiTableBody-root .MuiTableRow-root': {
-                  '&:hover': {
-                    backgroundColor: 'rgba(25, 118, 210, 0.02)',
-                    cursor: 'default'
-                  },
-                  '&:nth-of-type(even)': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.01)'
-                  }
-                },
-                '& .MuiTableCell-root': {
-                  transition: 'all 0.15s ease-in-out'
-                }
-              }}
-            >
-              <TableHead>
-                <TableRow>
-                  <SortableTableCell field="guid" sx={{ minWidth: 120 }}>GUID</SortableTableCell>
-                  <SortableTableCell field="name" sx={{ minWidth: 150 }}>Name</SortableTableCell>
-                  <SortableTableCell field="type" sx={{ minWidth: 100 }}>Typ</SortableTableCell>
-                  <SortableTableCell field="quantity" align="right" sx={{ minWidth: 80 }}>Menge</SortableTableCell>
-                  <TableCell sx={{ minWidth: 60 }}>Einheit</TableCell>
-                  <SortableTableCell field="area" align="right" sx={{ minWidth: 80 }}>Fläche</SortableTableCell>
-                  <SortableTableCell field="length" align="right" sx={{ minWidth: 80 }}>Länge</SortableTableCell>
-                  <SortableTableCell field="volume" align="right" sx={{ minWidth: 80 }}>Volumen</SortableTableCell>
-                  <SortableTableCell field="classificationId" sx={{ minWidth: 120 }}>Klassifikation ID</SortableTableCell>
-                  <SortableTableCell field="classificationName" sx={{ minWidth: 150 }}>Klassifikation Name</SortableTableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredAndSortedElements.map((item, index) => {
+                <TableHead>
+                  <TableRow>
+                    <SortableTableCell field="guid" sx={{ minWidth: 120 }}>GUID</SortableTableCell>
+                    <SortableTableCell field="name" sx={{ minWidth: 150 }}>Name</SortableTableCell>
+                    <SortableTableCell field="type" sx={{ minWidth: 100 }}>Typ</SortableTableCell>
+                    <SortableTableCell field="quantity" align="right" sx={{ minWidth: 80 }}>Menge</SortableTableCell>
+                    <TableCell sx={{ minWidth: 60 }}>Einheit</TableCell>
+                    <SortableTableCell field="area" align="right" sx={{ minWidth: 80 }}>Fläche</SortableTableCell>
+                    <SortableTableCell field="length" align="right" sx={{ minWidth: 80 }}>Länge</SortableTableCell>
+                    <SortableTableCell field="volume" align="right" sx={{ minWidth: 80 }}>Volumen</SortableTableCell>
+                    <SortableTableCell field="classificationId" sx={{ minWidth: 120 }}>Klassifikation ID</SortableTableCell>
+                    <SortableTableCell field="classificationName" sx={{ minWidth: 150 }}>Klassifikation Name</SortableTableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredAndSortedElements.map((item, index) => {
                     const existingElement = getExistingElement(item.global_id);
 
                     return (
                       <TableRow key={`${item.global_id}-${index}`}>
-                      <TableCell sx={{ minWidth: 120 }}>
-                        <Tooltip
-                          title={copySuccess && copiedGuid === item.global_id ? "Kopiert!" : "Zum Kopieren klicken"}
-                          placement="top"
-                          arrow
-                        >
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontFamily: 'monospace',
-                              fontSize: '0.75rem',
-                              cursor: 'pointer',
-                              '&:hover': {
-                                backgroundColor: 'rgba(25, 118, 210, 0.08)',
-                                borderRadius: '4px',
-                                padding: '4px 6px',
-                                margin: '-4px -6px'
-                              }
-                            }}
-                            onClick={() => copyGuidToClipboard(item.global_id)}
+                        <TableCell sx={{ minWidth: 120 }}>
+                          <Tooltip
+                            title={copySuccess && copiedGuid === item.global_id ? "Kopiert!" : "Zum Kopieren klicken"}
+                            placement="top"
+                            arrow
                           >
-                            {item.global_id.substring(0, 8)}...
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                fontFamily: 'monospace',
+                                fontSize: '0.75rem',
+                                cursor: 'pointer',
+                                '&:hover': {
+                                  backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                                  borderRadius: '4px',
+                                  padding: '4px 6px',
+                                  margin: '-4px -6px'
+                                }
+                              }}
+                              onClick={() => copyGuidToClipboard(item.global_id)}
+                            >
+                              {item.global_id.substring(0, 8)}...
+                            </Typography>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'name'), 150)}>
+                          <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
+                            {item.name || '-'}
                           </Typography>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'name'), 150)}>
-                        <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
-                          {item.name || '-'}
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'type'), 100)}>
-                        {item.type || '-'}
-                      </TableCell>
-                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 80)}>
-                        {item.quantity?.value !== undefined && item.quantity?.value !== null ? item.quantity.value.toFixed(2) : '-'}
-                      </TableCell>
-                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 60)}>
-                        <Chip
-                          label={item.quantity?.unit || '-'}
-                          size="small"
-                          variant="outlined"
-                          color={item.quantity?.unit ? 'primary' : 'default'}
-                        />
-                      </TableCell>
-                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'area'), 80)}>
-                        {item.area !== undefined && item.area !== null ? `${item.area.toFixed(2)} m²` : '-'}
-                      </TableCell>
-                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'length'), 80)}>
-                        {item.length !== undefined && item.length !== null ? `${item.length.toFixed(2)} m` : '-'}
-                      </TableCell>
-                      <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'volume'), 80)}>
-                        {item.volume !== undefined && item.volume !== null ? `${item.volume.toFixed(2)} m³` : '-'}
-                      </TableCell>
-                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_id'), 120)}>
-                        {item.classification_id ? (
+                        </TableCell>
+                        <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'type'), 100)}>
+                          {item.type || '-'}
+                        </TableCell>
+                        <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 80)}>
+                          {item.quantity?.value !== undefined && item.quantity?.value !== null ? item.quantity.value.toFixed(2) : '-'}
+                        </TableCell>
+                        <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 60)}>
                           <Chip
-                            label={item.classification_id}
+                            label={item.quantity?.unit || '-'}
                             size="small"
                             variant="outlined"
-                            color="primary"
-                            sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 120 }}
+                            color={item.quantity?.unit ? 'primary' : 'default'}
                           />
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_name'), 150)}>
-                        {item.classification_id ? (
-                          <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
-                            {getEbkpNameFromCode(item.classification_id) || 'Unbekannt'}
-                          </Typography>
-                        ) : '-'}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
+                        </TableCell>
+                        <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'area'), 80)}>
+                          {item.area !== undefined && item.area !== null ? `${item.area.toFixed(2)} m²` : '-'}
+                        </TableCell>
+                        <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'length'), 80)}>
+                          {item.length !== undefined && item.length !== null ? `${item.length.toFixed(2)} m` : '-'}
+                        </TableCell>
+                        <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'volume'), 80)}>
+                          {item.volume !== undefined && item.volume !== null ? `${item.volume.toFixed(2)} m³` : '-'}
+                        </TableCell>
+                        <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_id'), 120)}>
+                          {item.classification_id ? (
+                            <Chip
+                              label={item.classification_id}
+                              size="small"
+                              variant="outlined"
+                              color="primary"
+                              sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 120 }}
+                            />
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_name'), 150)}>
+                          {item.classification_id ? (
+                            <Typography variant="body2" sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} noWrap>
+                              {getEbkpNameFromCode(item.classification_id) || 'Unbekannt'}
+                            </Typography>
+                          ) : '-'}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
 
-        {totalChanges === 0 && (
-          <Box sx={{
-            p: 2,
-            border: 1,
-            borderColor: 'info.main',
-            borderRadius: 1,
-            bgcolor: 'info.light',
-            color: 'info.contrastText'
-          }}>
-            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-              Alles bereits aktuell
-            </Typography>
-            <Typography variant="body2">
-              Alle Daten in Ihrer Excel-Datei sind bereits in der Datenbank vorhanden.
-              Keine Aktualisierungen notwendig.
-            </Typography>
-          </Box>
-        )}
+          {totalChanges === 0 && (
+            <Box sx={{
+              p: 2,
+              border: 1,
+              borderColor: 'info.main',
+              borderRadius: 1,
+              bgcolor: 'info.light',
+              color: 'info.contrastText'
+            }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Alles bereits aktuell
+              </Typography>
+              <Typography variant="body2">
+                Alle Daten in Ihrer Excel-Datei sind bereits in der Datenbank vorhanden.
+                Keine Aktualisierungen notwendig.
+              </Typography>
+            </Box>
+          )}
+        </Box>
       </Box>
-    </Box>
     );
   };
 
@@ -1235,7 +1225,7 @@ Beispiel-Vorlage herunterladen
         <Box>
           <CheckCircle sx={{ fontSize: 64, color: 'success.main', mb: 2 }} />
           <Typography variant="h6" gutterBottom>
-Import erfolgreich abgeschlossen!
+            Import erfolgreich abgeschlossen!
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Ihre Excel-Daten wurden erfolgreich importiert und sind bereit zur Überprüfung.
@@ -1260,8 +1250,8 @@ Import erfolgreich abgeschlossen!
     }
   };
 
-  const canProceed = activeStep === 'preview' && importResult?.success && 
-                     (getNewElements().length > 0 || getUpdatedElements().length > 0);
+  const canProceed = activeStep === 'preview' && importResult?.success &&
+    (getNewElements().length > 0 || getUpdatedElements().length > 0);
 
   return (
     <Dialog
@@ -1274,17 +1264,17 @@ Import erfolgreich abgeschlossen!
           // Different sizes based on active step
           ...(activeStep === 'file-selection' || activeStep === 'processing' || activeStep === 'complete'
             ? {
-                width: { xs: '90vw', sm: '500px', md: '600px' },
-                height: 'auto',
-                maxWidth: '600px',
-                minHeight: '400px'
-              }
+              width: { xs: '90vw', sm: '500px', md: '600px' },
+              height: 'auto',
+              maxWidth: '600px',
+              minHeight: '400px'
+            }
             : {
-                width: '95vw',
-                maxWidth: '1400px',
-                height: '95vh',
-                maxHeight: '95vh'
-              }
+              width: '95vw',
+              maxWidth: '1400px',
+              height: '95vh',
+              maxHeight: '95vh'
+            }
           ),
           m: 0,
           '& .MuiDialogContent-root': {
@@ -1303,7 +1293,7 @@ Import erfolgreich abgeschlossen!
           <Close />
         </IconButton>
       </DialogTitle>
-      
+
       <DialogContent sx={{
         px: activeStep === 'preview' ? 0 : { xs: 2, sm: 3 },
         py: activeStep === 'preview' ? 0 : { xs: 1, sm: 2 },

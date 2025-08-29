@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Alert,
   CircularProgress,
@@ -118,8 +118,17 @@ const IfcElementsList = ({
     null
   );
 
+  // Stable callback for search results (no-op intentionally)
+  const _handleSearchResults = useCallback(() => {
+    // no-op (intentionally)
+  }, []);
+
+  // Refs for timeout cleanup
+  const scrollTimerRef = useRef<number | null>(null);
+  const resetBgTimerRef = useRef<number | null>(null);
+
   // Determine the status of an element based on new priority
-  const getElementDisplayStatus = (
+  const getElementDisplayStatus = useCallback((
     element: IFCElement
   ): ElementDisplayStatus => {
     const isLocallyEdited = Object.prototype.hasOwnProperty.call(editedElements, element.global_id);
@@ -159,7 +168,7 @@ const IfcElementsList = ({
       );
       return "active";
     }
-  };
+  }, [editedElements]);
 
   // Calculate which statuses are present in the filtered list
   const presentStatuses = useMemo(() => {
@@ -170,12 +179,20 @@ const IfcElementsList = ({
       });
     });
     return Array.from(statuses);
-  }, [ebkpGroups, editedElements, getElementDisplayStatus]); // Dependency is correct
+  }, [ebkpGroups, editedElements]); // getElementDisplayStatus is stable (useCallback)
 
   // Call the callback when hasEbkpGroups changes
   useEffect(() => {
     onEbkpStatusChange(ebkpGroups.length > 0);
   }, [ebkpGroups.length, onEbkpStatusChange]);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+      if (resetBgTimerRef.current) clearTimeout(resetBgTimerRef.current);
+    };
+  }, []);
 
   // Handle element selection from search
   const handleElementSelect = (element: IFCElement | null) => {
@@ -195,7 +212,7 @@ const IfcElementsList = ({
           const mainGroup = hierarchicalGroups.find((mg) =>
             mg.subGroups.some((sg) => sg.code === ebkpGroup.code)
           );
-          
+
           if (mainGroup && !expandedMainGroups.includes(mainGroup.mainGroup)) {
             setExpandedMainGroups((prev) => [...prev, mainGroup.mainGroup]);
           }
@@ -212,16 +229,13 @@ const IfcElementsList = ({
         }
 
         // Scroll to the element
-        setTimeout(() => {
-          const elementRow = document.getElementById(
-            `element-row-${element.global_id}`
-          );
+        scrollTimerRef.current = window.setTimeout(() => {
+          const elementRow = document.getElementById(`element-row-${element.global_id}`);
           if (elementRow) {
             elementRow.scrollIntoView({ behavior: "smooth", block: "center" });
-            // Highlight the element briefly
-            elementRow.style.backgroundColor = "rgba(25, 118, 210, 0.1)";
-            setTimeout(() => {
-              elementRow.style.backgroundColor = "";
+            elementRow.classList.add("highlight");
+            resetBgTimerRef.current = window.setTimeout(() => {
+              elementRow.classList.remove("highlight");
             }, 2000);
           }
         }, 100);
@@ -262,20 +276,20 @@ const IfcElementsList = ({
 
   // Determine if all groups are expanded
   const areAllGroupsExpanded = useMemo(() => {
-    if (hierarchicalGroups) {
+    if (hierarchicalGroups && hierarchicalGroups.length > 0) {
       // Check if all main groups are expanded
-      const allMainGroupsExpanded = hierarchicalGroups.every(group => 
+      const allMainGroupsExpanded = hierarchicalGroups.every(group =>
         expandedMainGroups.includes(group.mainGroup)
       );
-      
+
       // Check if all sub-groups are expanded
-      const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+      const allSubGroupsCodes = hierarchicalGroups.flatMap(group =>
         group.subGroups.map(subGroup => subGroup.code)
       );
-      const allSubGroupsExpanded = allSubGroupsCodes.every(code => 
+      const allSubGroupsExpanded = allSubGroupsCodes.every(code =>
         expandedEbkp.includes(code)
       );
-      
+
       return allMainGroupsExpanded && allSubGroupsExpanded;
     } else {
       // For flat view, check if all EBKP groups are expanded
@@ -289,9 +303,9 @@ const IfcElementsList = ({
       // Expand all main groups
       const allMainGroups = hierarchicalGroups.map(group => group.mainGroup);
       setExpandedMainGroups(allMainGroups);
-      
+
       // Expand all sub-groups
-      const allSubGroupsCodes = hierarchicalGroups.flatMap(group => 
+      const allSubGroupsCodes = hierarchicalGroups.flatMap(group =>
         group.subGroups.map(subGroup => subGroup.code)
       );
       setExpandedEbkp(allSubGroupsCodes);
@@ -382,7 +396,6 @@ const IfcElementsList = ({
         setClassificationFilter={setClassificationFilter}
         elements={elements}
         onElementSelect={handleElementSelect}
-        onSearchResults={() => {}}
         viewType={viewType}
         ebkpGroups={ebkpGroups}
       />
@@ -465,8 +478,8 @@ const IfcElementsList = ({
           pt: 1.5,
         }}
       >
-        <Box sx={{ 
-          width: "100%", 
+        <Box sx={{
+          width: "100%",
           overflowX: "auto",
           overflowY: "auto",
           flexGrow: 1,
@@ -478,7 +491,7 @@ const IfcElementsList = ({
           }}>
             <TableHead>
               <TableRow sx={{ ...tableStyles.headerRow, backgroundColor: "rgba(0, 0, 0, 0.04)" }}>
-                <TableCell 
+                <TableCell
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "0 0 48px",
@@ -508,7 +521,7 @@ const IfcElementsList = ({
                     </IconButton>
                   </Tooltip>
                 </TableCell>
-                <TableCell 
+                <TableCell
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "1 1 480px", // Combined width of type + GUID columns
@@ -520,9 +533,9 @@ const IfcElementsList = ({
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                     <span>{hierarchicalGroups ? "EBKP Gruppe / Bezeichnung" : "EBKP / Bezeichnung"}</span>
                     {expandedGroupsCount > 0 && (
-                      <Typography 
-                        variant="caption" 
-                        sx={{ 
+                      <Typography
+                        variant="caption"
+                        sx={{
                           color: "primary.main",
                           backgroundColor: "rgba(25, 118, 210, 0.08)",
                           px: 1,
@@ -536,7 +549,7 @@ const IfcElementsList = ({
                     )}
                   </Box>
                 </TableCell>
-                <TableCell 
+                <TableCell
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "0 1 160px",
@@ -545,7 +558,7 @@ const IfcElementsList = ({
                     fontWeight: 'bold',
                   }}
                 />
-                <TableCell 
+                <TableCell
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "0 1 120px",
@@ -558,7 +571,7 @@ const IfcElementsList = ({
                 >
                   {viewType === "grouped" ? "Anzahl Typen" : "Anzahl Elemente"}
                 </TableCell>
-                <TableCell 
+                <TableCell
                   sx={{
                     ...tableStyles.headerCell,
                     flex: "0 0 140px",
@@ -570,7 +583,7 @@ const IfcElementsList = ({
                     fontWeight: 'bold',
                   }}
                 >
-                  Status {presentStatuses.length > 0 && 
+                  Status {presentStatuses.length > 0 &&
                     <Typography variant="caption" sx={{ ml: 0.5, color: "text.secondary" }}>
                       ({presentStatuses.length})
                     </Typography>
@@ -639,7 +652,7 @@ export default IfcElementsList;
 export const ElementDetailHeader = () => (
   <TableHead>
     <TableRow sx={tableStyles.headerRow}>
-      <TableCell 
+      <TableCell
         sx={{
           ...tableStyles.headerCell,
           ...getColumnStyle(TABLE_COLUMNS[0]),
@@ -647,7 +660,7 @@ export const ElementDetailHeader = () => (
           zIndex: 99,
         }}
       />
-      <TableCell 
+      <TableCell
         sx={{
           ...tableStyles.headerCell,
           ...getColumnStyle(TABLE_COLUMNS[1]),
@@ -657,7 +670,7 @@ export const ElementDetailHeader = () => (
       >
         Type
       </TableCell>
-      <TableCell 
+      <TableCell
         sx={{
           ...tableStyles.headerCell,
           ...getColumnStyle(TABLE_COLUMNS[2]),
@@ -667,7 +680,7 @@ export const ElementDetailHeader = () => (
       >
         GUID
       </TableCell>
-      <TableCell 
+      <TableCell
         sx={{
           ...tableStyles.headerCell,
           ...getColumnStyle(TABLE_COLUMNS[3]),
@@ -677,7 +690,7 @@ export const ElementDetailHeader = () => (
       >
         Kategorie
       </TableCell>
-      <TableCell 
+      <TableCell
         sx={{
           ...tableStyles.headerCell,
           ...getColumnStyle(TABLE_COLUMNS[4]),
@@ -687,7 +700,7 @@ export const ElementDetailHeader = () => (
       >
         Ebene
       </TableCell>
-      <TableCell 
+      <TableCell
         sx={{
           ...tableStyles.headerCell,
           ...getColumnStyle(TABLE_COLUMNS[5]),

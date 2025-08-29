@@ -12,13 +12,13 @@ import { Client as MinioClient, ItemBucketMetadata } from "minio";
 import * as http from "http";
 
 // Variables that would be in the Go 'var' block
-let kafkaBroker = "localhost:9092"; // hardcoded for the test because the .env uses 'docker-compose' service name
+const kafkaBroker = "localhost:9092"; // hardcoded for the test because the .env uses 'docker-compose' service name
 let topic: string;
 let ifcBucket: string;
 let messages: TestFileData[];
 let minioClient: MinioClient;
 let mockServer: http.Server;
-let receivedRequests: any[] = [];
+const receivedRequests: any[] = [];
 
 // TestFileData class (equivalent to the Go struct)
 interface TestFileData {
