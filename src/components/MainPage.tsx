@@ -1048,7 +1048,7 @@ const MainPage = () => {
                             }
                           );
                         } catch (e) {
-                          logger.error("[Debug] Error formatting date:", e);
+                          logger.error("Error formatting date:", e);
                           return "Invalid Date";
                         }
                       })()}

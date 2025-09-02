@@ -8,7 +8,7 @@ import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
 import { Kafka, Producer } from "kafkajs";
-import { Client as MinioClient, ItemBucketMetadata } from "minio";
+import { Client as MinioClient } from "minio";
 import * as http from "http";
 
 // Variables that would be in the Go 'var' block
@@ -18,7 +18,7 @@ let ifcBucket: string;
 let messages: TestFileData[];
 let minioClient: MinioClient;
 let mockServer: http.Server;
-const receivedRequests: any[] = [];
+const receivedRequests: unknown[] = [];
 
 // TestFileData class (equivalent to the Go struct)
 interface TestFileData {

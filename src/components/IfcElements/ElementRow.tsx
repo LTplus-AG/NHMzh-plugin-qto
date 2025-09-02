@@ -634,7 +634,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
 
       {/* Element details when expanded */}
       <TableRow>
-        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={9}>
+        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={TABLE_COLUMNS.length}>
           <Collapse in={isExpanded} timeout="auto" unmountOnExit>
             <Box sx={{ margin: 1, paddingLeft: 2 }}>
               {/* Materials Section */}

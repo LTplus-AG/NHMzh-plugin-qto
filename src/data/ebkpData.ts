@@ -32,15 +32,22 @@ const getEbkpMap = (): Map<string, string> => {
 export const getEbkpNameFromCode = (code: string | null | undefined): string | null => {
   if (!code) return null;
 
-  const normalizedCode = normalizeEbkpCode(code.trim());
-  return getEbkpMap().get(normalizedCode) ?? null;
+  const normalized = normalizeEbkpCode(code);
+  const direct = getEbkpMap().get(normalized);
+  if (direct) return direct;
+
+  // parent fallback: CAA.BB.CC -> CAA.BB
+  const parent = normalized.replace(/^([A-J]\d{2}\.\d{2})\.\d{2}$/, "$1");
+  return getEbkpMap().get(parent) ?? null;
 };
 
 // Function to check if a code is a valid eBKP code
 export const isValidEbkpCode = (code: string | null | undefined): boolean => {
   if (!code) return false;
-  const normalizedCode = normalizeEbkpCode(code);
-  return getEbkpMap().has(normalizedCode);
+  const normalized = normalizeEbkpCode(code);
+  if (getEbkpMap().has(normalized)) return true;
+  const parent = normalized.replace(/^([A-J]\d{2}\.\d{2})\.\d{2}$/, "$1");
+  return getEbkpMap().has(parent);
 };
 
 export const ebkpData: EbkpDataItem[] = [

@@ -18,7 +18,7 @@ import { checkPersistedEdit } from "../../utils/elementEditChecks";
 import { getZeroQuantityStyles, hasZeroQuantityInAnyType } from "../../utils/zeroQuantityHighlight";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
 import EbkpGroupRow from "./EbkpGroupRow";
-import { tableStyles, groupRowConfig, tableSpacing } from "./tableConfig";
+import { tableStyles, groupRowConfig, tableSpacing, TABLE_COLUMNS } from "./tableConfig";
 import { EditedQuantity, HierarchicalEbkpGroup } from "./types";
 
 interface MainEbkpGroupRowProps {
@@ -378,7 +378,7 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
       </TableRow>
 
       <TableRow>
-        <TableCell colSpan={9} sx={{ paddingBottom: 0, paddingTop: 0, borderBottom: "none" }}>
+        <TableCell colSpan={TABLE_COLUMNS.length} sx={{ paddingBottom: 0, paddingTop: 0, borderBottom: "none" }}>
           <Collapse in={isExpanded} timeout="auto">
             <Box sx={{ pb: 2 }}>
               <Table sx={{ ...tableStyles.root }}>

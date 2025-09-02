@@ -222,11 +222,15 @@ const IfcElementsList = ({
         }
 
         // Scroll to the element
+        // Clear any existing scroll timer before setting a new one
+        if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
         scrollTimerRef.current = window.setTimeout(() => {
           const elementRow = document.getElementById(`element-row-${element.global_id}`);
           if (elementRow) {
             elementRow.scrollIntoView({ behavior: "smooth", block: "center" });
             elementRow.classList.add("highlight");
+            // Clear any existing background reset timer before setting a new one
+            if (resetBgTimerRef.current) clearTimeout(resetBgTimerRef.current);
             resetBgTimerRef.current = window.setTimeout(() => {
               elementRow.classList.remove("highlight");
             }, 2000);

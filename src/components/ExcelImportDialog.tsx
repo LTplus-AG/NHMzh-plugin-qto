@@ -113,14 +113,6 @@ const ExcelImportDialog: React.FC<Props> = ({
   const handleImportConfirm = () => {
     if (!importResult?.data) return;
 
-    // Debug logging for EBKP import data
-    console.log('[ExcelImportDialog] Importing data with EBKP codes:', importResult.data.map(item => ({
-      guid: item.global_id,
-      classification_id: item.classification_id,
-      classification_system: item.classification_system,
-      ebkpName: getEbkpNameFromCode(item.classification_id)
-    })));
-
     onImportComplete(importResult.data);
     setActiveStep('complete');
     timeoutRef.current = setTimeout(() => {
@@ -146,19 +138,7 @@ const ExcelImportDialog: React.FC<Props> = ({
     await ExcelService.generateTemplate(existingElements);
   };
 
-  const getNewElements = () => {
-    if (!importResult?.data) return [];
 
-    const existingGuids = new Set(existingElements.map(el => el.global_id));
-    return importResult.data.filter(item => !existingGuids.has(item.global_id));
-  };
-
-  const getUpdatedElements = () => {
-    if (!importResult?.data) return [];
-
-    const existingGuids = new Set(existingElements.map(el => el.global_id));
-    return importResult.data.filter(item => existingGuids.has(item.global_id));
-  };
 
   // Helper function to normalize values for comparison
   const normalizeValue = (value: any): any => {
@@ -334,13 +314,24 @@ const ExcelImportDialog: React.FC<Props> = ({
     };
   }, [debouncedSearchTerm, sortField, sortDirection, getExistingElement]);
 
+  // Memoized new and updated elements to prevent unnecessary recalculations
+  const newElements = useMemo(() => {
+    if (!importResult?.data) return [];
+    const existingGuids = new Set(existingElements.map(el => el.global_id));
+    return importResult.data.filter(item => !existingGuids.has(item.global_id));
+  }, [importResult?.data, existingElements]);
+
+  const updatedElements = useMemo(() => {
+    if (!importResult?.data) return [];
+    const existingGuids = new Set(existingElements.map(el => el.global_id));
+    return importResult.data.filter(item => existingGuids.has(item.global_id));
+  }, [importResult?.data, existingElements]);
+
   // Memoized filtered and sorted elements for performance
   const filteredAndSortedElements = useMemo(() => {
     if (!importResult) return [];
-    const newElements = getNewElements();
-    const updatedElements = getUpdatedElements();
     return getFilteredAndSortedElements(newElements, updatedElements);
-  }, [importResult, getFilteredAndSortedElements, getNewElements, getUpdatedElements]);
+  }, [importResult, getFilteredAndSortedElements, newElements, updatedElements]);
 
   // Virtualized table row component for performance with large datasets
   const VirtualizedTableRow = React.memo(({ index, style }: { index: number; style: React.CSSProperties }) => {
@@ -526,10 +517,15 @@ const ExcelImportDialog: React.FC<Props> = ({
       await navigator.clipboard.writeText(guid);
       setCopiedGuid(guid);
       setCopySuccess(true);
-      // Auto-hide after 2 seconds
-      setTimeout(() => {
+
+      // Clear any existing timer
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+      // Set new timer and store reference
+      timeoutRef.current = setTimeout(() => {
         setCopySuccess(false);
         setCopiedGuid('');
+        timeoutRef.current = null;
       }, 2000);
     } catch (err) {
       console.error('Failed to copy GUID:', err);
@@ -542,9 +538,15 @@ const ExcelImportDialog: React.FC<Props> = ({
         document.execCommand('copy');
         setCopiedGuid(guid);
         setCopySuccess(true);
-        setTimeout(() => {
+
+        // Clear any existing timer
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+        // Set new timer and store reference
+        timeoutRef.current = setTimeout(() => {
           setCopySuccess(false);
           setCopiedGuid('');
+          timeoutRef.current = null;
         }, 2000);
       } catch (fallbackErr) {
         console.error('Fallback copy failed:', fallbackErr);
@@ -684,8 +686,6 @@ const ExcelImportDialog: React.FC<Props> = ({
   const renderPreview = () => {
     if (!importResult) return null;
 
-    const newElements = getNewElements();
-    const updatedElements = getUpdatedElements();
     const totalChanges = newElements.length + updatedElements.length;
 
     return (
@@ -1259,7 +1259,7 @@ const ExcelImportDialog: React.FC<Props> = ({
   };
 
   const canProceed = activeStep === 'preview' && importResult?.success &&
-    (getNewElements().length > 0 || getUpdatedElements().length > 0);
+    (newElements.length > 0 || updatedElements.length > 0);
 
   return (
     <Dialog
