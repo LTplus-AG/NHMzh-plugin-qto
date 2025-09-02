@@ -240,8 +240,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
               minWidth: 0,
               flex: "0 0 auto",
             }}>
-              <Typography variant="h6" sx={{ 
-                fontWeight: 700, 
+              <Typography component="span" sx={{
+                fontWeight: 700,
                 fontSize: "1rem",
                 whiteSpace: "nowrap",
               }}>
@@ -353,6 +353,39 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             />
           </Tooltip>
         </TableCell>
+
+        {/* Column 6: Empty - matches child menge column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 0 160px",
+            minWidth: "140px",
+            py: 1.5,
+            px: 1,
+          }}
+        />
+
+        {/* Column 7: Empty - matches child ebkpCode column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 1 120px",
+            minWidth: "100px",
+            py: 1.5,
+            px: 1,
+          }}
+        />
+
+        {/* Column 8: Empty - matches child ebkpName column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 1 150px",
+            minWidth: "120px",
+            py: 1.5,
+            px: 1,
+          }}
+        />
       </TableRow>
 
       {/* Expanded EBKP elements */}
@@ -360,8 +393,8 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
         width: "100%",
         minWidth: "800px",
       }}>
-        <TableCell 
-          colSpan={5}
+        <TableCell
+          colSpan={9}
           sx={{ 
             paddingBottom: 0, 
             paddingTop: 0, 

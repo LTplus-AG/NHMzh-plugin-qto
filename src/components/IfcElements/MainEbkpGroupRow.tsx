@@ -342,10 +342,43 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
             {statusConfig.label}
           </Typography>
         </TableCell>
+
+        {/* Column 6: Empty - matches child menge column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 0 160px",
+            minWidth: "140px",
+            py: 2,
+            px: 1,
+          }}
+        />
+
+        {/* Column 7: Empty - matches child ebkpCode column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 1 120px",
+            minWidth: "100px",
+            py: 2,
+            px: 1,
+          }}
+        />
+
+        {/* Column 8: Empty - matches child ebkpName column */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            flex: "0 1 150px",
+            minWidth: "120px",
+            py: 2,
+            px: 1,
+          }}
+        />
       </TableRow>
 
       <TableRow>
-        <TableCell colSpan={5} sx={{ paddingBottom: 0, paddingTop: 0, borderBottom: "none" }}>
+        <TableCell colSpan={9} sx={{ paddingBottom: 0, paddingTop: 0, borderBottom: "none" }}>
           <Collapse in={isExpanded} timeout="auto">
             <Box sx={{ pb: 2 }}>
               <Table sx={{ ...tableStyles.root }}>

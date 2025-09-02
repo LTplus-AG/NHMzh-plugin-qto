@@ -62,6 +62,22 @@ export const TABLE_COLUMNS: ColumnConfig[] = [
     align: "right",
     sortable: true,
   },
+  {
+    key: "ebkpCode",
+    label: "EBKP Code",
+    flex: "0 1 120px",
+    minWidth: "100px",
+    align: "left",
+    sortable: true,
+  },
+  {
+    key: "ebkpName",
+    label: "EBKP Name",
+    flex: "0 1 150px",
+    minWidth: "120px",
+    align: "left",
+    sortable: true,
+  },
 ];
 
 // Common table styles following flexbox best practices

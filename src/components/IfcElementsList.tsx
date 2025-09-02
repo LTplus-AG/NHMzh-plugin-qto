@@ -582,6 +582,39 @@ const IfcElementsList = ({
                     </Typography>
                   }
                 </TableCell>
+                <TableCell
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "0 0 160px",
+                    minWidth: "140px",
+                    py: 2,
+                    fontWeight: 'bold',
+                  }}
+                >
+                  Menge
+                </TableCell>
+                <TableCell
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "0 1 120px",
+                    minWidth: "100px",
+                    py: 2,
+                    fontWeight: 'bold',
+                  }}
+                >
+                  EBKP Code
+                </TableCell>
+                <TableCell
+                  sx={{
+                    ...tableStyles.headerCell,
+                    flex: "0 1 150px",
+                    minWidth: "120px",
+                    py: 2,
+                    fontWeight: 'bold',
+                  }}
+                >
+                  EBKP Name
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -702,6 +735,26 @@ export const ElementDetailHeader = () => (
         }}
       >
         Menge
+      </TableCell>
+      <TableCell
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[6]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      >
+        EBKP Code
+      </TableCell>
+      <TableCell
+        sx={{
+          ...tableStyles.headerCell,
+          ...getColumnStyle(TABLE_COLUMNS[7]),
+          backgroundColor: "#f8f9fa",
+          zIndex: 99,
+        }}
+      >
+        EBKP Name
       </TableCell>
     </TableRow>
   </TableHead>

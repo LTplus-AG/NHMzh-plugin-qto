@@ -307,14 +307,22 @@ export class ExcelService {
             // Use shared eBKP helpers for consistent validation and normalization
             const normalizedCode = normalizeEbkpCode(rawClassId);
 
-            // Check if normalization changed the code (indicates it was valid)
+            // Check if the code matches the expected pattern (was normalized)
             if (normalizedCode !== rawClassId) {
               // Code was successfully normalized, so it's valid
               classId = normalizedCode;
               classificationSystem = 'eBKP';
             } else {
-              // Code didn't match the pattern, so it's invalid
-              result.warnings.push(`Zeile ${rowNumber}: Ungültiger eBKP-Code '${rawClassId}'`);
+              // Check if the original code already matches the pattern
+              const pattern = /^([A-J])(\d{1,2})\.(\d{1,2})$/;
+              if (pattern.test(rawClassId.trim().toUpperCase())) {
+                // Code is already in correct format
+                classId = rawClassId.trim().toUpperCase();
+                classificationSystem = 'eBKP';
+              } else {
+                // Code doesn't match the pattern, so it's invalid
+                result.warnings.push(`Zeile ${rowNumber}: Ungültiger eBKP-Code '${rawClassId}'`);
+              }
             }
           }
         }

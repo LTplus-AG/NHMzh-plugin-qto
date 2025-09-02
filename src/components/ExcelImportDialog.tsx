@@ -113,6 +113,14 @@ const ExcelImportDialog: React.FC<Props> = ({
   const handleImportConfirm = () => {
     if (!importResult?.data) return;
 
+    // Debug logging for EBKP import data
+    console.log('[ExcelImportDialog] Importing data with EBKP codes:', importResult.data.map(item => ({
+      guid: item.global_id,
+      classification_id: item.classification_id,
+      classification_system: item.classification_system,
+      ebkpName: getEbkpNameFromCode(item.classification_id)
+    })));
+
     onImportComplete(importResult.data);
     setActiveStep('complete');
     timeoutRef.current = setTimeout(() => {
@@ -1288,7 +1296,7 @@ const ExcelImportDialog: React.FC<Props> = ({
       }}
     >
       <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h6">Excel-Import für Mengen & Klassifikationen</Typography>
+        Excel-Import für Mengen & Klassifikationen
         <IconButton onClick={handleClose} size="small">
           <Close />
         </IconButton>
