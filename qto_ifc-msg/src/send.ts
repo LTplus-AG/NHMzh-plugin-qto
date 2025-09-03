@@ -10,6 +10,64 @@ import axios, { AxiosProgressEvent, AxiosResponse } from "axios";
 const BACKEND_URL = getEnv("BACKEND_URL");
 const UPLOAD_ENDPOINT = `${BACKEND_URL}/upload-ifc/`;
 
+/**
+ * Safely extracts non-circular, minimal fields from an Axios request object
+ * to prevent logger crashes from large/circular objects
+ */
+function safeSerializeRequest(request: any): Record<string, unknown> | undefined {
+  if (!request) return undefined;
+
+  const safeRequest: Record<string, unknown> = {};
+
+  try {
+    // Extract basic request info
+    if (request.method) safeRequest.method = request.method;
+    if (request.path) safeRequest.path = request.path;
+    if (request.url) safeRequest.url = request.url;
+    if (request.protocol) safeRequest.protocol = request.protocol;
+    if (request.host) safeRequest.host = request.host;
+    if (request.hostname) safeRequest.hostname = request.hostname;
+    if (request.port) safeRequest.port = request.port;
+    if (request.timeout) safeRequest.timeout = request.timeout;
+
+    // Extract a subset of headers (avoid large/complex ones)
+    if (request.headers) {
+      const headers: Record<string, unknown> = {};
+      const safeHeaderKeys = ['content-type', 'content-length', 'user-agent', 'accept', 'authorization'];
+
+      for (const key of safeHeaderKeys) {
+        const value = request.headers[key];
+        if (value && typeof value === 'string' && value.length < 500) {
+          headers[key] = value;
+        }
+      }
+
+      if (Object.keys(headers).length > 0) {
+        safeRequest.headers = headers;
+      }
+    }
+
+    // Extract basic socket info if available
+    if (request.socket) {
+      safeRequest.socket = {
+        remoteAddress: request.socket.remoteAddress,
+        remotePort: request.socket.remotePort,
+        localAddress: request.socket.localAddress,
+        localPort: request.socket.localPort,
+        destroyed: request.socket.destroyed,
+      };
+    }
+
+    // Avoid circular references and large objects
+    // Don't include: body, stream, _events, _eventsCount, etc.
+  } catch (error) {
+    // If serialization fails, return minimal fallback
+    return { serializationError: 'Failed to safely serialize request' };
+  }
+
+  return safeRequest;
+}
+
 export async function sendIFCFile(
   ifcData: IFCData,
   onProgress?: (progressEvent: AxiosProgressEvent) => void
@@ -74,7 +132,7 @@ export async function sendIFCFile(
       } else if (error.request) {
         // Request was made but no response received
         errorMsg = `No response received from backend for file submission: ${(error as any).message}`;
-        log.error(errorMsg, { requestDetails: error.request });
+        log.error(errorMsg, { requestDetails: safeSerializeRequest(error.request) });
       } else {
         // Something happened in setting up the request
         errorMsg = `Error setting up file submission request: ${(error as any).message}`;
