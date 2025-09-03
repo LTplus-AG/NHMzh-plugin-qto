@@ -1,6 +1,5 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { EditedQuantity } from "../types";
-import logger from '../../../utils/logger';
 
 export const useElementEditing = () => {
   const [editedElements, setEditedElements] = useState<
@@ -18,9 +17,6 @@ export const useElementEditing = () => {
     newValue: string
   ) => {
     const numericValue = newValue === "" ? null : parseFloat(newValue);
-    logger.info(
-      `[useElementEditing] Editing element ${elementId} ${quantityKey}: ${originalValue} -> ${numericValue}`
-    );
 
     setEditedElements((prev) => {
       // If the new value is the same as original, remove from edited elements
@@ -32,9 +28,6 @@ export const useElementEditing = () => {
         const newEdited = { ...prev };
         // Make sure to remove all potential fields
         delete newEdited[elementId];
-        logger.info(
-          `[useElementEditing] Removed edit for element ${elementId} (back to original value)`
-        );
         return newEdited;
       }
 
@@ -61,10 +54,6 @@ export const useElementEditing = () => {
         value: numericValue,
         type: quantityKey,
       };
-
-      logger.info(
-        `[useElementEditing] Updated element ${elementId} with new ${quantityKey}: ${numericValue}`
-      );
 
       return {
         ...prev,

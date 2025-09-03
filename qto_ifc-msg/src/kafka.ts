@@ -10,7 +10,6 @@ import {
   Kafka,
   Consumer,
   KafkaMessage,
-  Producer,
   EachBatchPayload,
 } from "kafkajs";
 import { getEnv } from "./utils/env";
@@ -28,7 +27,12 @@ export async function setupKafkaConsumer(): Promise<Consumer> {
     // Custom log creator to log Kafka messages to align with the logger in this service
     logCreator:
       () =>
-      ({ namespace, level, label, log }) => {
+      ({ namespace, level, label, log }: {
+        namespace: string;
+        level: number;
+        label: string;
+        log: any;
+      }) => {
         const logLevel = String(level).toLowerCase();
         log.log = { namespace, label, ...log };
         log.logger?.includes("kafkajs") && log.message && log.log;
@@ -60,8 +64,8 @@ export async function setupKafkaConsumer(): Promise<Consumer> {
     });
     log.debug("Kafka consumer connected and subscribed to topic");
     return consumer;
-  } catch (error: any) {
-    log.error("Failed to connect to Kafka:", error);
+  } catch (error: unknown) {
+    log.error("Failed to connect to Kafka:", error as Record<string, unknown>);
     // Exit with a non-zero code to trigger restart
     process.exit(1);
   }
@@ -201,7 +205,7 @@ export async function startKafkaConsumer(
               partition: batch.partition,
             });
             // Heartbeat after successful processing is handled by the caller (messageHandler or its success path)
-          } catch (processingError: any) {
+          } catch (processingError: unknown) {
             log.error(
               `Error in messageHandler for LATEST message offset ${message.offset} (FileID: ${fileIDForLogging}). Message will likely be reprocessed.`,
               {
@@ -229,7 +233,7 @@ export async function startKafkaConsumer(
         }
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     log.error(
       "Fatal error running Kafka consumer (consumer.run() failed). The consumer will attempt to exit.",
       { err: error }

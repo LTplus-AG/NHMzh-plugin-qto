@@ -13,7 +13,7 @@ import { getEnv } from "./utils/env";
 import { IFCData } from "./types";
 import { sendIFCFile } from "./send";
 import { Readable } from "stream";
-import { KafkaMessage } from "kafkajs";
+
 
 const IFC_BUCKET_NAME = getEnv("MINIO_IFC_BUCKET");
 
@@ -33,7 +33,7 @@ async function main() {
   log.info("Starting Kafka consumer...");
   await startKafkaConsumer(
     consumer,
-    async ({ message, resolveOffset, heartbeat, topic, partition }) => {
+    async ({ message, resolveOffset, heartbeat }) => {
       if (message.value) {
         let fileID: string | undefined;
         let fileStream: Readable | undefined;
@@ -124,7 +124,7 @@ async function main() {
           await heartbeat(); // Heartbeat after job acceptance, before resolving offset
           resolveOffset(message.offset);
           log.info(`Offset ${message.offset} resolved.`);
-        } catch (error: any) {
+        } catch (error: unknown) {
           log.error(
             `Error processing Kafka message for fileID '${fileID || "unknown"
             }':`,

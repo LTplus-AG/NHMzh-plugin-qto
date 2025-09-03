@@ -440,7 +440,7 @@ const ManualElementForm: React.FC<ManualElementFormProps> = ({
     newValue?: string | null
   ) => {
     const updatedMaterials = [...formData.materials];
-    let currentMaterial = { ...updatedMaterials[index] };
+    const currentMaterial = { ...updatedMaterials[index] };
 
     if (fieldName === "name") {
       currentMaterial.name = newValue || "";

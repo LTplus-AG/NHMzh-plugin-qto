@@ -16,6 +16,7 @@ import { IFCElement } from "../../types/types";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus } from "../IfcElementsList";
 import { TABLE_COLUMNS, tableStyles, getColumnStyle } from "./tableConfig";
+import { getEbkpNameFromCode } from "../../data/ebkpData";
 
 interface VirtualizedElementListProps {
   elements: IFCElement[];
@@ -36,7 +37,7 @@ interface VirtualizedElementListProps {
 }
 
 type SortDirection = 'asc' | 'desc';
-type SortColumn = 'type' | 'globalId' | 'kategorie' | 'ebene' | 'menge';
+type SortColumn = 'type' | 'globalId' | 'kategorie' | 'ebene' | 'menge' | 'ebkpCode' | 'ebkpName';
 
 const VirtualizedElementList: React.FC<VirtualizedElementListProps> = ({
   elements,
@@ -93,6 +94,14 @@ const VirtualizedElementList: React.FC<VirtualizedElementListProps> = ({
         case 'menge':
           aValue = a.quantity?.value || 0;
           bValue = b.quantity?.value || 0;
+          break;
+        case 'ebkpCode':
+          aValue = a.classification_id || a.ebkph || '';
+          bValue = b.classification_id || b.ebkph || '';
+          break;
+        case 'ebkpName':
+          aValue = a.classification_name || (a.classification_id ? getEbkpNameFromCode(a.classification_id) : '') || '';
+          bValue = b.classification_name || (b.classification_id ? getEbkpNameFromCode(b.classification_id) : '') || '';
           break;
         default:
           return 0;

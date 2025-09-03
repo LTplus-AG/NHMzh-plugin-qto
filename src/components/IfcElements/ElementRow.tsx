@@ -20,6 +20,7 @@ import { ElementDisplayStatus } from "../IfcElementsList";
 import CopyableText from "../ui/CopyableText";
 import { TABLE_COLUMNS, getColumnStyle, tableStyles } from "./tableConfig";
 import { hasZeroQuantityInAnyType, getZeroQuantityStyles, getZeroQuantityTooltip } from "../../utils/zeroQuantityHighlight";
+import { getEbkpNameFromCode } from "../../data/ebkpData";
 
 interface ElementRowProps {
   element: IFCElement;
@@ -589,11 +590,51 @@ const ElementRow: React.FC<ElementRowProps> = ({
             </Typography>
           )}
         </TableCell>
+
+        {/* Column 7: EBKP Code */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[6]),
+            py: 1,
+            px: 1,
+          }}
+        >
+          <Typography sx={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            width: "100%",
+            fontFamily: "monospace",
+            fontSize: "0.875rem",
+          }}>
+            {element.classification_id || element.ebkph || "-"}
+          </Typography>
+        </TableCell>
+
+        {/* Column 8: EBKP Name */}
+        <TableCell
+          sx={{
+            ...tableStyles.dataCell,
+            ...getColumnStyle(TABLE_COLUMNS[7]),
+            py: 1,
+            px: 1,
+          }}
+        >
+          <Typography sx={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            width: "100%",
+          }}>
+            {element.classification_name || (element.classification_id ? getEbkpNameFromCode(element.classification_id) : "-")}
+          </Typography>
+        </TableCell>
       </TableRow>
 
       {/* Element details when expanded */}
       <TableRow>
-        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={6}>
+        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={TABLE_COLUMNS.length}>
           <Collapse in={isExpanded} timeout="auto" unmountOnExit>
             <Box sx={{ margin: 1, paddingLeft: 2 }}>
               {/* Materials Section */}

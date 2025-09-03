@@ -19,7 +19,6 @@ interface ElementsHeaderProps {
   onElementSelect?: (element: IFCElement | null) => void;
   viewType?: string;
   ebkpGroups?: EbkpGroup[];
-  onSearchResults: (results: IFCElement[]) => void;
 }
 
 const ElementsHeader: React.FC<ElementsHeaderProps> = ({
@@ -27,7 +26,7 @@ const ElementsHeader: React.FC<ElementsHeaderProps> = ({
   classificationFilter,
   setClassificationFilter,
   elements = [],
-  onElementSelect = () => {},
+  onElementSelect = () => { },
   viewType,
   ebkpGroups,
 }) => {

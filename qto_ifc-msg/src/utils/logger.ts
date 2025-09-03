@@ -48,30 +48,30 @@ class Logger {
 	}
 
 	// Add context support for future OpenTelemetry integration
-	private formatMessage(message: string, context?: Record<string, any>): any {
+	private formatMessage(message: string, context?: Record<string, unknown>): unknown {
 		return {
 			message,
 			...context,
 		};
 	}
 
-	public error(message: string, context?: Record<string, any>): void {
+	public error(message: string, context?: Record<string, unknown>): void {
 		this.winstonLogger.error(this.formatMessage(message, context));
 	}
 
-	public warn(message: string, context?: Record<string, any>): void {
+	public warn(message: string, context?: Record<string, unknown>): void {
 		this.winstonLogger.warn(this.formatMessage(message, context));
 	}
 
-	public info(message: string, context?: Record<string, any>): void {
+	public info(message: string, context?: Record<string, unknown>): void {
 		this.winstonLogger.info(this.formatMessage(message, context));
 	}
 
-	public http(message: string, context?: Record<string, any>): void {
+	public http(message: string, context?: Record<string, unknown>): void {
 		this.winstonLogger.http(this.formatMessage(message, context));
 	}
 
-	public debug(message: string, context?: Record<string, any>): void {
+	public debug(message: string, context?: Record<string, unknown>): void {
 		this.winstonLogger.debug(this.formatMessage(message, context));
 	}
 }
