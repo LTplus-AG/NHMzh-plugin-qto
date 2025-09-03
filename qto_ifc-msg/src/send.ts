@@ -30,10 +30,10 @@ function safeSerializeRequest(request: any): Record<string, unknown> | undefined
     if (request.port) safeRequest.port = request.port;
     if (request.timeout) safeRequest.timeout = request.timeout;
 
-    // Extract a subset of headers (avoid large/complex ones)
+    // Extract a subset of headers (avoid large/complex ones and sensitive credentials)
     if (request.headers) {
       const headers: Record<string, unknown> = {};
-      const safeHeaderKeys = ['content-type', 'content-length', 'user-agent', 'accept', 'authorization'];
+      const safeHeaderKeys = ['content-type', 'content-length', 'user-agent', 'accept'];
 
       for (const key of safeHeaderKeys) {
         const value = request.headers[key];
