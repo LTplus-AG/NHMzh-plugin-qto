@@ -244,7 +244,7 @@ const MainPage = () => {
             quantity:
               apiElement.quantity &&
               typeof apiElement.quantity.type === "string" &&
-              (apiElement.quantity.type === "area" || apiElement.quantity.type === "length" || apiElement.quantity.type === "volume" || apiElement.quantity.type === "count")
+              ["area", "length", "volume", "count"].includes(apiElement.quantity.type)
                 ? {
                     type: apiElement.quantity.type as "area" | "length" | "volume" | "count",
                     value: apiElement.quantity.value ?? null,
@@ -367,9 +367,16 @@ const MainPage = () => {
                 global_id: elementId,
                 new_quantity: {
                   value: currentQuantity.value ?? null,
-                  type: validQuantityType, // Use the determined type
-                  // Ensure unit exists on the source object before accessing
-                  unit: currentQuantity.unit || "?", // <<< Access unit via asserted type
+                  type: validQuantityType,
+                  unit:
+                    currentQuantity.unit ||
+                    (validQuantityType === "area"
+                      ? "m²"
+                      : validQuantityType === "volume"
+                      ? "m³"
+                      : validQuantityType === "length"
+                      ? "m"
+                      : "Stk"),
                 },
               });
             } else {
