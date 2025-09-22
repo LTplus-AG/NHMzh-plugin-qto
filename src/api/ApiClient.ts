@@ -245,13 +245,13 @@ export class QTOApiClient {
   /**
    * Approve project elements AND optionally update quantities
    * @param projectName - The name of the project to approve
-   * @param updates - Optional list of element updates [{ element_id: string, new_quantity: { value: number, type: string, unit: string } }]
+   * @param updates - Optional list of element updates [{ global_id: string, new_quantity: { value: number, type: string, unit: string } }]
    * @returns Response with operation status
    */
   async approveProjectElements(
     projectName: string,
     updates?: Array<{
-      element_id: string;
+      global_id: string;
       new_quantity: { value?: number | null; type?: string; unit?: string };
     }>
   ): Promise<{ status: string; message: string; project: string }> {

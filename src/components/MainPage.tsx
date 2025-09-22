@@ -360,7 +360,7 @@ const MainPage = () => {
             // else: Keep default 'area' if type is missing/invalid
 
             quantityUpdates.push({
-              element_id: elementId,
+              global_id: elementId,
               new_quantity: {
                 value: currentQuantity.value ?? null,
                 type: validQuantityType, // Use the determined type
@@ -375,7 +375,7 @@ const MainPage = () => {
             editData.newArea !== null
           ) {
             quantityUpdates.push({
-              element_id: elementId,
+              global_id: elementId,
               new_quantity: {
                 value: editData.newArea,
                 type: "area",
@@ -387,7 +387,7 @@ const MainPage = () => {
             editData.newLength !== null
           ) {
             quantityUpdates.push({
-              element_id: elementId,
+              global_id: elementId,
               new_quantity: {
                 value: editData.newLength,
                 type: "length",
