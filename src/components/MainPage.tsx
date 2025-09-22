@@ -34,7 +34,7 @@ import { ManualElementInput, ManualQuantityInput } from "../types/manualTypes";
 import { v4 as uuidv4 } from "uuid";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { BatchElementData } from "../types/batchUpdateTypes";
-import { ElementQuantityUpdate } from "../api/types";
+import { ElementQuantityUpdate, isQuantityType } from "../api/types";
 import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService, ExcelImportData } from "../utils/excelService";
 import { getEbkpNameFromCode } from "../data/ebkpData";
@@ -244,9 +244,9 @@ const MainPage = () => {
             quantity:
               apiElement.quantity &&
               typeof apiElement.quantity.type === "string" &&
-              ["area", "length", "volume", "count"].includes(apiElement.quantity.type)
+              isQuantityType(apiElement.quantity.type)
                 ? {
-                    type: apiElement.quantity.type as "area" | "length" | "volume" | "count",
+                    type: apiElement.quantity.type,
                     value: apiElement.quantity.value ?? null,
                     unit: apiElement.quantity.unit,
                   }
@@ -347,36 +347,35 @@ const MainPage = () => {
 
             // Skip if type is missing or invalid to avoid wrong updates
             if (typeof currentQuantity.type === "string" && currentQuantity.type.trim()) {
-              let validQuantityType: "area" | "length" | "volume" | "count";
+              const normalizedType = currentQuantity.type.trim().toLowerCase();
 
-              // Check type exists
-              if (currentQuantity.type === "length")
-                validQuantityType = "length";
-              else if (currentQuantity.type === "volume")
-                validQuantityType = "volume";
-              else if (currentQuantity.type === "count")
-                validQuantityType = "count";
-              else if (currentQuantity.type === "area")
-                validQuantityType = "area";
-              else {
+              // Skip if type is not a valid quantity type
+              if (!isQuantityType(normalizedType)) {
                 logger.warn(`Skipping quantity update for element ${elementId}: unsupported quantity type '${currentQuantity.type}'`);
                 continue;
               }
 
+              // Only include finite numbers to prevent NaN from being sent
+              const validValue = Number.isFinite(currentQuantity.value as number)
+                ? (currentQuantity.value as number)
+                : null;
+
+              const normalizedUnit = typeof currentQuantity.unit === "string" && currentQuantity.unit.trim()
+                ? currentQuantity.unit.trim()
+                : normalizedType === "area"
+                ? "m²"
+                : normalizedType === "volume"
+                ? "m³"
+                : normalizedType === "length"
+                ? "m"
+                : "Stk";
+
               quantityUpdates.push({
                 global_id: elementId,
                 new_quantity: {
-                  value: currentQuantity.value ?? null,
-                  type: validQuantityType,
-                  unit:
-                    currentQuantity.unit ||
-                    (validQuantityType === "area"
-                      ? "m²"
-                      : validQuantityType === "volume"
-                      ? "m³"
-                      : validQuantityType === "length"
-                      ? "m"
-                      : "Stk"),
+                  value: validValue,
+                  type: normalizedType as "area" | "length" | "volume" | "count",
+                  unit: normalizedUnit,
                 },
               });
             } else {
