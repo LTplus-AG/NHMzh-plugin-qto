@@ -337,10 +337,6 @@ const MainPage = () => {
             editData.newQuantity &&
             typeof editData.newQuantity.value === "number"
           ) {
-            // The type of validQuantityType needs to allow all possibilities used below
-            let validQuantityType: "area" | "length" | "volume" | string =
-              "area"; // Default, allow string for flexibility
-
             // <<< ADDED Type assertion for newQuantity >>>
             const currentQuantity = editData.newQuantity as {
               value?: number | null;
@@ -348,26 +344,29 @@ const MainPage = () => {
               unit?: string;
             };
 
-            if (typeof currentQuantity.type === "string") {
+            // Skip if type is missing or invalid to avoid wrong updates
+            if (typeof currentQuantity.type === "string" && currentQuantity.type.trim()) {
+              let validQuantityType: "area" | "length" | "volume" | string;
+
               // Check type exists
               if (currentQuantity.type === "length")
                 validQuantityType = "length";
               else if (currentQuantity.type === "volume")
                 validQuantityType = "volume";
-              // <<< Comparison should now work with assertion
               else validQuantityType = currentQuantity.type; // Keep original if area or other string
-            }
-            // else: Keep default 'area' if type is missing/invalid
 
-            quantityUpdates.push({
-              global_id: elementId,
-              new_quantity: {
-                value: currentQuantity.value ?? null,
-                type: validQuantityType, // Use the determined type
-                // Ensure unit exists on the source object before accessing
-                unit: currentQuantity.unit || "?", // <<< Access unit via asserted type
-              },
-            });
+              quantityUpdates.push({
+                global_id: elementId,
+                new_quantity: {
+                  value: currentQuantity.value ?? null,
+                  type: validQuantityType, // Use the determined type
+                  // Ensure unit exists on the source object before accessing
+                  unit: currentQuantity.unit || "?", // <<< Access unit via asserted type
+                },
+              });
+            } else {
+              logger.warn(`Skipping quantity update for element ${elementId}: missing or invalid quantity type`);
+            }
           }
           // Include fallback for older edit structure if necessary
           else if (

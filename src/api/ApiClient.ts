@@ -1,13 +1,6 @@
 import { BatchElementData } from "../types/batchUpdateTypes";
-import { ElementQuantityUpdate } from "./types.ts"; // Correct relative path
+import { ElementQuantityUpdate, QuantityData } from "./types";
 import logger from '../utils/logger';
-
-// <<< ADDED: Interface for nested quantity data >>>
-export interface QuantityData {
-  value?: number | null;
-  type?: "area" | "length" | "volume" | string | null; // Allow specific types + string
-  unit?: string | null;
-}
 
 // <<< ADDED: Interface for nested classification data >>>
 export interface ClassificationData {
@@ -42,7 +35,7 @@ export interface IFCElement {
   classification?: ClassificationData | null; // <<< ADDED nested classification
   // Flat quantity fields (keep for potential backward compatibility or direct use)
   area?: number | null;
-  volume?: number | null; // Add volume if backend sends it flat
+  volume?: number | { net?: number; gross?: number } | null; // Support both number and object with net/gross
   length?: number | null;
   // Nested quantity fields <<< UPDATED to use QuantityData >>>
   quantity?: QuantityData | null;
@@ -245,48 +238,15 @@ export class QTOApiClient {
   /**
    * Approve project elements AND optionally update quantities
    * @param projectName - The name of the project to approve
-   * @param updates - Optional list of element updates [{ global_id: string, new_quantity: { value: number, type: string, unit: string } }]
+   * @param updates - Optional list of element updates (ElementQuantityUpdate[])
    * @returns Response with operation status
    */
   async approveProjectElements(
     projectName: string,
-    updates?: Array<{
-      global_id: string;
-      new_quantity: { value?: number | null; type?: string; unit?: string };
-    }>
+    updates?: ElementQuantityUpdate[]
   ): Promise<{ status: string; message: string; project: string }> {
-    const encodedProjectName = encodeURIComponent(projectName);
-    const endpoint = `/projects/${encodedProjectName}/approve/`;
-    logger.info(
-      `Approving elements (and potentially updating ${
-        updates?.length || 0
-      } quantities) for project: ${projectName}`
-    );
-    try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: updates ? JSON.stringify(updates) : undefined, // Send updates in body if provided
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to approve project: ${response.statusText} - ${errorText}`
-        );
-      }
-
-      const result = await response.json();
-      logger.info(`Successfully approved elements for project ${projectName}`);
-      return result;
-    } catch (error) {
-      logger.error(
-        `Error approving elements for project '${projectName}': ${error}`
-      );
-      throw error;
-    }
+    // Deprecated wrapper: forward to approveProject to keep one code path.
+    return this.approveProject(projectName, updates ?? []);
   }
 
   // <<< ADDED: Batch Update/Create Elements >>>
