@@ -237,6 +237,7 @@ export class QTOApiClient {
 
   /**
    * Approve project elements AND optionally update quantities
+   * @deprecated Use approveProject() instead. This method is maintained for backward compatibility.
    * @param projectName - The name of the project to approve
    * @param updates - Optional list of element updates (ElementQuantityUpdate[])
    * @returns Response with operation status

@@ -243,9 +243,10 @@ const MainPage = () => {
             classification_system: apiElement.classification_system,
             quantity:
               apiElement.quantity &&
-              typeof apiElement.quantity.type === "string"
+              typeof apiElement.quantity.type === "string" &&
+              (apiElement.quantity.type === "area" || apiElement.quantity.type === "length" || apiElement.quantity.type === "volume" || apiElement.quantity.type === "count")
                 ? {
-                    type: apiElement.quantity.type,
+                    type: apiElement.quantity.type as "area" | "length" | "volume" | "count",
                     value: apiElement.quantity.value ?? null,
                     unit: apiElement.quantity.unit,
                   }
@@ -346,14 +347,21 @@ const MainPage = () => {
 
             // Skip if type is missing or invalid to avoid wrong updates
             if (typeof currentQuantity.type === "string" && currentQuantity.type.trim()) {
-              let validQuantityType: "area" | "length" | "volume" | string;
+              let validQuantityType: "area" | "length" | "volume" | "count";
 
               // Check type exists
               if (currentQuantity.type === "length")
                 validQuantityType = "length";
               else if (currentQuantity.type === "volume")
                 validQuantityType = "volume";
-              else validQuantityType = currentQuantity.type; // Keep original if area or other string
+              else if (currentQuantity.type === "count")
+                validQuantityType = "count";
+              else if (currentQuantity.type === "area")
+                validQuantityType = "area";
+              else {
+                logger.warn(`Skipping quantity update for element ${elementId}: unsupported quantity type '${currentQuantity.type}'`);
+                continue;
+              }
 
               quantityUpdates.push({
                 global_id: elementId,

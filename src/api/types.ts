@@ -1,6 +1,6 @@
 // Define shared types for the API client
 
-export type QuantityType = "area" | "length" | "volume" | string;
+export type QuantityType = "area" | "length" | "volume" | "count";
 
 export interface QuantityData {
   value?: number | null;
