@@ -432,7 +432,7 @@ class MongoDBHelper:
         
         Args:
             project_id: ObjectId of the project.
-            updates: List of update objects, each containing 'element_id' (the ifc_id) 
+            updates: List of update objects, each containing 'global_id' (the IFC GUID) 
                      and 'new_quantity' (a dict with 'value', 'type', 'unit').
                      
         Returns:

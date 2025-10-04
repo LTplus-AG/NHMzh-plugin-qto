@@ -19,7 +19,7 @@ import {
   Typography,
   Chip,
 } from "@mui/material";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import apiClient, {
   IFCElement as ApiIFCElement,
   ProjectMetadata,
@@ -89,6 +89,9 @@ const MainPage = () => {
     handleQuantityChange,
     resetEdits,
   } = useElementEditing();
+
+  // Track previous project to only reset edits when switching projects
+  const prevProjectRef = useRef<string | null>(null);
 
   // Excel dialog state
   const {
@@ -206,12 +209,19 @@ const MainPage = () => {
     if (selectedProject && backendConnected) {
       fetchProjectElements(selectedProject);
       fetchProjectMetadata(selectedProject);
-      resetEdits();
+      
+      // Only reset edits if we're switching to a DIFFERENT project
+      // This prevents losing edits when the project refreshes or backend reconnects
+      if (prevProjectRef.current !== selectedProject) {
+        resetEdits();
+        prevProjectRef.current = selectedProject;
+      }
     } else {
       setIfcElements([]);
       setIfcError(null);
       setProjectMetadata(null);
-      resetEdits();
+      resetEdits(); // OK to reset when no project selected
+      prevProjectRef.current = null;
     }
   }, [selectedProject, backendConnected]);
 

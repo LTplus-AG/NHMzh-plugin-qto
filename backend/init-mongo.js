@@ -20,7 +20,7 @@ const databasesToInit = [
     name: qtoDbName,
     collections: ["projects", "elements", "ifc_processing_jobs"],
     indexes: {
-      elements: [{ project_id: 1 }, { element_type: 1 }],
+      elements: [{ project_id: 1 }, { element_type: 1 }, { global_id: 1 }],  // Add global_id index
       ifc_processing_jobs: [{ status: 1 }, { created_at: -1 }],
     },
   },
@@ -28,7 +28,7 @@ const databasesToInit = [
     name: costDbName,
     collections: ["costData", "costSummaries", "costElements"],
     indexes: {
-      costData: [{ element_id: 1 }, { project_id: 1 }, { ebkp_code: 1 }],
+      costData: [{ element_id: 1 }, { global_id: 1 }, { project_id: 1 }, { ebkp_code: 1 }],
       costSummaries: [
         { project_id: 1, unique: true },
         { updated_at: 1 },
@@ -37,6 +37,7 @@ const databasesToInit = [
       ],
       costElements: [
         { element_id: 1 },
+        { global_id: 1 },
         { ebkp_code: 1 },
         { project_id: 1 },
         { qto_element_id: 1 },

@@ -1240,11 +1240,11 @@ async def approve_project(
     """
     # global mongodb # No longer needed
     try:
-        logger.info(f"Received approval request for project: '{project_name}'")
-        if updates:
-            logger.info(f"Approval request includes {len(updates)} quantity updates.")
-
-        # <<< REMOVED Check/Re-initialize MongoDB Connection block >>>
+        logger.info(f"====== APPROVAL DEBUG START ======")
+        logger.info(f"Project: '{project_name}'")
+        logger.info(f"Updates received: {len(updates) if updates else 0}")
+        if updates and len(updates) > 0:
+            logger.info(f"First 3 updates: {[{'global_id': u.global_id, 'value': u.new_quantity.value} for u in updates[:3]]}")
 
         # --- Find Project ID (needed for both update and approve) ---
         # Use injected db
@@ -1252,36 +1252,68 @@ async def approve_project(
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
+        
+        # 🔍 CHECK 1: What's in DB BEFORE approval?
+        before_count = db.elements.count_documents({"project_id": project_id})
+        before_pending = db.elements.count_documents({"project_id": project_id, "status": "pending"})
+        before_active = db.elements.count_documents({"project_id": project_id, "status": "active"})
+        before_manual = db.elements.count_documents({"project_id": project_id, "is_manual": True})
+        
+        logger.info(f"BEFORE APPROVAL:")
+        logger.info(f"  Total elements: {before_count}")
+        logger.info(f"  Pending: {before_pending}, Active: {before_active}, Manual: {before_manual}")
 
         # --- Apply Quantity Updates (if any) --- 
         if updates:
-            # !!! IMPORTANT: Need to pass the db instance to the helper method if it uses it !!!
-            # Assuming MongoDBHelper methods accept a db instance or continue using the global one internally
-            # For now, assuming internal usage of the global `mongodb` is okay within the helper methods,
-            # otherwise, the helper methods would need refactoring too.
-            # Let's stick to the current approach for now, but this is a potential point of failure/refinement.
-            update_success = mongodb.update_element_quantities(project_id, updates) # Still uses global mongodb instance
+            update_success = mongodb.update_element_quantities(project_id, updates)
             if not update_success:
-                 logger.error(f"Failed to apply quantity updates for project '{project_name}'. Aborting approval.")
+                 logger.error(f"❌ Quantity updates FAILED")
                  raise HTTPException(status_code=500, detail="Failed to save quantity updates.")
+            logger.info(f"✅ Quantity updates applied successfully")
+        
+        # 🔍 CHECK 2: What's in DB AFTER quantity update but BEFORE status change?
+        after_update_count = db.elements.count_documents({"project_id": project_id})
+        after_update_pending = db.elements.count_documents({"project_id": project_id, "status": "pending"})
+        after_update_active = db.elements.count_documents({"project_id": project_id, "status": "active"})
+        
+        logger.info(f"AFTER QUANTITY UPDATE:")
+        logger.info(f"  Total elements: {after_update_count}")
+        logger.info(f"  Pending: {after_update_pending}, Active: {after_update_active}")
 
-        # --- Approve Project Status & Send Kafka Notification --- 
+        # --- Approve Project Status --- 
         logger.info(f"Calling approve_project_elements for project ID: {project_id}")
-        # Assuming internal usage of the global `mongodb` is okay within the helper methods
         approve_success = mongodb.approve_project_elements(project_id)
 
-        if approve_success:
-            return {
-                "status": "success",
-                "message": f"Project {project_name} elements updated and approved successfully",
-                "project": project_name
+        if not approve_success:
+            logger.error(f"❌ Approval status update FAILED")
+            raise HTTPException(status_code=500, detail="Failed to approve elements")
+        
+        # 🔍 CHECK 3: What's in DB AFTER approval?
+        after_approve_count = db.elements.count_documents({"project_id": project_id})
+        after_approve_pending = db.elements.count_documents({"project_id": project_id, "status": "pending"})
+        after_approve_active = db.elements.count_documents({"project_id": project_id, "status": "active"})
+        
+        logger.info(f"AFTER APPROVAL STATUS CHANGE:")
+        logger.info(f"  Total elements: {after_approve_count}")
+        logger.info(f"  Pending: {after_approve_pending}, Active: {after_approve_active}")
+        
+        # 🔍 CHECK 4: Sample some elements to see their actual state
+        sample_elements = list(db.elements.find({"project_id": project_id}).limit(3))
+        for elem in sample_elements:
+            logger.info(f"  Sample element: global_id={elem.get('global_id')}, status={elem.get('status')}, quantity={elem.get('quantity')}")
+        
+        logger.info(f"====== APPROVAL DEBUG END ======")
+
+        return {
+            "status": "success",
+            "message": f"Project {project_name} elements updated and approved successfully",
+            "project": project_name,
+            "debug": {
+                "before": {"total": before_count, "pending": before_pending, "active": before_active},
+                "after": {"total": after_approve_count, "pending": after_approve_pending, "active": after_approve_active},
+                "updates_received": len(updates) if updates else 0
             }
-        else:
-            logger.error(f"Applied quantity updates BUT failed to approve elements status for project '{project_name}'")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to finalize approval status update for project {project_name}"
-            )
+        }
     except HTTPException as http_exc:
         logger.error(f"HTTP error during approval/update for {project_name}: {http_exc.detail}")
         raise http_exc # Re-raise HTTPException
@@ -1535,41 +1567,8 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
         # logger.error("Traceback:", exc_info=True) # Already done with exc_info=True
         raise HTTPException(status_code=500, detail=f"Internal server error during batch update: {e}")
 
-@app.delete("/projects/{project_name}/elements/{element_id}", status_code=status.HTTP_200_OK)
-async def delete_element_endpoint(project_name: str, element_id: str, db: Database = Depends(get_db)): # <<< Inject DB
-    # mongodb = MongoDBHelper() # Don't create a new instance
-    try:
-        # Find project using injected db
-        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-        project_id = project["_id"]
-        logger.info(f"Found project '{project_name}' with ID: {project_id} for element deletion.")
-
-        # Assuming delete_element uses the global mongodb instance internally
-        success = mongodb.delete_element(project_id, element_id)
-
-        if success: # delete_element now returns dict, check 'success' key
-             return {"message": f"Element {element_id} deleted successfully from project {project_name}"}
-        else:
-             # If delete_element returned success=False, raise appropriate error
-             logger.warning(f"Attempted to delete element {element_id} from {project_name}, but DB operation failed or element not found/not manual.")
-             # Use the message from the helper if available
-             detail_msg = success.get("message", "Element not found or could not be deleted.")
-             status_code = 404 if "not found" in detail_msg.lower() else 400
-             if "Only manually added" in detail_msg:
-                 status_code = 403 # Forbidden
-             raise HTTPException(status_code=status_code, detail=detail_msg)
-
-    except HTTPException as http_exc:
-         raise http_exc # Re-raise specific HTTP errors
-    except Exception as e:
-         logger.error(f"Error deleting element {element_id} from {project_name}: {e}", exc_info=True)
-         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
-
-# <<< ADDED: Endpoint for Deleting a Manual Element (The one that had the syntax error) >>>
 @app.delete("/projects/{project_name}/elements/{element_global_id}", response_model=Dict[str, Any])
-async def delete_manual_element(project_name: str, element_global_id: str, db: Database = Depends(get_db)): # <<< Inject DB
+async def delete_element(project_name: str, element_global_id: str, db: Database = Depends(get_db)):
     """Deletes a specific manually added element from a project."""
     try:
         # 1. Find Project ID using injected db
@@ -1578,11 +1577,10 @@ async def delete_manual_element(project_name: str, element_global_id: str, db: D
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
 
-        # 2. Call MongoDB helper to delete the element
-        # Assuming delete_element uses the global mongodb instance internally
+        # 2. Call MongoDB helper to delete the element (uses global mongodb instance)
         result = mongodb.delete_element(project_id, element_global_id)
 
-        if not result.get("success"): # Check success key in result dict
+        if not result.get("success"):
             # Determine appropriate status code based on message
             message = result.get("message", "Failed to delete element.")
             status_code = 404 if "not found" in message.lower() else 400

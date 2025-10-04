@@ -1,7 +1,8 @@
 # 📊 NHMzh Plugin-QTO: Mengenermittlung (Quantity Take-Off)
 
 [![React](https://img.shields.io/badge/React-18.3-61DAFB.svg?style=for-the-badge&logo=react)](https://reactjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-7.0-646CFF.svg?style=for-the-badge&logo=vite)](https://vitejs.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.8-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
@@ -24,7 +25,7 @@ Zentrales Modul für die Mengenermittlung (QTO) aus IFC-Modellen im Nachhaltigke
 
 Das QTO-Plugin besteht aus einem Frontend und einem Backend:
 
-- **Frontend**: Eine **React/TypeScript**-Anwendung, die das interaktive UI für die Mengenermittlung (QTO) bereitstellt. Anstatt IFC-Dateien direkt hochzuladen, wählen Benutzer:innen ein Projekt aus, dessen IFC-Modell bereits vom Backend verarbeitet wurde. Das Frontend visualisiert die extrahierten Bauteile sowie deren Mengen und ermöglicht:
+- **Frontend**: Eine **React/TypeScript**-Anwendung, gebündelt über Vite. Das UI ermöglicht die Auswahl bereits verarbeiteter Projekte, visualisiert extrahierte Bauteile und bietet Funktionen wie:
   - Die Bearbeitung der ermittelten Mengen.
   - Das manuelle Hinzufügen von neuen Elementen (z.B. für nicht-modellierte Bauteile).
   - Den Import und Export von Mengendaten via Excel.
@@ -111,11 +112,11 @@ Die primäre Sammlung in der `qto`-Datenbank ist `elements`. Jedes Dokument repr
 
 - Docker und Docker Compose
 - Python 3.8+
-- Node.js 16+
+- Node.js 18+
 
 #### Lokale Entwicklung
 
-**Frontend (React):**
+**Frontend (Vite + React/TypeScript):**
 ```bash
 # Abhängigkeiten installieren
 npm install
@@ -123,7 +124,7 @@ npm install
 npm run dev
 ```
 
-**Backend (Python):**
+**Backend (Python/FastAPI):**
 ```bash
 cd backend
 # Virtuelle Umgebung erstellen und aktivieren
@@ -134,6 +135,10 @@ pip install -r requirements.txt
 # Backend-Server starten
 uvicorn main:app --reload
 ```
+
+### 🤝 Förderung & Urheberschaft
+
+Dieses Projekt wurde durch die Stadt Zürich finanziert. Der gesamte in diesem Repository enthaltene Quellcode stammt von Louis Trümpler (LTplus AG).
 
 ### 📄 Lizenz
 

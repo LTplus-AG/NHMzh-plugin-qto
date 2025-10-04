@@ -15,8 +15,11 @@ import ElementRow from "./ElementRow";
 import { IFCElement } from "../../types/types";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus } from "../IfcElementsList";
-import { TABLE_COLUMNS, tableStyles, getColumnStyle } from "./tableConfig";
+import { TABLE_COLUMNS, tableStyles, getColumnStyle as getDefaultColumnStyle, ColumnConfig } from "./tableConfig";
 import { getEbkpNameFromCode } from "../../data/ebkpData";
+import { SxProps, Theme } from "@mui/material";
+import ColumnResizeHandle from "../ui/ColumnResizeHandle";
+import { ColumnWidths } from "../../hooks/useResizableColumns";
 
 interface VirtualizedElementListProps {
   elements: IFCElement[];
@@ -34,6 +37,9 @@ interface VirtualizedElementListProps {
   handleEditManualClick: (element: IFCElement) => void;
   openDeleteConfirm: (element: IFCElement) => void;
   maxHeight?: number;
+  getColumnStyle?: (column: ColumnConfig) => SxProps<Theme>;
+  setColumnWidth?: (columnKey: string, width: number) => void;
+  columnWidths?: ColumnWidths;
 }
 
 type SortDirection = 'asc' | 'desc';
@@ -49,6 +55,9 @@ const VirtualizedElementList: React.FC<VirtualizedElementListProps> = ({
   getElementDisplayStatus,
   handleEditManualClick,
   maxHeight = 500,
+  getColumnStyle = getDefaultColumnStyle,
+  setColumnWidth,
+  columnWidths,
 }) => {
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -191,6 +200,13 @@ const VirtualizedElementList: React.FC<VirtualizedElementListProps> = ({
             ) : (
               column.label
             )}
+            {setColumnWidth && columnWidths && column.key !== 'expand' && (
+              <ColumnResizeHandle
+                columnKey={column.key}
+                onResize={setColumnWidth}
+                currentWidth={columnWidths[column.key]}
+              />
+            )}
           </TableCell>
         ))}
       </TableRow>
@@ -216,6 +232,7 @@ const VirtualizedElementList: React.FC<VirtualizedElementListProps> = ({
                 handleQuantityChange={handleQuantityChange}
                 getElementDisplayStatus={getElementDisplayStatus}
                 handleEditManualClick={handleEditManualClick}
+                getColumnStyle={getColumnStyle}
               />
             ))}
           </TableBody>
@@ -354,6 +371,7 @@ const VirtualizedElementList: React.FC<VirtualizedElementListProps> = ({
                       handleQuantityChange={handleQuantityChange}
                       getElementDisplayStatus={getElementDisplayStatus}
                       handleEditManualClick={handleEditManualClick}
+                      getColumnStyle={getColumnStyle}
                     />
                   </TableBody>
                 </Table>
