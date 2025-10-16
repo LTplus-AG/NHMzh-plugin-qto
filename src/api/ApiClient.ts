@@ -2,7 +2,7 @@ import { BatchElementData } from "../types/batchUpdateTypes";
 import { ElementQuantityUpdate, QuantityData } from "./types";
 import logger from '../utils/logger';
 
-// <<< ADDED: Interface for nested classification data >>>
+// Interface for nested classification data
 export interface ClassificationData {
   id?: string | null;
   name?: string | null;
@@ -12,7 +12,7 @@ export interface ClassificationData {
 // API response types based on the backend schema
 export interface IFCElement {
   id: string;
-  global_id: string | null; // Allow null from backend
+  global_id: string | null;
   type: string;
   name: string;
   type_name?: string | null;
@@ -27,17 +27,13 @@ export interface IFCElement {
     }
   > | null;
   level?: string | null;
-  // Flat classification fields (may be redundant if nested is always used)
   classification_id?: string | null;
   classification_name?: string | null;
   classification_system?: string | null;
-  // Nested Classification
-  classification?: ClassificationData | null; // <<< ADDED nested classification
-  // Flat quantity fields (keep for potential backward compatibility or direct use)
+  classification?: ClassificationData | null;
   area?: number | null;
-  volume?: number | { net?: number; gross?: number } | null; // Support both number and object with net/gross
+  volume?: number | { net?: number; gross?: number } | null;
   length?: number | null;
-  // Nested quantity fields <<< UPDATED to use QuantityData >>>
   quantity?: QuantityData | null;
   original_quantity?: QuantityData | null;
   // Flat original quantities (keep for potential backward compatibility)
@@ -53,13 +49,13 @@ export interface IFCElement {
     name: string;
     volume?: number;
     unit?: string;
-    fraction?: number; // <<< ADD fraction if backend sends it
+    fraction?: number;
   }>;
   status?: "pending" | "active" | null;
   is_manual?: boolean;
 }
 
-// <<< START NEW METADATA INTERFACE >>>
+// New Metadata Interface
 export interface ProjectMetadata {
   filename?: string | null;
   file_id?: string | null;
@@ -67,7 +63,6 @@ export interface ProjectMetadata {
   updated_at?: string | null;
   element_count?: number | null;
 }
-// <<< END NEW METADATA INTERFACE >>>
 
 export interface ModelUploadResponse {
   message: string;
@@ -235,27 +230,12 @@ export class QTOApiClient {
     }
   }
 
-  /**
-   * Approve project elements AND optionally update quantities
-   * @deprecated Use approveProject() instead. This method is maintained for backward compatibility.
-   * @param projectName - The name of the project to approve
-   * @param updates - Optional list of element updates (ElementQuantityUpdate[])
-   * @returns Response with operation status
-   */
-  async approveProjectElements(
-    projectName: string,
-    updates?: ElementQuantityUpdate[]
-  ): Promise<{ status: string; message: string; project: string }> {
-    // Deprecated wrapper: forward to approveProject to keep one code path.
-    return this.approveProject(projectName, updates ?? []);
-  }
 
-  // <<< ADDED: Batch Update/Create Elements >>>
+  // Batch Update/Create Elements
   async batchUpdateElements(
     projectName: string,
     elements: BatchElementData[]
   ): Promise<any> {
-    // Define a more specific return type if needed
     try {
       const response = await fetch(
         `${this.baseUrl}/projects/${encodeURIComponent(
@@ -266,7 +246,7 @@ export class QTOApiClient {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ elements }), // Wrap elements in the expected request body structure
+          body: JSON.stringify({ elements }),
         }
       );
 
@@ -290,7 +270,7 @@ export class QTOApiClient {
     }
   }
 
-  // <<< ADDED: Get Target IFC Classes >>>
+  // Get Target IFC Classes
   async getTargetIfcClasses(): Promise<string[]> {
     try {
       const response = await fetch(`${this.baseUrl}/ifc-classes`, {
@@ -311,7 +291,7 @@ export class QTOApiClient {
     }
   }
 
-  // <<< ADDED: Delete Manual Element >>>
+  // Delete Manual Element
   async deleteElement(projectName: string, elementId: string): Promise<any> {
     try {
       const response = await fetch(
