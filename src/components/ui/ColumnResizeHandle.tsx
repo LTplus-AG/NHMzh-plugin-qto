@@ -26,16 +26,24 @@ const ColumnResizeHandle: React.FC<ColumnResizeHandleProps> = ({
       
       setIsResizing(true);
       startXRef.current = e.clientX;
+      
       // Parse currentWidth if it's a string like "150px"
-      startWidthRef.current = typeof currentWidth === 'string' 
-        ? parseFloat(currentWidth) 
-        : currentWidth;
+      const parsedWidth =
+        typeof currentWidth === "string" ? parseFloat(currentWidth) : currentWidth;
+
+      if (Number.isFinite(parsedWidth)) {
+        startWidthRef.current = parsedWidth;
+      } else {
+        const parentWidth = (e.currentTarget.parentElement as HTMLElement | null)
+          ?.getBoundingClientRect().width;
+        startWidthRef.current = parentWidth ?? minWidth;
+      }
 
       // Add class to body to prevent text selection during resize
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     },
-    [currentWidth]
+    [currentWidth, minWidth]
   );
 
   useEffect(() => {

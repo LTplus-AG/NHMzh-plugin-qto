@@ -56,7 +56,7 @@ class MongoDBHelper:
             f"{self.db_name}?authSource=admin"
         )
         
-        logger.info(f"Constructed MongoDB URI for user '{self.user}' (Password Hidden)") 
+        logger.info("Constructed MongoDB URI for user '%s' (Password Hidden)", self.user) 
         # --- End URI Construction ---
 
         self.max_retries = max_retries
@@ -71,7 +71,7 @@ class MongoDBHelper:
         retries = 0
         while retries < self.max_retries:
             try:
-                logger.info(f"Attempting MongoDB connection (attempt {retries + 1}/{self.max_retries})...")
+                logger.info("Attempting MongoDB connection (attempt %d/%d)...", retries + 1, self.max_retries)
                 self.client = MongoClient(
                     self.uri, 
                     serverSelectionTimeoutMS=5000 # Timeout after 5 seconds
@@ -79,16 +79,16 @@ class MongoDBHelper:
                 self.client.admin.command('ping')
                 self.db = self.client[self.db_name]
                 
-                logger.info(f"MongoDB connected successfully to database '{self.db_name}'")
+                logger.info("MongoDB connected successfully to database '%s'", self.db_name)
                 return
             except Exception as e:
                 retries += 1
-                logger.warning(f"MongoDB connection failed (attempt {retries}/{self.max_retries}): {e}")
+                logger.warning("MongoDB connection failed (attempt %d/%d): %s", retries, self.max_retries, e)
                 if retries < self.max_retries:
-                    logger.info(f"Retrying in {self.retry_delay} seconds...")
+                    logger.info("Retrying in %d seconds...", self.retry_delay)
                     time.sleep(self.retry_delay)
                 else:
-                    logger.error(f"Failed to connect to MongoDB after {self.max_retries} attempts.")
+                    logger.error("Failed to connect to MongoDB after %d attempts.", self.max_retries)
                     self.db = None 
                     return
     
@@ -105,7 +105,7 @@ class MongoDBHelper:
                 self.db.create_collection("elements")
                 self.db.elements.create_index("project_id")
         except Exception as e:
-            logger.error(f"Error ensuring collections: {e}")
+            logger.error("Error ensuring collections: %s", e)
     
     def save_project(self, project_data: Dict[str, Any]) -> ObjectId:
         """Save project data to MongoDB.
@@ -140,15 +140,15 @@ class MongoDBHelper:
                     {"$set": update_data}
                 )
                 if update_result.modified_count > 0:
-                    logger.info(f"Updated existing project: {existing_project['_id']}")
+                    logger.info("Updated existing project: %s", existing_project['_id'])
                 return existing_project["_id"]
             else:
                 # Insert new project
                 result = self.db.projects.insert_one(project_data)
-                logger.info(f"Inserted new project '{project_data['name']}' with ID: {result.inserted_id}")
+                logger.info("Inserted new project '%s' with ID: %s", project_data['name'], result.inserted_id)
                 return result.inserted_id
         except Exception as e:
-            logger.error(f"Error saving project to MongoDB: {e}")
+            logger.error("Error saving project to MongoDB: %s", e)
             return None
     
     def save_element(self, element_data: Dict[str, Any]) -> ObjectId:
@@ -178,7 +178,7 @@ class MongoDBHelper:
             result = self.db.elements.insert_one(element_data)
             return result.inserted_id
         except Exception as e:
-            logger.error(f"Error saving element to MongoDB: {e}")
+            logger.error("Error saving element to MongoDB: %s", e)
             return None
     
     def get_element(self, element_id: str) -> Dict[str, Any]:
@@ -200,7 +200,7 @@ class MongoDBHelper:
             element = self.db.elements.find_one({"_id": obj_id})
             return element
         except Exception as e:
-            logger.error(f"Error getting element from MongoDB: {e}")
+            logger.error("Error getting element from MongoDB: %s", e)
             return None
 
     def delete_project_elements(self, project_id: ObjectId, keep_manual: bool = False) -> Dict[str, Any]:
@@ -233,10 +233,10 @@ class MongoDBHelper:
             # Delete elements matching the filter
             result = self.db.elements.delete_many(delete_filter)
             deleted_count = result.deleted_count
-            logger.info(f"Deleted {deleted_count}{log_msg_suffix} elements for project {project_id}")
+            logger.info("Deleted %d%s elements for project %s", deleted_count, log_msg_suffix, project_id)
             return {"success": True, "deleted_count": deleted_count}
         except Exception as e:
-            logger.error(f"Error deleting project elements: {e}")
+            logger.error("Error deleting project elements: %s", e)
             return {"success": False, "message": str(e), "deleted_count": 0}
 
     def replace_project_elements(self, project_id: ObjectId, elements_data: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -264,7 +264,7 @@ class MongoDBHelper:
 
             # 2. Insert the new elements if the list is not empty
             if not elements_data:
-                logger.info(f"No new elements provided to insert for project {project_id} after deletion.")
+                logger.info("No new elements provided to insert for project %s after deletion.", project_id)
                 return {"success": True, "message": "Existing non-manual elements deleted, no new elements to insert.", "inserted_count": 0}
 
             now = datetime.now(timezone.utc)
@@ -279,30 +279,30 @@ class MongoDBHelper:
                 
                 # Ensure the global_id is stored correctly from the parsed data
                 if 'global_id' not in element_dict:
-                    logger.warning(f"Element missing 'global_id' for project {project_id}, name: {element_dict.get('name')}. This should not happen.")
+                    logger.warning("Element missing 'global_id' for project %s, name: %s. This should not happen.", project_id, element_dict.get('name'))
                 
                 # Remove MongoDB _id if it somehow exists in the input data to avoid conflicts
                 element_dict.pop('_id', None)
                 elements_to_insert.append(element_dict)
 
             if not elements_to_insert: # Should not happen if elements_data was not empty, but safety check
-                 logger.warning(f"Prepared list for insertion is empty for project {project_id}, although input was not.")
+                 logger.warning("Prepared list for insertion is empty for project %s, although input was not.", project_id)
                  return {"success": True, "message": "Internal preparation resulted in empty list.", "inserted_count": 0}
 
             # Perform the bulk insert
             insert_result = self.db.elements.insert_many(elements_to_insert, ordered=False)
             inserted_count = len(insert_result.inserted_ids)
-            logger.info(f"Inserted {inserted_count} new elements from IFC for project {project_id}")
+            logger.info("Inserted %d new elements from IFC for project %s", inserted_count, project_id)
 
             return {"success": True, "inserted_count": inserted_count}
 
         except BulkWriteError as bwe:
             # Handle potential errors during insert_many
-            logger.error(f"Bulk write error during replace_project_elements (insert phase): {bwe.details}")
+            logger.error("Bulk write error during replace_project_elements (insert phase): %s", bwe.details)
             # We might have partially deleted elements, state is inconsistent.
             return {"success": False, "message": f"Bulk write error during insertion: {bwe.details}", "inserted_count": 0}
         except Exception as e:
-            logger.error(f"Unexpected error in replace_project_elements for project {project_id}: {e}", exc_info=True)
+            logger.error("Unexpected error in replace_project_elements for project %s: %s", project_id, e, exc_info=True)
             return {"success": False, "message": f"Unexpected error: {str(e)}", "inserted_count": 0}
 
     # --- NEW METHODS for Parsed Data ---
@@ -341,15 +341,15 @@ class MongoDBHelper:
             )
 
             if result.upserted_id:
-                logger.info(f"Inserted new parsed data for {project_name}/{filename}")
+                logger.info("Inserted new parsed data for %s/%s", project_name, filename)
             elif result.modified_count > 0:
-                logger.info(f"Updated existing parsed data for {project_name}/{filename}")
+                logger.info("Updated existing parsed data for %s/%s", project_name, filename)
             else:
-                 logger.info(f"No changes needed for parsed data {project_name}/{filename} (data might be identical)")
+                 logger.info("No changes needed for parsed data %s/%s (data might be identical)", project_name, filename)
 
             return True
         except Exception as e:
-            logger.error(f"Error saving parsed data to MongoDB: {e}")
+            logger.error("Error saving parsed data to MongoDB: %s", e)
             return False
 
     def get_parsed_data_by_project(self, project_name: str) -> List[Dict[str, Any]]:
@@ -371,7 +371,7 @@ class MongoDBHelper:
             else:
                 return None # Or return [] if an empty list is preferred for not found
         except Exception as e:
-            logger.error(f"Error retrieving parsed data from MongoDB for {project_name}: {e}")
+            logger.error("Error retrieving parsed data from MongoDB for %s: %s", project_name, e)
             return None
 
     def list_distinct_projects(self) -> List[str]:
@@ -384,7 +384,7 @@ class MongoDBHelper:
             distinct_projects = collection.distinct("name")
             return distinct_projects
         except Exception as e:
-            logger.error(f"Error listing distinct projects from MongoDB: {e}")
+            logger.error("Error listing distinct projects from MongoDB: %s", e)
             return []
 
     def approve_project_elements(self, project_id: ObjectId) -> bool:
@@ -406,7 +406,7 @@ class MongoDBHelper:
                 project_id = ObjectId(project_id)
             
             # Log the project_id we're using for debugging
-            logger.info(f"Approving elements for project_id: {project_id}")
+            logger.info("Approving elements for project_id: %s", project_id)
             
             # Check if elements exist for this project before updating
             # element_count = self.db.elements.count_documents({"project_id": project_id})
@@ -421,10 +421,10 @@ class MongoDBHelper:
                 {"project_id": project_id},
                 {"$set": {"status": "active"}}
             )
-            logger.info(f"Approved {result.modified_count} elements for project {project_id}")
+            logger.info("Approved %d elements for project %s", result.modified_count, project_id)
             return True
         except Exception as e:
-            logger.error(f"Error approving project elements: {e}")
+            logger.error("Error approving project elements: %s", e)
             return False
 
     def update_element_quantities(self, project_id: ObjectId, updates: List[Dict[str, Any]]) -> bool:
@@ -455,7 +455,8 @@ class MongoDBHelper:
                 
                 # Check if the model and its value are valid
                 if not element_ifc_id or not new_quantity_model or new_quantity_model.value is None:
-                    logger.warning(f"Skipping invalid update data (missing ID or quantity value): {update.model_dump() if hasattr(update, 'model_dump') else update}") # Use model_dump if available
+                    update_data = update.model_dump() if hasattr(update, 'model_dump') else update
+                    logger.warning("Skipping invalid update data (missing ID or quantity value): %s", update_data)
                     error_count += 1
                     continue
 
@@ -467,7 +468,7 @@ class MongoDBHelper:
                 } if new_quantity_model else None
 
                 if not new_quantity_dict: # Double check conversion
-                    logger.warning(f"Skipping update due to inability to create quantity dict for element: {element_ifc_id}")
+                    logger.warning("Skipping update due to inability to create quantity dict for element: %s", element_ifc_id)
                     error_count += 1
                     continue
 
@@ -485,7 +486,7 @@ class MongoDBHelper:
                 result = self.db.elements.update_one(filter_criteria, update_operation)
                 
                 if result.matched_count == 0:
-                    logger.warning(f"No element found matching project {project_id} and global_id {element_ifc_id}. Update skipped.")
+                    logger.warning("No element found matching project %s and global_id %s. Update skipped.", project_id, element_ifc_id)
                     error_count += 1
                 elif result.modified_count == 0:
                     success_count += 1 
@@ -495,10 +496,10 @@ class MongoDBHelper:
             except Exception as e:
                 # Log the error, using the element_ifc_id if assigned, or the raw update data
                 error_identifier = element_ifc_id if element_ifc_id else str(update.model_dump() if hasattr(update, 'model_dump') else update)
-                logger.error(f"Error updating quantity for element {error_identifier} in project {project_id}: {e}")
+                logger.error("Error updating quantity for element %s in project %s: %s", error_identifier, project_id, e)
                 error_count += 1
         
-        logger.info(f"Quantity update process finished for project {project_id}. Success: {success_count}, Errors/Skipped: {error_count}")
+        logger.info("Quantity update process finished for project %s. Success: %d, Errors/Skipped: %d", project_id, success_count, error_count)
         # Return True if there were no errors, even if some were skipped/not found
         return error_count == 0
 
@@ -516,13 +517,13 @@ class MongoDBHelper:
             })
 
             if not element_to_delete:
-                logger.warning(f"Element with global_id {element_global_id} not found in project {project_id} for deletion.")
+                logger.warning("Element with global_id %s not found in project %s for deletion.", element_global_id, project_id)
                 return {"success": False, "message": "Element not found.", "deleted_count": 0}
             
             # <<< Important Check: Only allow deleting manual elements >>>
             is_manual_flag = element_to_delete.get("is_manual", False)
             if not is_manual_flag:
-                 logger.warning(f"Attempted to delete non-manual element {element_global_id}. Operation forbidden.")
+                 logger.warning("Attempted to delete non-manual element %s. Operation forbidden.", element_global_id)
                  return {"success": False, "message": "Only manually added elements can be deleted.", "deleted_count": 0}
 
             # Proceed with deletion
@@ -533,15 +534,15 @@ class MongoDBHelper:
             delete_count = result.deleted_count
 
             if delete_count == 1:
-                logger.info(f"Successfully deleted manual element {element_global_id} (DB ID: {element_db_id}) from project {project_id}")
+                logger.info("Successfully deleted manual element %s (DB ID: %s) from project %s", element_global_id, element_db_id, project_id)
                 return {"success": True, "deleted_count": 1}
             else:
                  # Should not happen if find_one succeeded, but good practice
-                 logger.error(f"Failed to delete element {element_global_id} even though it was found.")
+                 logger.error("Failed to delete element %s even though it was found.", element_global_id)
                  return {"success": False, "message": "Deletion failed after element was found.", "deleted_count": 0}
 
         except Exception as e:
-            logger.error(f"Error deleting element {element_global_id}: {e}")
+            logger.error("Error deleting element %s: %s", element_global_id, e)
             return {"success": False, "message": str(e), "deleted_count": 0}
 
     # --- Method Renamed & Refined for Manual Updates/Creates --- #
@@ -576,12 +577,12 @@ class MongoDBHelper:
             elif isinstance(element_input, dict):
                 element_dict = element_input.copy() # Work with a copy
             else:
-                logger.warning(f"Skipping unrecognized element data type in batch: {type(element_input)}")
+                logger.warning("Skipping unrecognized element data type in batch: %s", type(element_input))
                 continue
 
             element_global_id = element_dict.get('global_id')  # Use global_id for identification
             if not element_global_id:
-                logger.warning(f"Skipping element without 'global_id' in batch upsert: {element_dict.get('name', 'N/A')}")
+                logger.warning("Skipping element without 'global_id' in batch upsert: %s", element_dict.get('name', 'N/A'))
                 continue
 
             try:
@@ -666,7 +667,7 @@ class MongoDBHelper:
                 processed_count += 1
             except Exception as e:
                 error_id = element_global_id or element_dict.get('name', 'N/A')
-                logger.error(f"Error preparing operation for element {error_id}: {e}", exc_info=True)
+                logger.error("Error preparing operation for element %s: %s", error_id, e, exc_info=True)
                 # Continue processing other elements
 
         # Execute Batch Operation
@@ -675,7 +676,7 @@ class MongoDBHelper:
              return {"success": True, "processed": 0, "created": 0, "updated": 0, "upserted_ids": []}
 
         try:
-            logger.info(f"Attempting bulk_write with {len(operations)} operations for project {project_id}.") # <<< ADD Log Before Call
+            logger.info("Attempting bulk_write with %d operations for project %s.", len(operations), project_id)
             result = self.db.elements.bulk_write(operations, ordered=False)
             # Safely get counts and upserted IDs
             upserted_count = getattr(result, 'upserted_count', 0)
@@ -690,9 +691,8 @@ class MongoDBHelper:
             upserted_str_ids = [str(oid) for oid in upserted_object_ids.values()]
 
             logger.info(
-                f"Manual Bulk write result: matched={matched_count}, "
-                f"modified={updated_count}, upserted={upserted_count} "
-                f"(Upserted ObjectIDs: {upserted_str_ids})"
+                "Manual Bulk write result: matched=%d, modified=%d, upserted=%d (Upserted ObjectIDs: %s)",
+                matched_count, updated_count, upserted_count, upserted_str_ids
             )
 
             # Note: It's hard to get the specific IDs of merely *updated* documents from bulk_write result easily.
@@ -707,8 +707,8 @@ class MongoDBHelper:
             }
         except BulkWriteError as bwe:
             # <<< Enhance Logging >>>
-            logger.error(f"Bulk write error during batch upsert (manual): {bwe}")
-            logger.error(f"Bulk write error DETAILS: {bwe.details}")
+            logger.error("Bulk write error during batch upsert (manual): %s", bwe)
+            logger.error("Bulk write error DETAILS: %s", bwe.details)
             details = getattr(bwe, 'details', {})
             # Extract counts from error details
             created = details.get('nUpserted', 0)
@@ -726,7 +726,7 @@ class MongoDBHelper:
                 "upserted_ids": upserted_ids_on_error
             }
         except Exception as e:
-            logger.error(f"Unexpected error during batch upsert (manual) execution: {e}", exc_info=True)
+            logger.error("Unexpected error during batch upsert (manual) execution: %s", e, exc_info=True)
             return {"success": False, "message": f"Unexpected error: {e}", "processed": processed_count, "created": 0, "updated": 0, "upserted_ids": []}
 
     # <<< START ADDED FOR ASYNC IFC PROCESSING >>>
@@ -756,10 +756,10 @@ class MongoDBHelper:
                 "element_count": None
             }
             result = self.db.ifc_processing_jobs.insert_one(job_doc)
-            logger.info(f"Created IFC processing job with ID: {result.inserted_id}")
+            logger.info("Created IFC processing job with ID: %s", result.inserted_id)
             return str(result.inserted_id)
         except Exception as e:
-            logger.error(f"Error creating IFC processing job in MongoDB: {e}", exc_info=True)
+            logger.error("Error creating IFC processing job in MongoDB: %s", e, exc_info=True)
             return None
 
     def update_ifc_processing_job_status(
@@ -781,7 +781,7 @@ class MongoDBHelper:
             True if the update was successful, False otherwise.
         """
         if self.db is None:
-            logger.error(f"MongoDB not connected, cannot update job {job_id_str}")
+            logger.error("MongoDB not connected, cannot update job %s", job_id_str)
             return False
         try:
             job_oid = ObjectId(job_id_str)
@@ -799,19 +799,19 @@ class MongoDBHelper:
                 {"$set": update_fields}
             )
             if result.matched_count > 0:
-                logger.info(f"Updated status of job {job_id_str} to '{status}'. Modified: {result.modified_count > 0}")
+                logger.info("Updated status of job %s to '%s'. Modified: %s", job_id_str, status, result.modified_count > 0)
                 return True
             else:
-                logger.warning(f"Job {job_id_str} not found for status update.")
+                logger.warning("Job %s not found for status update.", job_id_str)
                 return False
         except Exception as e:
-            logger.error(f"Error updating status for job {job_id_str}: {e}", exc_info=True)
+            logger.error("Error updating status for job %s: %s", job_id_str, e, exc_info=True)
             return False
 
     def get_ifc_processing_job(self, job_id_str: str) -> Optional[Dict[str, Any]]:
         """Retrieves an IFC processing job by its string ID."""
         if self.db is None:
-            logger.error(f"MongoDB not connected, cannot get job {job_id_str}")
+            logger.error("MongoDB not connected, cannot get job %s", job_id_str)
             return None
         try:
             job_oid = ObjectId(job_id_str)
@@ -823,7 +823,7 @@ class MongoDBHelper:
                     job_doc["id"] = job_doc["_id"]
             return job_doc
         except Exception as e:
-            logger.error(f"Error retrieving job {job_id_str}: {e}", exc_info=True)
+            logger.error("Error retrieving job %s: %s", job_id_str, e, exc_info=True)
             return None
     # <<< END ADDED FOR ASYNC IFC PROCESSING >>>
 

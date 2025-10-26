@@ -385,7 +385,7 @@ def parse_element_materials(element: ifcopenshell.entity_instance, ifc_file: ifc
     # Normalize fractions if the sum isn't close to 1.0 (can happen with multiple associations or rounding)
     total_fraction_sum = sum(m.get('fraction', 0) for m in materials_list)
     if abs(total_fraction_sum - 1.0) > 1e-5 and total_fraction_sum > 1e-5:
-        logger.debug(f"Normalizing material fractions for element {element.id()}. Initial sum: {total_fraction_sum}")
+        logger.debug("Normalizing material fractions for element %s. Initial sum: %s", element.id(), total_fraction_sum)
         for material_item in materials_list:
              material_item['fraction'] = material_item.get('fraction', 0) / total_fraction_sum
              # Recalculate volume based on normalized fraction
@@ -394,6 +394,6 @@ def parse_element_materials(element: ifcopenshell.entity_instance, ifc_file: ifc
 
 
     if not materials_list:
-        logger.debug(f"No processable material associations found for element {element.id()}")
+        logger.debug("No processable material associations found for element %s", element.id())
 
     return materials_list 

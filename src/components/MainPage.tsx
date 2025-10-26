@@ -344,10 +344,7 @@ const MainPage = () => {
         // IMPORTANT: Only include updates for non-manual elements
         if (originalElement && !originalElement.is_manual) {
           const editData = editedElements[elementId];
-          if (
-            editData.newQuantity &&
-            typeof editData.newQuantity.value === "number"
-          ) {
+          if (editData.newQuantity) {
             // <<< ADDED Type assertion for newQuantity >>>
             const currentQuantity = editData.newQuantity as {
               value?: number | null;
