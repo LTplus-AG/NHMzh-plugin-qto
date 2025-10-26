@@ -28,6 +28,7 @@ import { IFCElement as LocalIFCElement } from "../types/types";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 import IfcElementsList from "./IfcElementsList";
 import { QtoPreviewDialog } from "./QtoPreviewDialog";
+import { getVolumeValue } from "../utils/volumeHelpers";
 import React from "react";
 import ManualElementForm from "./IfcElements/ManualElementForm";
 import { ManualElementInput, ManualQuantityInput } from "../types/manualTypes";
@@ -264,15 +265,8 @@ const MainPage = () => {
             original_quantity: (apiElement as any).original_quantity ?? null,
             area: apiElement.area,
             length: apiElement.length,
-            // Check if volume is an object and has 'net' property before accessing it
-            volume:
-              typeof apiElement.volume === "object" &&
-              apiElement.volume !== null &&
-              "net" in apiElement.volume
-                ? (apiElement.volume as { net: number }).net
-                : typeof apiElement.volume === "number"
-                ? apiElement.volume
-                : null,
+            // Extract volume value using helper to handle both number and object types
+            volume: getVolumeValue(apiElement.volume),
             category: apiElement.category,
             is_structural: apiElement.is_structural,
             is_external: apiElement.is_external,

@@ -2,6 +2,7 @@ import * as ExcelJS from 'exceljs';
 import { IFCElement } from '../types/types';
 import { getQuantityTypeFromUnit } from '../types/excelTypes';
 import { normalizeEbkpCode } from '../data/ebkpData';
+import { getVolumeValue } from './volumeHelpers';
 
 export interface ExcelExportConfig {
   fileName: string;
@@ -117,7 +118,7 @@ export class ExcelService {
       row.push(
         element.area || '',
         element.length || '',
-        element.volume || ''
+        getVolumeValue(element.volume) || ''
       );
 
       if (config.includeMaterials) {

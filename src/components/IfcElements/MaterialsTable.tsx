@@ -10,6 +10,7 @@ import {
 import InfoIcon from "@mui/icons-material/Info";
 import { IFCElement } from "../../types/types";
 import { isZeroQuantity, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
+import { getVolumeValue } from "../../utils/volumeHelpers";
 
 import { EditedQuantity } from "./types";
 
@@ -50,7 +51,7 @@ const MaterialsTable: React.FC<MaterialsTableProps> = ({
   };
 
   const calculateAdjustedVolume = (): number | null => {
-    const materialsVolume = element.volume ?? element.original_volume ?? null;
+    const materialsVolume = getVolumeValue(element.volume ?? element.original_volume ?? null);
     if (editedElement?.newQuantity && editedElement.newQuantity.value !== null) {
       const newVal = editedElement.newQuantity.value;
       const qType = editedElement.newQuantity.type;
