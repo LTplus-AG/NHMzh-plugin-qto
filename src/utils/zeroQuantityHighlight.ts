@@ -1,5 +1,6 @@
 import { SxProps, Theme } from '@mui/material/styles';
 import { quantityConfig } from '../types/types';
+import { getVolumeValue } from './volumeHelpers';
 
 // Check if a quantity value is zero or effectively zero
 export const isZeroQuantity = (value: number | null | undefined): boolean => {
@@ -84,7 +85,7 @@ export const hasZeroQuantityInAnyType = (item: {
   quantity?: number | null;
   area?: number | null;
   length?: number | null;
-  volume?: number | null;
+  volume?: number | { net?: number; gross?: number } | null;
   count?: number | null;
   hasZeroQuantityInGroup?: boolean; // For grouped elements
   groupedElements?: number; // Indicates if this is a grouped element
@@ -101,7 +102,7 @@ export const hasZeroQuantityInAnyType = (item: {
     item.quantity,
     item.area,
     item.length,
-    item.volume,
+    getVolumeValue(item.volume),
     item.count,
   ];
   
@@ -114,7 +115,7 @@ export const hasZeroQuantityInAnyType = (item: {
     const config = quantityConfig[item.type];
     const relevantQuantity = config.key === "area" ? item.area : 
                            config.key === "length" ? item.length : 
-                           item.volume; // fallback to volume for count types
+                           getVolumeValue(item.volume); // fallback to volume for count types
     
     return relevantQuantity === null || relevantQuantity === undefined || isZeroQuantity(relevantQuantity);
   }

@@ -18,6 +18,10 @@ import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
 import { tableStyles } from "./tableConfig";
 import { checkPersistedEdit } from "../../utils/elementEditChecks";
 import { hasZeroQuantityInAnyType, getZeroQuantityStyles } from "../../utils/zeroQuantityHighlight";
+import TruncatedTextTooltip from "../ui/TruncatedTextTooltip";
+import { ColumnConfig } from "./tableConfig";
+import { SxProps, Theme } from "@mui/material";
+import { ColumnWidths } from "../../hooks/useResizableColumns";
 
 interface EbkpGroup {
   code: string;
@@ -44,6 +48,9 @@ interface EbkpGroupRowProps {
   handleEditManualClick: (element: IFCElement) => void;
   openDeleteConfirm: (element: IFCElement) => void;
   viewType?: string;
+  getColumnStyle?: (column: ColumnConfig) => SxProps<Theme>;
+  setColumnWidth?: (columnKey: string, width: number) => void;
+  columnWidths?: ColumnWidths;
 }
 
 const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
@@ -58,6 +65,9 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
   handleEditManualClick,
   openDeleteConfirm,
   viewType,
+  getColumnStyle,
+  setColumnWidth,
+  columnWidths,
 }) => {
   // Check if any element in the group has been edited LOCALLY (unsaved)
   const hasEditedElements = useMemo(
@@ -258,41 +268,32 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                 </Tooltip>
               )}
             </Box>
-            <Typography variant="body2" sx={{ 
-              fontWeight: 500,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              flex: "1 1 auto",
-              minWidth: 0,
-            }}>
-              {group.name || "-"}
-            </Typography>
+            <TruncatedTextTooltip title={group.name || "-"} placement="top" arrow>
+              <Typography variant="body2" sx={{ 
+                fontWeight: 500,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                flex: "1 1 auto",
+                minWidth: 0,
+              }}>
+                {group.name || "-"}
+              </Typography>
+            </TruncatedTextTooltip>
           </Box>
         </TableCell>
 
-        {/* Column 3: Empty - matches child kategorie column */}
+        {/* Column 3-4: Element count and zero warning - spans two columns */}
         <TableCell
+          colSpan={2}
           sx={{
             ...tableStyles.dataCell,
-            flex: "0 1 160px",
-            minWidth: "100px",
-            py: 1.5,
-            px: 1,
-          }}
-        />
-
-        {/* Column 4: Element count - matches child ebene column */}
-        <TableCell
-          sx={{
-            ...tableStyles.dataCell,
-            flex: "0 0 200px",
-            minWidth: "180px",
             display: "flex",
             flexDirection: "column",
             alignItems: "flex-end",
+            justifyContent: "center",
             py: 1.5,
-            px: 1,
+            px: 2,
             gap: 0.25
           }}
         >
@@ -326,12 +327,11 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
           )}
         </TableCell>
 
-        {/* Column 5: Status - matches child menge column */}
+        {/* Column 5-8: Status - spans remaining columns */}
         <TableCell
+          colSpan={4}
           sx={{
             ...tableStyles.dataCell,
-            flex: "0 0 140px",
-            minWidth: "120px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -353,39 +353,6 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
             />
           </Tooltip>
         </TableCell>
-
-        {/* Column 6: Empty - matches child menge column */}
-        <TableCell
-          sx={{
-            ...tableStyles.dataCell,
-            flex: "0 0 160px",
-            minWidth: "140px",
-            py: 1.5,
-            px: 1,
-          }}
-        />
-
-        {/* Column 7: Empty - matches child ebkpCode column */}
-        <TableCell
-          sx={{
-            ...tableStyles.dataCell,
-            flex: "0 1 120px",
-            minWidth: "100px",
-            py: 1.5,
-            px: 1,
-          }}
-        />
-
-        {/* Column 8: Empty - matches child ebkpName column */}
-        <TableCell
-          sx={{
-            ...tableStyles.dataCell,
-            flex: "0 1 150px",
-            minWidth: "120px",
-            py: 1.5,
-            px: 1,
-          }}
-        />
       </TableRow>
 
       {/* Expanded EBKP elements */}
@@ -394,7 +361,7 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
         minWidth: "800px",
       }}>
         <TableCell
-          colSpan={9}
+          colSpan={8}
           sx={{ 
             paddingBottom: 0, 
             paddingTop: 0, 
@@ -425,6 +392,9 @@ const EbkpGroupRow: React.FC<EbkpGroupRowProps> = ({
                 handleEditManualClick={handleEditManualClick}
                 openDeleteConfirm={openDeleteConfirm}
                 maxHeight={window.innerHeight * 0.7} // 70vh equivalent
+                getColumnStyle={getColumnStyle}
+                setColumnWidth={setColumnWidth}
+                columnWidths={columnWidths}
               />
             </Box>
           </Collapse>

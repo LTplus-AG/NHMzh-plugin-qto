@@ -34,7 +34,7 @@ export interface IFCElement {
   classification_system?: string | null | undefined;
   area?: number | null | undefined;
   length?: number | null | undefined;
-  volume?: number | null | undefined;
+  volume?: number | { net?: number; gross?: number } | null | undefined;
   original_area?: number | null | undefined;
   original_length?: number | null | undefined;
   original_volume?: number | null | undefined;

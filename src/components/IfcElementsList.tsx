@@ -26,7 +26,8 @@ import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import { EbkpGroup } from "./IfcElements/types";
 import { HierarchicalEbkpGroup } from "./IfcElements/types";
-import { tableStyles, TABLE_COLUMNS, getColumnStyle } from "./IfcElements/tableConfig";
+import { tableStyles, TABLE_COLUMNS, getColumnStyle as getDefaultColumnStyle } from "./IfcElements/tableConfig";
+import { useResizableColumns } from "../hooks/useResizableColumns";
 import logger from '../utils/logger';
 
 // --- Status Definitions ---
@@ -119,6 +120,9 @@ const IfcElementsList = ({
   // Refs for timeout cleanup
   const scrollTimerRef = useRef<number | null>(null);
   const resetBgTimerRef = useRef<number | null>(null);
+
+  // Column resizing hook
+  const { columnWidths, setColumnWidth, getColumnStyle } = useResizableColumns(TABLE_COLUMNS);
 
   // Determine the status of an element based on new priority
   const getElementDisplayStatus = useCallback((
@@ -447,7 +451,7 @@ const IfcElementsList = ({
           </Tooltip>
         </Box>
 
-        {/* Right Group: Legend and View Toggle */}
+        {/* Right Group: Legend, Reset Columns, and View Toggle */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           {/* Render Legend inline if statuses are present */}
           {presentStatuses.length > 0 && (
@@ -488,11 +492,11 @@ const IfcElementsList = ({
           }}>
             <TableHead>
               <TableRow sx={{ ...tableStyles.headerRow, backgroundColor: "rgba(0, 0, 0, 0.04)" }}>
+                {/* First column: Expand/Collapse All */}
                 <TableCell
                   sx={{
                     ...tableStyles.headerCell,
-                    flex: "0 0 48px",
-                    minWidth: "48px",
+                    ...getDefaultColumnStyle(TABLE_COLUMNS[0]),
                     py: 2,
                     fontWeight: 'bold',
                   }}
@@ -518,16 +522,17 @@ const IfcElementsList = ({
                     </IconButton>
                   </Tooltip>
                 </TableCell>
+
+                {/* Second column: Type/Bezeichnung */}
                 <TableCell
                   sx={{
                     ...tableStyles.headerCell,
-                    flex: "1 1 480px", // Combined width of type + GUID columns
-                    minWidth: "320px",
+                    ...getDefaultColumnStyle(TABLE_COLUMNS[1]),
                     py: 2,
                     fontWeight: 'bold',
                   }}
                 >
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, width: "100%" }}>
                     <span>{hierarchicalGroups ? "EBKP Gruppe / Bezeichnung" : "EBKP / Bezeichnung"}</span>
                     {expandedGroupsCount > 0 && (
                       <Typography
@@ -546,38 +551,28 @@ const IfcElementsList = ({
                     )}
                   </Box>
                 </TableCell>
+
+                {/* Columns 3-4: Anzahl Typen/Elemente - spans 2 columns */}
                 <TableCell
+                  colSpan={2}
                   sx={{
                     ...tableStyles.headerCell,
-                    flex: "0 1 160px",
-                    minWidth: "100px",
                     py: 2,
                     fontWeight: 'bold',
-                  }}
-                />
-                <TableCell
-                  sx={{
-                    ...tableStyles.headerCell,
-                    flex: "0 1 120px",
-                    minWidth: "80px",
-                    display: "flex",
-                    alignItems: "center",
-                    py: 2,
-                    fontWeight: 'bold',
+                    textAlign: 'center',
                   }}
                 >
                   {viewType === "grouped" ? "Anzahl Typen" : "Anzahl Elemente"}
                 </TableCell>
+
+                {/* Columns 5-8: Status - spans 4 columns */}
                 <TableCell
+                  colSpan={4}
                   sx={{
                     ...tableStyles.headerCell,
-                    flex: "0 0 140px",
-                    minWidth: "120px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
                     py: 2,
                     fontWeight: 'bold',
+                    textAlign: 'center',
                   }}
                 >
                   Status {presentStatuses.length > 0 &&
@@ -585,39 +580,6 @@ const IfcElementsList = ({
                       ({presentStatuses.length})
                     </Typography>
                   }
-                </TableCell>
-                <TableCell
-                  sx={{
-                    ...tableStyles.headerCell,
-                    flex: "0 0 160px",
-                    minWidth: "140px",
-                    py: 2,
-                    fontWeight: 'bold',
-                  }}
-                >
-                  Menge
-                </TableCell>
-                <TableCell
-                  sx={{
-                    ...tableStyles.headerCell,
-                    flex: "0 1 120px",
-                    minWidth: "100px",
-                    py: 2,
-                    fontWeight: 'bold',
-                  }}
-                >
-                  EBKP Code
-                </TableCell>
-                <TableCell
-                  sx={{
-                    ...tableStyles.headerCell,
-                    flex: "0 1 150px",
-                    minWidth: "120px",
-                    py: 2,
-                    fontWeight: 'bold',
-                  }}
-                >
-                  EBKP Name
                 </TableCell>
               </TableRow>
             </TableHead>
@@ -640,6 +602,9 @@ const IfcElementsList = ({
                     handleEditManualClick={handleEditManualClick}
                     openDeleteConfirm={openDeleteConfirm}
                     viewType={viewType}
+                    getColumnStyle={getColumnStyle}
+                    setColumnWidth={setColumnWidth}
+                    columnWidths={columnWidths}
                   />
                 ))
               ) : (
@@ -658,6 +623,9 @@ const IfcElementsList = ({
                     handleEditManualClick={handleEditManualClick}
                     openDeleteConfirm={openDeleteConfirm}
                     viewType={viewType}
+                    getColumnStyle={getColumnStyle}
+                    setColumnWidth={setColumnWidth}
+                    columnWidths={columnWidths}
                   />
                 ))
               )}
@@ -685,7 +653,7 @@ export const ElementDetailHeader = () => (
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[0]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[0]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}
@@ -693,7 +661,7 @@ export const ElementDetailHeader = () => (
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[1]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[1]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}
@@ -703,7 +671,7 @@ export const ElementDetailHeader = () => (
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[2]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[2]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}
@@ -713,7 +681,7 @@ export const ElementDetailHeader = () => (
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[3]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[3]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}
@@ -723,7 +691,7 @@ export const ElementDetailHeader = () => (
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[4]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[4]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}
@@ -733,17 +701,19 @@ export const ElementDetailHeader = () => (
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[5]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[5]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}
       >
-        Menge
+        <Box sx={{ display: "flex", justifyContent: "flex-end", width: "100%" }}>
+          Menge
+        </Box>
       </TableCell>
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[6]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[6]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}
@@ -753,7 +723,7 @@ export const ElementDetailHeader = () => (
       <TableCell
         sx={{
           ...tableStyles.headerCell,
-          ...getColumnStyle(TABLE_COLUMNS[7]),
+          ...getDefaultColumnStyle(TABLE_COLUMNS[7]),
           backgroundColor: "#f8f9fa",
           zIndex: 99,
         }}

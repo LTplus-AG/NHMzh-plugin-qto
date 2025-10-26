@@ -18,9 +18,11 @@ import MaterialsTable from "./MaterialsTable";
 import { EditedQuantity } from "./types";
 import { ElementDisplayStatus } from "../IfcElementsList";
 import CopyableText from "../ui/CopyableText";
-import { TABLE_COLUMNS, getColumnStyle, tableStyles } from "./tableConfig";
+import { TABLE_COLUMNS, getColumnStyle as getDefaultColumnStyle, tableStyles, ColumnConfig } from "./tableConfig";
 import { hasZeroQuantityInAnyType, getZeroQuantityStyles, getZeroQuantityTooltip } from "../../utils/zeroQuantityHighlight";
 import { getEbkpNameFromCode } from "../../data/ebkpData";
+import TruncatedTextTooltip from "../ui/TruncatedTextTooltip";
+import { SxProps, Theme } from "@mui/material";
 
 interface ElementRowProps {
   element: IFCElement;
@@ -37,6 +39,7 @@ interface ElementRowProps {
   ) => void;
   getElementDisplayStatus: (element: IFCElement) => ElementDisplayStatus; // Add prop type
   handleEditManualClick: (element: IFCElement) => void; // <<< Destructure prop
+  getColumnStyle?: (column: ColumnConfig) => SxProps<Theme>;
 }
 
 const getQuantityValue = (
@@ -95,6 +98,7 @@ const ElementRow: React.FC<ElementRowProps> = ({
   handleQuantityChange,
   getElementDisplayStatus, // Destructure prop
   handleEditManualClick, // <<< Destructure prop
+  getColumnStyle = getDefaultColumnStyle,
 }) => {
 
 
@@ -344,15 +348,21 @@ const ElementRow: React.FC<ElementRowProps> = ({
             width: "100%",
             minWidth: 0,
           }}>
-            <Typography sx={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              flex: "1 1 auto",
-              minWidth: 0,
-            }}>
-              {element.type_name || element.name || element.type}
-            </Typography>
+            <TruncatedTextTooltip 
+              title={element.type_name || element.name || element.type}
+              placement="top"
+              arrow
+            >
+              <Typography sx={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                flex: "1 1 auto",
+                minWidth: 0,
+              }}>
+                {element.type_name || element.name || element.type}
+              </Typography>
+            </TruncatedTextTooltip>
             {element.is_manual && (
               <Tooltip title="Manuell hinzugefügtes Element">
                 <BuildIcon sx={{ fontSize: "0.9rem", color: "action.active", flex: "0 0 auto" }} />
@@ -412,14 +422,16 @@ const ElementRow: React.FC<ElementRowProps> = ({
             px: 1,
           }}
         >
-          <Typography sx={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            width: "100%",
-          }}>
-            {category}
-          </Typography>
+          <TruncatedTextTooltip title={category} placement="top" arrow>
+            <Typography sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
+            }}>
+              {category}
+            </Typography>
+          </TruncatedTextTooltip>
         </TableCell>
 
         {/* Column 5: Ebene */}
@@ -431,14 +443,16 @@ const ElementRow: React.FC<ElementRowProps> = ({
             px: 1,
           }}
         >
-          <Typography sx={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            width: "100%",
-          }}>
-            {level}
-          </Typography>
+          <TruncatedTextTooltip title={level} placement="top" arrow>
+            <Typography sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
+            }}>
+              {level}
+            </Typography>
+          </TruncatedTextTooltip>
         </TableCell>
 
         {/* Column 6: Menge */}
@@ -455,140 +469,145 @@ const ElementRow: React.FC<ElementRowProps> = ({
         >
           <Box sx={{ 
             display: "flex", 
-            alignItems: "center", 
-            justifyContent: "flex-end", 
+            flexDirection: "column",
+            alignItems: "flex-end",
             width: "100%",
-            gap: 0.5,
+            gap: 0.25,
           }}>
-            {element.groupedElements && element.groupedElements > 1 ? (
-              <Tooltip
-                title="Bearbeitung nicht möglich, da mehrere Elemente gruppiert angezeigt werden. Wechseln Sie zur Einzelansicht um Mengen zu bearbeiten."
-                placement="top"
-                arrow
-              >
-                <span style={{ width: "100%" }}>
-                  <TextField
-                    variant="outlined"
-                    size="small"
-                    type="number"
-                    inputProps={{
-                      step: "0.001",
-                      style: { textAlign: "right" }, // Align text right
-                    }}
-                    value={displayValue} // <<< NEW: Use pre-calculated variable
-                    disabled={true}
-                    onClick={(e) => e.stopPropagation()}
-                    sx={{
-                      width: "80px",
-                      mr: 0.5,
-                      "& .MuiInputBase-root": {
-                        borderRadius: 1,
-                        fontSize: "0.875rem",
-                      },
-                      "& .MuiInputBase-input": {
-                        py: 0.5,
-                        px: 1,
-                        textAlign: "right",
-                      },
-                      "& .Mui-disabled": {
-                        WebkitTextFillColor: "rgba(0, 0, 0, 0.6) !important",
-                        cursor: "not-allowed",
-                        backgroundColor: "rgba(0, 0, 0, 0.02)",
-                      },
-                      "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
-                        {
-                          WebkitAppearance: "none",
-                          margin: 0,
+            <Box sx={{ 
+              display: "flex", 
+              alignItems: "center", 
+              justifyContent: "flex-end", 
+              width: "100%",
+              gap: 0.5,
+            }}>
+              {element.groupedElements && element.groupedElements > 1 ? (
+                <Tooltip
+                  title="Bearbeitung nicht möglich, da mehrere Elemente gruppiert angezeigt werden. Wechseln Sie zur Einzelansicht um Mengen zu bearbeiten."
+                  placement="top"
+                  arrow
+                >
+                  <span style={{ width: "100%" }}>
+                    <TextField
+                      variant="outlined"
+                      size="small"
+                      type="number"
+                      inputProps={{
+                        step: "0.001",
+                        style: { textAlign: "right" },
+                      }}
+                      value={displayValue}
+                      disabled={true}
+                      onClick={(e) => e.stopPropagation()}
+                      sx={{
+                        width: "80px",
+                        mr: 0.5,
+                        "& .MuiInputBase-root": {
+                          borderRadius: 1,
+                          fontSize: "0.875rem",
                         },
-                      "& input[type=number]": {
-                        MozAppearance: "textfield",
-                      },
-                    }}
-                  />
-                </span>
-              </Tooltip>
-            ) : (
-              <TextField
-                size="small"
-                type="text"
-                inputMode="decimal"
-                inputProps={{
-                  step: "0.001",
-                  style: { textAlign: "right" }, // Align text right
-                }}
-                value={displayValue} // <<< NEW: Use pre-calculated variable
-                onChange={(e) => {
-                  // If this is a grouped element, don't allow direct editing
-                  if (element.groupedElements && element.groupedElements > 1) {
-                    return;
-                  }
+                        "& .MuiInputBase-input": {
+                          py: 0.5,
+                          px: 1,
+                          textAlign: "right",
+                        },
+                        "& .Mui-disabled": {
+                          WebkitTextFillColor: "rgba(0, 0, 0, 0.6) !important",
+                          cursor: "not-allowed",
+                          backgroundColor: "rgba(0, 0, 0, 0.02)",
+                        },
+                        "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
+                          {
+                            WebkitAppearance: "none",
+                            margin: 0,
+                          },
+                        "& input[type=number]": {
+                          MozAppearance: "textfield",
+                        },
+                      }}
+                    />
+                  </span>
+                </Tooltip>
+              ) : (
+                <TextField
+                  size="small"
+                  type="number"
+                  inputProps={{
+                    step: "0.001",
+                    style: { textAlign: "right" },
+                  }}
+                  value={displayValue}
+                  onChange={(e) => {
+                    // If this is a grouped element, don't allow direct editing
+                    if (element.groupedElements && element.groupedElements > 1) {
+                      return;
+                    }
 
-                  handleQuantityChange(
-                    element.global_id,
-                    displayQuantityKey,
-                    originalQuantityValue, // Pass the determined original value
-                    e.target.value
-                  );
-                }}
-                onFocus={(e) => e.target.select()}
-                onClick={(e) => e.stopPropagation()}
+                    handleQuantityChange(
+                      element.global_id,
+                      displayQuantityKey,
+                      originalQuantityValue,
+                      e.target.value
+                    );
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  onClick={(e) => e.stopPropagation()}
+                  sx={{
+                    width: "80px",
+                    mr: 0.5,
+                    "& .MuiInputBase-root": {
+                      borderRadius: 1,
+                      fontSize: "0.875rem",
+                    },
+                    "& .MuiInputBase-input": {
+                      py: 0.5,
+                      px: 1,
+                      textAlign: "right",
+                    },
+                    "& .MuiOutlinedInput-root": {
+                      "&.Mui-focused fieldset": {
+                        borderColor:
+                          isLocallyEdited || isPersistedEdit
+                            ? "warning.main"
+                            : "primary.main",
+                      },
+                      "& fieldset": {
+                        borderColor:
+                          isLocallyEdited || isPersistedEdit
+                            ? "warning.main"
+                            : undefined,
+                      },
+                    },
+                    "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
+                      {
+                        WebkitAppearance: "none",
+                        margin: 0,
+                      },
+                    "& input[type=number]": {
+                      MozAppearance: "textfield",
+                    },
+                  }}
+                />
+              )}
+              <Typography variant="body2" sx={{ fontSize: "0.875rem", color: "text.secondary", whiteSpace: "nowrap" }}>
+                {displayUnit}
+              </Typography>
+            </Box>
+            {/* Show original value when there is an UNSAVED local edit */}
+            {isLocallyEdited && originalQuantityValue !== null && originalQuantityValue !== undefined && (
+              <Typography
+                variant="caption"
                 sx={{
-                  width: "80px",
-                  mr: 0.5,
-                  "& .MuiInputBase-root": {
-                    borderRadius: 1,
-                    fontSize: "0.875rem",
-                  },
-                  "& .MuiInputBase-input": {
-                    py: 0.5,
-                    px: 1,
-                    textAlign: "right",
-                  },
-                  "& .MuiOutlinedInput-root": {
-                    "&.Mui-focused fieldset": {
-                      borderColor:
-                        isLocallyEdited || isPersistedEdit
-                          ? "warning.main"
-                          : "primary.main",
-                    },
-                    "& fieldset": {
-                      borderColor:
-                        isLocallyEdited || isPersistedEdit
-                          ? "warning.main"
-                          : undefined,
-                    },
-                  },
-                  "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button":
-                    {
-                      WebkitAppearance: "none",
-                      margin: 0,
-                    },
-                  "& input[type=number]": {
-                    MozAppearance: "textfield",
-                  },
+                  color: "text.secondary",
+                  fontSize: "0.7rem",
+                  fontStyle: "italic",
+                  whiteSpace: "nowrap",
                 }}
-              />
+              >
+                (Original: {formatNumber(originalQuantityValue)} {displayUnit})
+              </Typography>
             )}
-            <Typography variant="body2" sx={{ fontSize: "0.875rem", color: "text.secondary" }}>
-              {displayUnit}
-            </Typography>
           </Box>
-          {/* Show original value only when there is an UNSAVED local edit */}
-          {isLocallyEdited && (
-            <Typography
-              variant="caption"
-              sx={{
-                display: "block",
-                color: "text.secondary",
-                textAlign: "right",
-                fontSize: "0.75rem",
-                marginTop: "4px",
-                paddingRight: "8px",
-              }}
-            >
-              ({formatNumber(originalQuantityValue)})
-            </Typography>
-          )}
         </TableCell>
 
         {/* Column 7: EBKP Code */}
@@ -600,16 +619,22 @@ const ElementRow: React.FC<ElementRowProps> = ({
             px: 1,
           }}
         >
-          <Typography sx={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            width: "100%",
-            fontFamily: "monospace",
-            fontSize: "0.875rem",
-          }}>
-            {element.classification_id || element.ebkph || "-"}
-          </Typography>
+          <TruncatedTextTooltip 
+            title={element.classification_id || element.ebkph || "-"}
+            placement="top"
+            arrow
+          >
+            <Typography sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
+              fontFamily: "monospace",
+              fontSize: "0.875rem",
+            }}>
+              {element.classification_id || element.ebkph || "-"}
+            </Typography>
+          </TruncatedTextTooltip>
         </TableCell>
 
         {/* Column 8: EBKP Name */}
@@ -621,14 +646,20 @@ const ElementRow: React.FC<ElementRowProps> = ({
             px: 1,
           }}
         >
-          <Typography sx={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            width: "100%",
-          }}>
-            {element.classification_name || (element.classification_id ? getEbkpNameFromCode(element.classification_id) : "-")}
-          </Typography>
+          <TruncatedTextTooltip 
+            title={element.classification_name || (element.classification_id ? (getEbkpNameFromCode(element.classification_id) || "-") : "-")}
+            placement="top"
+            arrow
+          >
+            <Typography sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              width: "100%",
+            }}>
+              {element.classification_name || (element.classification_id ? getEbkpNameFromCode(element.classification_id) : "-")}
+            </Typography>
+          </TruncatedTextTooltip>
         </TableCell>
       </TableRow>
 

@@ -114,7 +114,7 @@ export function validateQuantityUnit(value: number, unit: string): ExcelImportVa
   ];
   
   if (!allSupportedUnits.includes(normalizedUnit)) {
-    validation.warnings.push(`Einheit '${unit}' ist nicht in der Liste der unterstützten Einheiten`);
+    validation.warnings.push(`Einheit '${unit}' ist nicht in der Liste der finanzierten Einheiten`);
   }
   
   return validation;

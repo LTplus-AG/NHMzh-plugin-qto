@@ -3,6 +3,7 @@ import { IFCElement } from "../../../types/types";
 import { EbkpGroup, HierarchicalEbkpGroup } from "../types";
 import { normalizeEbkpCode } from "../../../data/ebkpData";
 import { hasZeroQuantityInAnyType } from "../../../utils/zeroQuantityHighlight";
+import { getVolumeValue } from "../../../utils/volumeHelpers";
 
 // Main EBKP group names mapping
 const EBKP_MAIN_GROUP_NAMES: Record<string, string> = {
@@ -267,7 +268,7 @@ export const useEbkpGroups = (
               0
             );
             mergedElement.volume = elementsInTypeGroup.reduce(
-              (sum, el) => sum + (el.volume || 0),
+              (sum, el) => sum + getVolumeValue(el.volume),
               0
             );
 

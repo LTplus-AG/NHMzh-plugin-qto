@@ -19,7 +19,7 @@ import {
   Typography,
   Chip,
 } from "@mui/material";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import apiClient, {
   IFCElement as ApiIFCElement,
   ProjectMetadata,
@@ -28,13 +28,14 @@ import { IFCElement as LocalIFCElement } from "../types/types";
 import { useElementEditing } from "./IfcElements/hooks/useElementEditing";
 import IfcElementsList from "./IfcElementsList";
 import { QtoPreviewDialog } from "./QtoPreviewDialog";
+import { getVolumeValue } from "../utils/volumeHelpers";
 import React from "react";
 import ManualElementForm from "./IfcElements/ManualElementForm";
 import { ManualElementInput, ManualQuantityInput } from "../types/manualTypes";
 import { v4 as uuidv4 } from "uuid";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { BatchElementData } from "../types/batchUpdateTypes";
-import { ElementQuantityUpdate } from "../api/types";
+import { ElementQuantityUpdate, isQuantityType } from "../api/types";
 import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService, ExcelImportData } from "../utils/excelService";
 import { getEbkpNameFromCode } from "../data/ebkpData";
@@ -89,6 +90,9 @@ const MainPage = () => {
     handleQuantityChange,
     resetEdits,
   } = useElementEditing();
+
+  // Track previous project to only reset edits when switching projects
+  const prevProjectRef = useRef<string | null>(null);
 
   // Excel dialog state
   const {
@@ -206,12 +210,19 @@ const MainPage = () => {
     if (selectedProject && backendConnected) {
       fetchProjectElements(selectedProject);
       fetchProjectMetadata(selectedProject);
-      resetEdits();
+      
+      // Only reset edits if we're switching to a DIFFERENT project
+      // This prevents losing edits when the project refreshes or backend reconnects
+      if (prevProjectRef.current !== selectedProject) {
+        resetEdits();
+        prevProjectRef.current = selectedProject;
+      }
     } else {
       setIfcElements([]);
       setIfcError(null);
       setProjectMetadata(null);
-      resetEdits();
+      resetEdits(); // OK to reset when no project selected
+      prevProjectRef.current = null;
     }
   }, [selectedProject, backendConnected]);
 
@@ -243,7 +254,8 @@ const MainPage = () => {
             classification_system: apiElement.classification_system,
             quantity:
               apiElement.quantity &&
-              typeof apiElement.quantity.type === "string"
+              typeof apiElement.quantity.type === "string" &&
+              isQuantityType(apiElement.quantity.type)
                 ? {
                     type: apiElement.quantity.type,
                     value: apiElement.quantity.value ?? null,
@@ -253,15 +265,8 @@ const MainPage = () => {
             original_quantity: (apiElement as any).original_quantity ?? null,
             area: apiElement.area,
             length: apiElement.length,
-            // Check if volume is an object and has 'net' property before accessing it
-            volume:
-              typeof apiElement.volume === "object" &&
-              apiElement.volume !== null &&
-              "net" in apiElement.volume
-                ? (apiElement.volume as { net: number }).net
-                : typeof apiElement.volume === "number"
-                ? apiElement.volume
-                : null,
+            // Extract volume value using helper to handle both number and object types
+            volume: getVolumeValue(apiElement.volume),
             category: apiElement.category,
             is_structural: apiElement.is_structural,
             is_external: apiElement.is_external,
@@ -333,14 +338,7 @@ const MainPage = () => {
         // IMPORTANT: Only include updates for non-manual elements
         if (originalElement && !originalElement.is_manual) {
           const editData = editedElements[elementId];
-          if (
-            editData.newQuantity &&
-            typeof editData.newQuantity.value === "number"
-          ) {
-            // The type of validQuantityType needs to allow all possibilities used below
-            let validQuantityType: "area" | "length" | "volume" | string =
-              "area"; // Default, allow string for flexibility
-
+          if (editData.newQuantity) {
             // <<< ADDED Type assertion for newQuantity >>>
             const currentQuantity = editData.newQuantity as {
               value?: number | null;
@@ -348,26 +346,42 @@ const MainPage = () => {
               unit?: string;
             };
 
-            if (typeof currentQuantity.type === "string") {
-              // Check type exists
-              if (currentQuantity.type === "length")
-                validQuantityType = "length";
-              else if (currentQuantity.type === "volume")
-                validQuantityType = "volume";
-              // <<< Comparison should now work with assertion
-              else validQuantityType = currentQuantity.type; // Keep original if area or other string
-            }
-            // else: Keep default 'area' if type is missing/invalid
+            // Skip if type is missing or invalid to avoid wrong updates
+            if (typeof currentQuantity.type === "string" && currentQuantity.type.trim()) {
+              const normalizedType = currentQuantity.type.trim().toLowerCase();
 
-            quantityUpdates.push({
-              element_id: elementId,
-              new_quantity: {
-                value: currentQuantity.value ?? null,
-                type: validQuantityType, // Use the determined type
-                // Ensure unit exists on the source object before accessing
-                unit: currentQuantity.unit || "?", // <<< Access unit via asserted type
-              },
-            });
+              // Skip if type is not a valid quantity type
+              if (!isQuantityType(normalizedType)) {
+                logger.warn(`Skipping quantity update for element ${elementId}: unsupported quantity type '${currentQuantity.type}'`);
+                continue;
+              }
+
+              // Only include finite numbers to prevent NaN from being sent
+              const validValue = Number.isFinite(currentQuantity.value as number)
+                ? (currentQuantity.value as number)
+                : null;
+
+              const normalizedUnit = typeof currentQuantity.unit === "string" && currentQuantity.unit.trim()
+                ? currentQuantity.unit.trim()
+                : normalizedType === "area"
+                ? "m²"
+                : normalizedType === "volume"
+                ? "m³"
+                : normalizedType === "length"
+                ? "m"
+                : "Stk";
+
+              quantityUpdates.push({
+                global_id: elementId,
+                new_quantity: {
+                  value: validValue,
+                  type: normalizedType as "area" | "length" | "volume" | "count",
+                  unit: normalizedUnit,
+                },
+              });
+            } else {
+              logger.warn(`Skipping quantity update for element ${elementId}: missing or invalid quantity type`);
+            }
           }
           // Include fallback for older edit structure if necessary
           else if (
@@ -375,7 +389,7 @@ const MainPage = () => {
             editData.newArea !== null
           ) {
             quantityUpdates.push({
-              element_id: elementId,
+              global_id: elementId,
               new_quantity: {
                 value: editData.newArea,
                 type: "area",
@@ -387,7 +401,7 @@ const MainPage = () => {
             editData.newLength !== null
           ) {
             quantityUpdates.push({
-              element_id: elementId,
+              global_id: elementId,
               new_quantity: {
                 value: editData.newLength,
                 type: "length",

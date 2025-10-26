@@ -18,8 +18,10 @@ import { checkPersistedEdit } from "../../utils/elementEditChecks";
 import { getZeroQuantityStyles, hasZeroQuantityInAnyType } from "../../utils/zeroQuantityHighlight";
 import { ElementDisplayStatus, STATUS_CONFIG } from "../IfcElementsList";
 import EbkpGroupRow from "./EbkpGroupRow";
-import { tableStyles, groupRowConfig, tableSpacing, TABLE_COLUMNS } from "./tableConfig";
+import { tableStyles, groupRowConfig, tableSpacing, TABLE_COLUMNS, ColumnConfig } from "./tableConfig";
 import { EditedQuantity, HierarchicalEbkpGroup } from "./types";
+import { SxProps, Theme } from "@mui/material";
+import { ColumnWidths } from "../../hooks/useResizableColumns";
 
 interface MainEbkpGroupRowProps {
   group: HierarchicalEbkpGroup;
@@ -40,6 +42,9 @@ interface MainEbkpGroupRowProps {
   handleEditManualClick: (element: IFCElement) => void;
   openDeleteConfirm: (element: IFCElement) => void;
   viewType?: string;
+  getColumnStyle?: (column: ColumnConfig) => SxProps<Theme>;
+  setColumnWidth?: (columnKey: string, width: number) => void;
+  columnWidths?: ColumnWidths;
 }
 
 
@@ -58,6 +63,9 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
   handleEditManualClick,
   openDeleteConfirm,
   viewType,
+  getColumnStyle,
+  setColumnWidth,
+  columnWidths,
 }) => {
   // Get all elements from all subgroups
   const allElements = useMemo(() => {
@@ -325,10 +333,9 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
         </TableCell>
 
         <TableCell
+          colSpan={4}
           sx={{
             ...tableStyles.dataCell,
-            width: "140px",
-            minWidth: "120px",
             textAlign: "center",
             py: 2,
             px: 1,
@@ -342,39 +349,6 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
             {statusConfig.label}
           </Typography>
         </TableCell>
-
-        {/* Column 6: Empty - matches child menge column */}
-        <TableCell
-          sx={{
-            ...tableStyles.dataCell,
-            flex: "0 0 160px",
-            minWidth: "140px",
-            py: 2,
-            px: 1,
-          }}
-        />
-
-        {/* Column 7: Empty - matches child ebkpCode column */}
-        <TableCell
-          sx={{
-            ...tableStyles.dataCell,
-            flex: "0 1 120px",
-            minWidth: "100px",
-            py: 2,
-            px: 1,
-          }}
-        />
-
-        {/* Column 8: Empty - matches child ebkpName column */}
-        <TableCell
-          sx={{
-            ...tableStyles.dataCell,
-            flex: "0 1 150px",
-            minWidth: "120px",
-            py: 2,
-            px: 1,
-          }}
-        />
       </TableRow>
 
       <TableRow>
@@ -397,6 +371,9 @@ const MainEbkpGroupRow: React.FC<MainEbkpGroupRowProps> = ({
                       handleEditManualClick={handleEditManualClick}
                       openDeleteConfirm={openDeleteConfirm}
                       viewType={viewType}
+                      getColumnStyle={getColumnStyle}
+                      setColumnWidth={setColumnWidth}
+                      columnWidths={columnWidths}
                     />
                   ))}
                 </TableBody>

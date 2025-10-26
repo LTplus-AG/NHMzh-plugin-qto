@@ -41,8 +41,8 @@ logging.getLogger("ifc_materials_parser")
 logging.getLogger("qto_producer")
 
 # Log ifcopenshell version at startup
-logger.info(f"Using ifcopenshell version: {ifcopenshell.version}")
-logger.info(f"Python version: {sys.version}")
+logger.info("Using ifcopenshell version: %s", ifcopenshell.version)
+logger.info("Python version: %s", sys.version)
 
 # Initialize MongoDB connection at startup
 mongodb: Optional[MongoDBHelper] = None # Type hint for clarity
@@ -61,7 +61,7 @@ def init_mongodb():
         mongodb = MongoDBHelper()
         return mongodb.db is not None
     except Exception as e:
-        logger.error(f"Error initializing MongoDB: {str(e)}")
+        logger.error("Error initializing MongoDB: %s", str(e))
         logger.error(traceback.format_exc())
         return False
 
@@ -80,7 +80,7 @@ if cors_origins_str == "*":
 else:
     cors_origins = [origin.strip() for origin in cors_origins_str.split(",")]
 
-logger.info(f"CORS origins: {cors_origins}")
+logger.info("CORS origins: %s", cors_origins)
 
 # Add CORS middleware with appropriate settings
 app.add_middleware(
@@ -375,7 +375,7 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                         try:
                             element_to_storey[element.id()] = storey_name
                         except Exception as e:
-                            logger.warning(f"Error mapping element to storey: {e}")
+                            logger.warning("Error mapping element to storey: %s", e)
 
         # Filter elements by TARGET_IFC_CLASSES
         if TARGET_IFC_CLASSES:
@@ -386,7 +386,7 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                         type_elements = list(ifc_file.by_type(element_type.strip()))
                         all_elements.extend(type_elements)
                     except Exception as type_error:
-                        logger.debug(f"Could not get elements of type {element_type} (likely not in schema {ifc_file.schema}): {str(type_error)}")
+                        logger.debug("Could not get elements of type %s (likely not in schema %s): %s", element_type, ifc_file.schema, str(type_error))
 
         else:
             all_elements = list(ifc_file.by_type("IfcElement"))
@@ -492,7 +492,7 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                                                     element_data["original_area"] = parsed_area # Store original
                                                     found_area = True
                                                 except (ValueError, TypeError):
-                                                    logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' for {element_type}")
+                                                    logger.warning("Could not convert area value '%s' in '%s' for %s", quantity.Name, qset_name, element_type)
 
                                             # Extract length based on TARGET_QUANTITIES config
                                             if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
@@ -502,7 +502,7 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                                                     element_data["original_length"] = parsed_length # Store original
                                                     found_length = True
                                                 except (ValueError, TypeError):
-                                                    logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' for {element_type}")
+                                                    logger.warning("Could not convert length value '%s' in '%s' for %s", quantity.Name, qset_name, element_type)
 
                                     # 2. Fallback: Check if the current qset is exactly "BaseQuantities"
                                     # Only check if the target quantity wasn't found in the specific qset
@@ -516,7 +516,7 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                                                     element_data["original_area"] = parsed_area # Store original
                                                     found_area = True
                                                 except (ValueError, TypeError):
-                                                    logger.warning(f"Could not convert area value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
+                                                    logger.warning("Could not convert area value '%s' in '%s' (fallback) for %s", quantity.Name, qset_name, element_type)
 
                                             # Extract length based on TARGET_QUANTITIES config (if not already found)
                                             if not found_length and quantity.is_a('IfcQuantityLength') and target_length_name and quantity.Name == target_length_name:
@@ -526,7 +526,7 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                                                     element_data["original_length"] = parsed_length # Store original
                                                     found_length = True
                                                 except (ValueError, TypeError):
-                                                    logger.warning(f"Could not convert length value '{quantity.Name}' in '{qset_name}' (fallback) for {element_type}")
+                                                    logger.warning("Could not convert length value '%s' in '%s' (fallback) for %s", quantity.Name, qset_name, element_type)
 
                                 # --- Process All Quantities for Properties (Independent of target finding) ---
                                 for quantity in property_set.Quantities:
@@ -648,24 +648,24 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                                          mat_data['unit'] = 'm³' # Assuming cubic meters
                                     materials_with_volume.append(mat_data)
                                 else:
-                                    logger.warning(f"Invalid fraction ({fraction}) for material '{mat_data['name']}' in element {element.id()}. Skipping volume calculation.")
+                                    logger.warning("Invalid fraction (%s) for material '%s' in element %s. Skipping volume calculation.", fraction, mat_data['name'], element.id())
                                     # Append material without volume? Or skip entirely? Appending without volume for now.
                                     mat_data.pop('volume', None) # Ensure no incorrect volume is present
                                     materials_with_volume.append(mat_data)
 
                             except (ValueError, TypeError) as e:
-                                logger.warning(f"Error processing fraction for material '{mat_data.get('name', 'N/A')}' in element {element.id()}: {e}. Skipping volume calc.")
+                                logger.warning("Error processing fraction for material '%s' in element %s: %s. Skipping volume calc.", mat_data.get('name', 'N/A'), element.id(), e)
                                 mat_data.pop('volume', None)
                                 materials_with_volume.append(mat_data)
                         else:
-                             logger.warning(f"Skipping invalid material data format during volume calculation: {mat_data}")
+                             logger.warning("Skipping invalid material data format during volume calculation: %s", mat_data)
                              # Decide if you want to append invalid entries without volume
                              if isinstance(mat_data, dict):
                                  mat_data.pop('volume', None)
                                  materials_with_volume.append(mat_data)
                 elif isinstance(parsed_materials_list, list):
                      # If element total volume is missing/zero, or list is empty, just add materials without volume
-                     logger.debug(f"Element {element.id()} has total volume {element_total_volume} or empty parsed list. Adding materials without calculated volume.")
+                     logger.debug("Element %s has total volume %s or empty parsed list. Adding materials without calculated volume.", element.id(), element_total_volume)
                      materials_with_volume = [m for m in parsed_materials_list if isinstance(m, dict)] # Keep valid dicts
                      for m in materials_with_volume: m.pop('volume', None) # Ensure no volume key
 
@@ -674,13 +674,13 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
                 # <<< END MODIFIED SECTION >>>
 
                 # Log the final materials list for this element for debugging
-                logger.debug(f"Element ID {element.id()} Final Materials for DB: {element_data.get('materials')}")
+                logger.debug("Element ID %s Final Materials for DB: %s", element.id(), element_data.get('materials'))
 
                 # Append the complete element data using the Pydantic model
                 elements.append(IFCElement(**element_data))
 
             except Exception as prop_error:
-                logger.error(f"Error processing element {element.id()}: {str(prop_error)}")
+                logger.error("Error processing element %s: %s", element.id(), str(prop_error))
                 logger.error(traceback.format_exc()) # Log full traceback for element errors
 
 
@@ -691,7 +691,7 @@ def _parse_ifc_data(ifc_file: ifcopenshell.file) -> List[IFCElement]:
         return elements
 
     except Exception as e:
-        logger.error(f"Error parsing IFC file: {str(e)}")
+        logger.error("Error parsing IFC file: %s", str(e))
         logger.error(traceback.format_exc())
         # Decide how to handle parsing errors: return empty list or raise?
         # Returning empty list for now to avoid breaking the flow, but log indicates failure.
@@ -702,7 +702,7 @@ async def startup_event():
     """Run startup tasks"""
     # Initialize MongoDB
     mongodb_status = init_mongodb()
-    logger.info(f"MongoDB initialization status: {'success' if mongodb_status else 'failed'}")
+    logger.info("MongoDB initialization status: %s", 'success' if mongodb_status else 'failed')
 
 @app.get("/", response_model=Dict[str, str])
 def read_root():
@@ -721,9 +721,9 @@ def process_ifc_file_in_background(
     """The actual long-running IFC processing logic to be run in the background."""
     ifc_file_obj = None # For proper cleanup if ifcopenshell.open fails
     try:
-        logger.info(f"[Job: {job_id}] Background processing started for {original_filename}")
+        logger.info("[Job: %s] Background processing started for %s", job_id, original_filename)
         if mongodb is None or mongodb.db is None:
-            logger.error(f"[Job: {job_id}] MongoDB not available. Aborting background task.")
+            logger.error("[Job: %s] MongoDB not available. Aborting background task.", job_id)
             # No easy way to update job status if DB is down at this point
             return
 
@@ -732,18 +732,18 @@ def process_ifc_file_in_background(
         # --- Open IFC File ---
         try:
             ifc_file_obj = ifcopenshell.open(temp_file_path)
-            logger.info(f"[Job: {job_id}] IFC file opened successfully with schema: {ifc_file_obj.schema}")
+            logger.info("[Job: %s] IFC file opened successfully with schema: %s", job_id, ifc_file_obj.schema)
         except Exception as ifc_error:
-            logger.error(f"[Job: {job_id}] Error opening IFC file {temp_file_path}: {ifc_error}")
+            logger.error("[Job: %s] Error opening IFC file %s: %s", job_id, temp_file_path, ifc_error)
             mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=f"Error opening IFC: {str(ifc_error)}")
             return
 
         # --- Parse IFC Data ---
         parsed_elements_models: List[IFCElement] = _parse_ifc_data(ifc_file_obj) # _parse_ifc_data returns list of Pydantic models
-        logger.info(f"[Job: {job_id}] Finished parsing. Found {len(parsed_elements_models)} elements.")
+        logger.info("[Job: %s] Finished parsing. Found %d elements.", job_id, len(parsed_elements_models))
 
         if not parsed_elements_models:
-            logger.warning(f"[Job: {job_id}] Parsing completed, but no elements were extracted from {original_filename}.")
+            logger.warning("[Job: %s] Parsing completed, but no elements were extracted from %s.", job_id, original_filename)
 
         # --- Convert Pydantic models to dicts for saving to MongoDB ---
         element_dicts_for_db = []
@@ -753,7 +753,7 @@ def process_ifc_file_in_background(
             except AttributeError:
                 element_dicts_for_db.append(elem_model.dict(exclude_none=True)) # Fallback for older Pydantic
             except Exception as dump_error:
-                logger.error(f"[Job: {job_id}] Error converting element {getattr(elem_model, 'id', '?')} to dict: {dump_error}")
+                logger.error("[Job: %s] Error converting element %s to dict: %s", job_id, getattr(elem_model, 'id', '?'), dump_error)
 
         # --- Save Parsed Data to MongoDB (Elements Collection) ---
         # 1. Find or create the project and get its ID
@@ -768,7 +768,7 @@ def process_ifc_file_in_background(
 
         if not project_db_id:
             err_msg = f"Failed to find or create project '{project_name}' in MongoDB."
-            logger.error(f"[Job: {job_id}] {err_msg}")
+            logger.error("[Job: %s] %s", job_id, err_msg)
             mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=err_msg)
             return
 
@@ -777,16 +777,16 @@ def process_ifc_file_in_background(
 
         if not replace_result.get("success"):
             err_msg = f"Failed to replace elements for project '{project_name}'. Details: {replace_result.get('message')}"
-            logger.error(f"[Job: {job_id}] {err_msg}")
+            logger.error("[Job: %s] %s", job_id, err_msg)
             mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=err_msg)
             return
         
-        logger.info(f"[Job: {job_id}] Successfully replaced elements. Inserted: {replace_result.get('inserted_count', 0)}")
+        logger.info("[Job: %s] Successfully replaced elements. Inserted: %d", job_id, replace_result.get('inserted_count', 0))
         mongodb.update_ifc_processing_job_status(job_id, status="completed", element_count=len(parsed_elements_models))
-        logger.info(f"[Job: {job_id}] Background processing for {original_filename} completed successfully.")
+        logger.info("[Job: %s] Background processing for %s completed successfully.", job_id, original_filename)
 
     except Exception as e:
-        logger.error(f"[Job: {job_id}] Unexpected error in background task for {original_filename}: {str(e)}")
+        logger.error("[Job: %s] Unexpected error in background task for %s: %s", job_id, original_filename, str(e))
         logger.error(traceback.format_exc())
         if mongodb and job_id: # Check if mongodb and job_id are available
             mongodb.update_ifc_processing_job_status(job_id, status="failed", error_message=f"Unexpected background error: {str(e)}")
@@ -797,9 +797,9 @@ def process_ifc_file_in_background(
         if temp_file_path and os.path.exists(temp_file_path):
             try:
                 os.unlink(temp_file_path)
-                logger.info(f"[Job: {job_id}] Cleaned up temporary file: {temp_file_path}")
+                logger.info("[Job: %s] Cleaned up temporary file: %s", job_id, temp_file_path)
             except Exception as cleanup_error:
-                logger.error(f"[Job: {job_id}] Error removing temp file during background task cleanup: {str(cleanup_error)}")
+                logger.error("[Job: %s] Error removing temp file during background task cleanup: %s", job_id, str(cleanup_error))
 # <<< END ADDED: Background task function >>>
 
 
@@ -811,7 +811,7 @@ async def upload_ifc(
     filename: str = Form(...),
     timestamp: str = Form(...)
 ):
-    logger.info(f"Received file upload request for project '{project}', filename '{filename}'")
+    logger.info("Received file upload request for project '%s', filename '%s'", project, filename)
 
     if not filename.lower().endswith('.ifc'): # Use filename from Form, not file.filename
         raise HTTPException(status_code=400, detail="Only IFC files are supported based on provided filename form field")
@@ -823,7 +823,7 @@ async def upload_ifc(
     staging_dir = os.path.join(os.getcwd(), "ifc_staging") 
     os.makedirs(staging_dir, exist_ok=True)
     if not os.access(staging_dir, os.W_OK):
-        logger.error(f"Staging directory {staging_dir} not writable.")
+        logger.error("Staging directory %s not writable.", staging_dir)
         raise HTTPException(status_code=500, detail="Server configuration error: Staging directory not writable")
 
     # Sanitize filename to prevent path traversal
@@ -844,20 +844,20 @@ async def upload_ifc(
             if os.path.exists(staged_file_path):
                 try: os.unlink(staged_file_path)
                 except Exception as e_unlink:
-                    logger.warning(f"Could not clean up empty staged file {staged_file_path}: {e_unlink}")
+                    logger.warning("Could not clean up empty staged file %s: %s", staged_file_path, e_unlink)
             raise HTTPException(status_code=400, detail="Uploaded file is empty or failed to write any content.")
 
-        logger.info(f"File '{safe_filename}' for project '{project}' staged at: {staged_file_path}, size: {bytes_written} bytes")
+        logger.info("File '%s' for project '%s' staged at: %s, size: %d bytes", safe_filename, project, staged_file_path, bytes_written)
 
     except HTTPException: # Re-raise HTTPExceptions directly
         raise
     except Exception as e:
-        logger.error(f"Error staging uploaded file {safe_filename}: {e}", exc_info=True)
+        logger.error("Error staging uploaded file %s: %s", safe_filename, e, exc_info=True)
         # Clean up partially written or problematic file
         if os.path.exists(staged_file_path):
             try: os.unlink(staged_file_path)
             except Exception as e_unlink_err:
-                 logger.warning(f"Could not clean up partially staged file {staged_file_path} after error: {e_unlink_err}")
+                 logger.warning("Could not clean up partially staged file %s after error: %s", staged_file_path, e_unlink_err)
         raise HTTPException(status_code=500, detail=f"Failed to stage uploaded file: {e}")
     finally:
         await file.close() # Ensure file is closed
@@ -878,7 +878,7 @@ async def upload_ifc(
         # For simplicity, assuming it might be ISO format from qto-ifc-msg
         upload_dt_object = datetime.fromisoformat(timestamp.replace("Z", "+00:00")) if timestamp else datetime.now(timezone.utc)
     except ValueError:
-        logger.warning(f"Could not parse provided timestamp '{timestamp}', using current time.")
+        logger.warning("Could not parse provided timestamp '%s', using current time.", timestamp)
         upload_dt_object = datetime.now(timezone.utc)
 
     job_payload = {
@@ -907,7 +907,7 @@ async def upload_ifc(
         upload_timestamp_str=timestamp # Pass original string timestamp
     )
 
-    logger.info(f"Job {job_id} for file '{filename}' added to background tasks.")
+    logger.info("Job %s for file '%s' added to background tasks.", job_id, filename)
 
     status_url = f"/ifc-jobs/{job_id}" # Example status URL
     return JobAcceptedResponse(
@@ -950,7 +950,7 @@ async def list_projects(db: Database = Depends(get_db)): # <<< Inject DB
         distinct_projects = collection.distinct("name")
         return distinct_projects
     except Exception as e:
-        logger.error(f"Error listing projects from DB: {e}")
+        logger.error("Error listing projects from DB: %s", e)
         raise HTTPException(status_code=500, detail="Error retrieving project list")
 
 @app.get("/projects/{project_name}/elements/", response_model=List[IFCElement])
@@ -1024,7 +1024,7 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
                  }
             else:
                  # Fallback if classification is not a dict (or handle differently)
-                 logger.debug(f"Classification field for element {mapped_elem['global_id']} is not a dictionary: {db_classification}")
+                 logger.debug("Classification field for element %s is not a dictionary: %s", mapped_elem['global_id'], db_classification)
 
 
             # --- Build Nested Quantity Objects ---
@@ -1183,10 +1183,10 @@ async def get_project_elements(project_name: str, db: Database = Depends(get_db)
         return validated_elements
 
     except HTTPException as http_exc:
-        logger.warning(f"HTTPException occurred for project '{project_name}': {http_exc.status_code} - {http_exc.detail}")
+        logger.warning("HTTPException occurred for project '%s': %s - %s", project_name, http_exc.status_code, http_exc.detail)
         raise http_exc
     except Exception as e:
-        logger.error(f"Unexpected error retrieving elements for project '{project_name}': {e}", exc_info=True)
+        logger.error("Unexpected error retrieving elements for project '%s': %s", project_name, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error retrieving project elements: {str(e)}")
 
 @app.get("/projects/{project_name}/metadata/", response_model=Dict[str, Any])
@@ -1215,10 +1215,10 @@ async def get_project_metadata(project_name: str, db: Database = Depends(get_db)
         return response_data
 
     except HTTPException as http_exc:
-        logger.warning(f"HTTPException getting metadata for '{project_name}': {http_exc.status_code} - {http_exc.detail}")
+        logger.warning("HTTPException getting metadata for '%s': %s - %s", project_name, http_exc.status_code, http_exc.detail)
         raise http_exc
     except Exception as e:
-        logger.error(f"Error retrieving metadata for project '{project_name}': {e}")
+        logger.error("Error retrieving metadata for project '%s': %s", project_name, e)
         raise HTTPException(status_code=500, detail="Internal server error retrieving project metadata")
 
 @app.post("/projects/{project_name}/approve/", response_model=Dict[str, Any])
@@ -1240,11 +1240,18 @@ async def approve_project(
     """
     # global mongodb # No longer needed
     try:
-        logger.info(f"Received approval request for project: '{project_name}'")
+        logger.info("====== APPROVAL DEBUG START ======")
+        logger.info("Project: '%s'", project_name)
+        logger.info("Updates received: %d", len(updates) if updates else 0)
         if updates:
-            logger.info(f"Approval request includes {len(updates)} quantity updates.")
-
-        # <<< REMOVED Check/Re-initialize MongoDB Connection block >>>
+            preview = [
+                {
+                    "global_id": u.global_id,
+                    "value": u.new_quantity.value if getattr(u, "new_quantity", None) else None,
+                }
+                for u in updates[:3]
+            ]
+            logger.info("First 3 updates: %s", preview)
 
         # --- Find Project ID (needed for both update and approve) ---
         # Use injected db
@@ -1252,41 +1259,78 @@ async def approve_project(
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
+        
+        # 🔍 CHECK 1: What's in DB BEFORE approval?
+        before_count = db.elements.count_documents({"project_id": project_id})
+        before_pending = db.elements.count_documents({"project_id": project_id, "status": "pending"})
+        before_active = db.elements.count_documents({"project_id": project_id, "status": "active"})
+        before_manual = db.elements.count_documents({"project_id": project_id, "is_manual": True})
+        
+        logger.info("BEFORE APPROVAL:")
+        logger.info("  Total elements: %d", before_count)
+        logger.info("  Pending: %d, Active: %d, Manual: %d", before_pending, before_active, before_manual)
 
         # --- Apply Quantity Updates (if any) --- 
         if updates:
-            # !!! IMPORTANT: Need to pass the db instance to the helper method if it uses it !!!
-            # Assuming MongoDBHelper methods accept a db instance or continue using the global one internally
-            # For now, assuming internal usage of the global `mongodb` is okay within the helper methods,
-            # otherwise, the helper methods would need refactoring too.
-            # Let's stick to the current approach for now, but this is a potential point of failure/refinement.
-            update_success = mongodb.update_element_quantities(project_id, updates) # Still uses global mongodb instance
+            update_success = mongodb.update_element_quantities(project_id, updates)
             if not update_success:
-                 logger.error(f"Failed to apply quantity updates for project '{project_name}'. Aborting approval.")
+                 logger.error("❌ Quantity updates FAILED")
                  raise HTTPException(status_code=500, detail="Failed to save quantity updates.")
+            logger.info("✅ Quantity updates applied successfully")
+        
+        # 🔍 CHECK 2: What's in DB AFTER quantity update but BEFORE status change?
+        after_update_count = db.elements.count_documents({"project_id": project_id})
+        after_update_pending = db.elements.count_documents({"project_id": project_id, "status": "pending"})
+        after_update_active = db.elements.count_documents({"project_id": project_id, "status": "active"})
+        
+        logger.info("AFTER QUANTITY UPDATE:")
+        logger.info("  Total elements: %d", after_update_count)
+        logger.info("  Pending: %d, Active: %d", after_update_pending, after_update_active)
 
-        # --- Approve Project Status & Send Kafka Notification --- 
-        logger.info(f"Calling approve_project_elements for project ID: {project_id}")
-        # Assuming internal usage of the global `mongodb` is okay within the helper methods
+        # --- Approve Project Status --- 
+        logger.info("Calling approve_project_elements for project ID: %s", project_id)
         approve_success = mongodb.approve_project_elements(project_id)
 
-        if approve_success:
-            return {
-                "status": "success",
-                "message": f"Project {project_name} elements updated and approved successfully",
-                "project": project_name
-            }
-        else:
-            logger.error(f"Applied quantity updates BUT failed to approve elements status for project '{project_name}'")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to finalize approval status update for project {project_name}"
+        if not approve_success:
+            logger.error("❌ Approval status update FAILED")
+            raise HTTPException(status_code=500, detail="Failed to approve elements")
+        
+        # 🔍 CHECK 3: What's in DB AFTER approval?
+        after_approve_count = db.elements.count_documents({"project_id": project_id})
+        after_approve_pending = db.elements.count_documents({"project_id": project_id, "status": "pending"})
+        after_approve_active = db.elements.count_documents({"project_id": project_id, "status": "active"})
+        
+        logger.info("AFTER APPROVAL STATUS CHANGE:")
+        logger.info("  Total elements: %d", after_approve_count)
+        logger.info("  Pending: %d, Active: %d", after_approve_pending, after_approve_active)
+        
+        # 🔍 CHECK 4: Sample some elements to see their actual state
+        sample_elements = list(db.elements.find({"project_id": project_id}).limit(3))
+        for elem in sample_elements:
+            logger.info(
+                "  Sample element: global_id=%s, status=%s, quantity=%s",
+                elem.get("global_id"),
+                elem.get("status"),
+                elem.get("quantity"),
             )
+        
+        logger.info("====== APPROVAL DEBUG END ======")
+
+        return {
+            "status": "success",
+            "message": f"Project {project_name} elements updated and approved successfully",
+            "project": project_name,
+            "debug": {
+                "before": {"total": before_count, "pending": before_pending, "active": before_active},
+                "after": {"total": after_approve_count, "pending": after_approve_pending, "active": after_approve_active},
+                "updates_received": len(updates) if updates else 0
+            }
+        }
     except HTTPException as http_exc:
-        logger.error(f"HTTP error during approval/update for {project_name}: {http_exc.detail}")
+        logger.error("HTTP error during approval/update for %s: %s", project_name, http_exc.detail)
         raise http_exc # Re-raise HTTPException
     except Exception as e:
-        logger.error(f"Error processing approval/update for project {project_name}: {str(e)}")
+        logger.error("Error processing approval/update for project %s: %s", project_name, str(e))
         logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500,
@@ -1313,7 +1357,7 @@ def health_check(request: Request):
         else:
             mongodb_status = "disconnected"
     except Exception as e:
-        logger.warning(f"MongoDB health check failed: {str(e)}")
+        logger.warning("MongoDB health check failed: %s", str(e))
         mongodb_status = "disconnected"
     
     # Prepare response data
@@ -1333,7 +1377,7 @@ def health_check(request: Request):
         headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, HEAD"
         headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
 
-    logger.info(f"Health check request from origin: {origin}. Allowed: {allowed}. Responding with headers: {headers}")
+    logger.info("Health check request from origin: %s. Allowed: %s. Responding with headers: %s", origin, allowed, headers)
 
     # Return JSONResponse with manual headers
     return JSONResponse(content=response_data, headers=headers)
@@ -1434,10 +1478,10 @@ async def add_manual_element(project_name: str, element_data: ManualElementInput
         return IFCElement(**mapped_elem)
 
     except HTTPException as http_exc:
-        logger.error(f"HTTP error adding manual element to {project_name}: {http_exc.detail}")
+        logger.error("HTTP error adding manual element to %s: %s", project_name, http_exc.detail)
         raise http_exc
     except Exception as e:
-        logger.error(f"Error adding manual element to project {project_name}: {str(e)}")
+        logger.error("Error adding manual element to project %s: %s", project_name, str(e))
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error adding manual element: {str(e)}")
 
@@ -1479,7 +1523,7 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                     if upserted_object_ids:
                          query_filter["$or"].append({"_id": {"$in": upserted_object_ids}})
                 except Exception as oid_err:
-                    logger.warning(f"Could not convert upserted string IDs to ObjectIds: {oid_err}")
+                    logger.warning("Could not convert upserted string IDs to ObjectIds: %s", oid_err)
 
             # Add condition for potentially updated documents by global_id (excluding those just created)
             # Use all request IDs for simplicity, as finding *only* updated ones is complex
@@ -1516,13 +1560,13 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
                     # Validate against BatchElementData if needed, or directly add dict
                     response_elements.append(BatchElementData(**mapped_resp_elem)) # Assuming BatchElementData is the target
                 except Exception as map_error:
-                     logger.warning(f"Failed to map element {elem.get('ifc_id')} for batch response: {map_error}")
+                     logger.warning("Failed to map element %s for batch response: %s", elem.get('ifc_id'), map_error)
 
             return {"message": "Batch update successful", **result, "elements": response_elements} # Include mapped elements
         else:
             # Handle DB operation failure
             error_message = result.get("message", "Unknown error during batch update")
-            logger.error(f"HTTP error during batch update for {project_name}: {error_message}")
+            logger.error("HTTP error during batch update for %s: %s", project_name, error_message)
             raise HTTPException(status_code=500, detail=error_message)
 
     except HTTPException as http_exc:
@@ -1530,46 +1574,13 @@ async def batch_update_elements(project_name: str, request_data: BatchUpdateRequ
         raise http_exc
     except Exception as e:
         # Catch Pydantic validation errors (which are VAEs) and other exceptions
-        logger.error(f"Error processing batch update for project {project_name}: {e}", exc_info=True)
+        logger.error("Error processing batch update for project %s: %s", project_name, e, exc_info=True)
         # Log the full traceback
         # logger.error("Traceback:", exc_info=True) # Already done with exc_info=True
         raise HTTPException(status_code=500, detail=f"Internal server error during batch update: {e}")
 
-@app.delete("/projects/{project_name}/elements/{element_id}", status_code=status.HTTP_200_OK)
-async def delete_element_endpoint(project_name: str, element_id: str, db: Database = Depends(get_db)): # <<< Inject DB
-    # mongodb = MongoDBHelper() # Don't create a new instance
-    try:
-        # Find project using injected db
-        project = db.projects.find_one({"name": {"$regex": f"^{re.escape(project_name)}$", "$options": "i"}})
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
-        project_id = project["_id"]
-        logger.info(f"Found project '{project_name}' with ID: {project_id} for element deletion.")
-
-        # Assuming delete_element uses the global mongodb instance internally
-        success = mongodb.delete_element(project_id, element_id)
-
-        if success: # delete_element now returns dict, check 'success' key
-             return {"message": f"Element {element_id} deleted successfully from project {project_name}"}
-        else:
-             # If delete_element returned success=False, raise appropriate error
-             logger.warning(f"Attempted to delete element {element_id} from {project_name}, but DB operation failed or element not found/not manual.")
-             # Use the message from the helper if available
-             detail_msg = success.get("message", "Element not found or could not be deleted.")
-             status_code = 404 if "not found" in detail_msg.lower() else 400
-             if "Only manually added" in detail_msg:
-                 status_code = 403 # Forbidden
-             raise HTTPException(status_code=status_code, detail=detail_msg)
-
-    except HTTPException as http_exc:
-         raise http_exc # Re-raise specific HTTP errors
-    except Exception as e:
-         logger.error(f"Error deleting element {element_id} from {project_name}: {e}", exc_info=True)
-         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
-
-# <<< ADDED: Endpoint for Deleting a Manual Element (The one that had the syntax error) >>>
 @app.delete("/projects/{project_name}/elements/{element_global_id}", response_model=Dict[str, Any])
-async def delete_manual_element(project_name: str, element_global_id: str, db: Database = Depends(get_db)): # <<< Inject DB
+async def delete_element(project_name: str, element_global_id: str, db: Database = Depends(get_db)):
     """Deletes a specific manually added element from a project."""
     try:
         # 1. Find Project ID using injected db
@@ -1578,11 +1589,10 @@ async def delete_manual_element(project_name: str, element_global_id: str, db: D
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
         project_id = project["_id"]
 
-        # 2. Call MongoDB helper to delete the element
-        # Assuming delete_element uses the global mongodb instance internally
+        # 2. Call MongoDB helper to delete the element (uses global mongodb instance)
         result = mongodb.delete_element(project_id, element_global_id)
 
-        if not result.get("success"): # Check success key in result dict
+        if not result.get("success"):
             # Determine appropriate status code based on message
             message = result.get("message", "Failed to delete element.")
             status_code = 404 if "not found" in message.lower() else 400
@@ -1597,10 +1607,10 @@ async def delete_manual_element(project_name: str, element_global_id: str, db: D
             "deleted_count": result.get('deleted_count', 0)
         }
     except HTTPException as http_exc:
-        logger.error(f"HTTP error deleting element {element_global_id} from {project_name}: {http_exc.detail}")
+        logger.error("HTTP error deleting element %s from %s: %s", element_global_id, project_name, http_exc.detail)
         raise http_exc
     except Exception as e:
-        logger.error(f"Error deleting element {element_global_id} from project {project_name}: {str(e)}")
+        logger.error("Error deleting element %s from project %s: %s", element_global_id, project_name, str(e))
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error during element deletion: {str(e)}")
 
@@ -1617,5 +1627,5 @@ async def get_ifc_classes():
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"Starting IFC Parser API server with ifcopenshell {ifcopenshell.version}")
+    logger.info("Starting IFC Parser API server with ifcopenshell %s", ifcopenshell.version)
     uvicorn.run(app, host="0.0.0.0", port=8000) 

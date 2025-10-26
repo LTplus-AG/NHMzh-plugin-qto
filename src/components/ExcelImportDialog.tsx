@@ -42,6 +42,7 @@ import { IFCElement } from '../types/types';
 import { ExcelImportData, ExcelImportResult, ExcelService } from '../utils/excelService';
 import { getEbkpNameFromCode } from '../data/ebkpData';
 import logger from '../utils/logger';
+import { getVolumeValue } from '../utils/volumeHelpers';
 
 // Using library debounce hook
 
@@ -468,7 +469,7 @@ const ExcelImportDialog: React.FC<Props> = ({
           py: 1,
           borderRight: '1px solid rgba(224, 224, 224, 1)'
         }}>
-          {item.volume !== undefined && item.volume !== null ? `${item.volume.toFixed(2)} m³` : '-'}
+          {item.volume !== undefined && item.volume !== null ? `${getVolumeValue(item.volume).toFixed(2)} m³` : '-'}
         </Box>
 
         {/* Classification ID */}
@@ -1176,7 +1177,7 @@ const ExcelImportDialog: React.FC<Props> = ({
                           {item.length !== undefined && item.length !== null ? `${item.length.toFixed(2)} m` : '-'}
                         </TableCell>
                         <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'volume'), 80)}>
-                          {item.volume !== undefined && item.volume !== null ? `${item.volume.toFixed(2)} m³` : '-'}
+                          {item.volume !== undefined && item.volume !== null ? `${getVolumeValue(item.volume).toFixed(2)} m³` : '-'}
                         </TableCell>
                         <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'classification_id'), 120)}>
                           {item.classification_id ? (
