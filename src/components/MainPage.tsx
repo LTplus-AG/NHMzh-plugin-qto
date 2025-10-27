@@ -724,9 +724,9 @@ const MainPage = () => {
         
         // Track quantity changes if value or type differs from original
         const originalQty = originalElement?.quantity;
-        const hasChanged = originalQty && (
-          importItem.quantity.value !== originalQty.value ||
-          importItem.quantity.type !== originalQty.type
+        const hasChanged = originalElement && (
+          (importItem.quantity.value ?? null) !== (originalQty?.value ?? null) ||
+          (importItem.quantity.type ?? null) !== (originalQty?.type ?? null)
         );
         
         if (hasChanged) {
