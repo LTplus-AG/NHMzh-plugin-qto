@@ -9,10 +9,10 @@ export const useElementEditing = () => {
   // Get count of edited elements
   const editedElementsCount = Object.keys(editedElements).length;
 
-  // Handle quantity changes (works for both area and length)
+  // Handle quantity changes (works for area, length, count, and volume)
   const handleQuantityChange = (
     elementId: string,
-    quantityKey: "area" | "length" | "count",
+    quantityKey: "area" | "length" | "count" | "volume",
     originalValue: number | null | undefined,
     newValue: string
   ) => {
