@@ -225,6 +225,7 @@ const MainPage = () => {
       setIfcError(null);
       setProjectMetadata(null);
       resetEdits();
+      setOriginalElements(new Map());
       prevProjectRef.current = null;
     }
   }, [selectedProject, backendConnected]);
@@ -721,9 +722,24 @@ const MainPage = () => {
       if (importItem.quantity) {
         const originalElement = originalElements.get(importItem.global_id);
         
-        // Track quantity changes if they differ from original
-        if (originalElement && importItem.quantity.value !== originalElement.quantity?.value) {
-          const quantityType = importItem.quantity.type || 'area';
+        // Track quantity changes if value or type differs from original
+        const originalQty = originalElement?.quantity;
+        const hasChanged = originalQty && (
+          importItem.quantity.value !== originalQty.value ||
+          importItem.quantity.type !== originalQty.type
+        );
+        
+        if (hasChanged) {
+          // Use imported type, fall back to original type, then 'area'
+          const quantityType = importItem.quantity.type || originalQty?.type || 'area';
+          
+          // Validate the quantity type before using
+          const validTypes = ['area', 'length', 'count', 'volume'];
+          if (!validTypes.includes(quantityType)) {
+            logger.warn(`Invalid quantity type '${quantityType}' for element ${importItem.global_id}, skipping tracking`);
+            return;
+          }
+          
           const originalValue = originalElement.quantity?.value ?? null;
           const newValue = importItem.quantity.value;
           
@@ -732,7 +748,7 @@ const MainPage = () => {
             importItem.global_id,
             quantityType as 'area' | 'length' | 'count' | 'volume',
             originalValue,
-            newValue !== null ? newValue.toString() : ''
+            newValue?.toString() ?? ''
           );
         }
       }
