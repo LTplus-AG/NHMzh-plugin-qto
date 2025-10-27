@@ -724,12 +724,23 @@ const MainPage = () => {
         
         // Track quantity changes if value or type differs from original
         const originalQty = originalElement?.quantity;
-        const hasChanged = originalElement && (
-          (importItem.quantity.value ?? null) !== (originalQty?.value ?? null) ||
-          (importItem.quantity.type ?? null) !== (originalQty?.type ?? null)
-        );
         
-        if (hasChanged) {
+        // Explicitly detect when an element transitions from no/null quantity to having a quantity
+        // This handles the case where originalQty is undefined or has null/undefined value
+        const hadNoQuantity = !originalQty || originalQty.value === null || originalQty.value === undefined;
+        const hasNewQuantity = importItem.quantity.value !== null && importItem.quantity.value !== undefined;
+        
+        // Detect changes in two scenarios:
+        // 1. Element is getting a quantity for the first time (or replacing null with a value)
+        // 2. Element had a quantity and it changed (value or type)
+        const hasChanged = 
+          (hadNoQuantity && hasNewQuantity) || // NEW: Explicitly handle adding quantity
+          (originalElement && (
+            (importItem.quantity.value ?? null) !== (originalQty?.value ?? null) ||
+            (importItem.quantity.type ?? null) !== (originalQty?.type ?? null)
+          ));
+        
+        if (hasChanged && originalElement) {
           // Use imported type, fall back to original type, then 'area'
           const quantityType = importItem.quantity.type || originalQty?.type || 'area';
           
