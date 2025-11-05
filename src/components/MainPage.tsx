@@ -386,39 +386,36 @@ const MainPage = () => {
                 },
               };
               
-              // Prefer live edited values first, then fall back to imported data
-              // This ensures UI corrections aren't clobbered by stale import snapshots
-              if (validValue !== null) {
-                // Set the field corresponding to the live edit
+              // Prefer live edited values for the corresponding field, fall back to imported data for others
+              if (importedItem) {
+                // Set area: live edit if type is area, otherwise imported
+                if (normalizedType === "area" && validValue !== null) {
+                  update.area = validValue;
+                } else if (importedItem.area !== undefined && importedItem.area !== null) {
+                  update.area = importedItem.area;
+                }
+                
+                // Set length: live edit if type is length, otherwise imported
+                if (normalizedType === "length" && validValue !== null) {
+                  update.length = validValue;
+                } else if (importedItem.length !== undefined && importedItem.length !== null) {
+                  update.length = importedItem.length;
+                }
+                
+                // Set volume: live edit if type is volume, otherwise imported (check before calling helper)
+                if (normalizedType === "volume" && validValue !== null) {
+                  update.volume = validValue;
+                } else if (importedItem.volume !== undefined && importedItem.volume !== null) {
+                  update.volume = getVolumeValue(importedItem.volume);
+                }
+              } else if (validValue !== null) {
+                // No import data; set only the live-edited field
                 if (normalizedType === "area") {
                   update.area = validValue;
                 } else if (normalizedType === "length") {
                   update.length = validValue;
                 } else if (normalizedType === "volume") {
                   update.volume = validValue;
-                }
-              }
-              
-              // Add other fields from imported data only if not already set by live edit
-              if (importedItem) {
-                if (update.area === undefined && importedItem.area !== undefined && importedItem.area !== null) {
-                  // Only add non-null, non-zero values to avoid writing 0 for untouched fields
-                  if (importedItem.area !== 0) {
-                    update.area = importedItem.area;
-                  }
-                }
-                if (update.length === undefined && importedItem.length !== undefined && importedItem.length !== null) {
-                  // Only add non-null, non-zero values to avoid writing 0 for untouched fields
-                  if (importedItem.length !== 0) {
-                    update.length = importedItem.length;
-                  }
-                }
-                if (update.volume === undefined && importedItem.volume !== undefined && importedItem.volume !== null) {
-                  // Only convert/normalize volume when a concrete value is present
-                  const volumeValue = getVolumeValue(importedItem.volume);
-                  if (volumeValue !== null && volumeValue !== 0) {
-                    update.volume = volumeValue;
-                  }
                 }
               }
 
@@ -763,9 +760,9 @@ const MainPage = () => {
         // Track all changed fields separately - don't prioritize, track everything that changed
         const changes: Array<{type: 'area' | 'length' | 'volume', original: number | null, new: number | null}> = [];
         
-        // Helper to normalize values for comparison (treat null, undefined, 0 as equivalent to empty)
+        // Helper to normalize values for comparison (treat null, undefined as equivalent to empty)
         const normalizeForComparison = (val: number | null | undefined): number | null => {
-          if (val === null || val === undefined || val === 0) return null;
+          if (val === null || val === undefined) return null;
           return val;
         };
         
@@ -773,7 +770,7 @@ const MainPage = () => {
         const areNumbersEqual = (a: number | null, b: number | null, tolerance = 0.001): boolean => {
           if (a === null && b === null) return true;
           if (a === null || b === null) return false;
-          return Math.abs(a - b) < tolerance;
+          return Math.abs(a - b) <= tolerance;
         };
         
         // Check area changes

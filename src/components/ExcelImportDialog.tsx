@@ -173,9 +173,9 @@ const ExcelImportDialog: React.FC<Props> = ({
 
 
 
-  // Helper function to normalize values for comparison (treat null, undefined, 0, empty string as equivalent)
+  // Helper function to normalize values for comparison (treat null, undefined, empty string as equivalent)
   const normalizeValue = (value: any): any => {
-    if (value === null || value === undefined || value === '' || value === '-' || value === 0) {
+    if (value === null || value === undefined || value === '' || value === '-') {
       return null;
     }
     // Also handle string representations of null/empty
@@ -195,7 +195,7 @@ const ExcelImportDialog: React.FC<Props> = ({
     if (normA === null && normB === null) return true;
     if (normA === null || normB === null) return false;
     if (typeof normA === 'number' && typeof normB === 'number') {
-      return Math.abs(normA - normB) < tolerance;
+      return Math.abs(normA - normB) <= tolerance;
     }
     return normA === normB;
   };
