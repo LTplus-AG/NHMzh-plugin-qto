@@ -223,7 +223,7 @@ export const useEbkpGroups = (
               ...firstElement,
               // The ID will be kept from firstElement
               global_id: firstElement.global_id,
-              groupedElements: groupElements.length,
+              groupedElements: elementsInTypeGroup.length,
               hasPropertyDifferences: false,
               hasZeroQuantityInGroup, // Store this information for highlighting
             };

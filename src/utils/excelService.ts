@@ -97,11 +97,11 @@ export class ExcelService {
 
       row.push(element.name || '', element.type || '', element.level || '');
 
-      // Only export non-null, non-zero values to avoid confusion
+      // Export actual values: null/undefined as empty, numbers (including 0) as-is
       row.push(
-        (element.area && element.area !== 0) ? element.area : '',
-        (element.length && element.length !== 0) ? element.length : '',
-        (getVolumeValue(element.volume) && getVolumeValue(element.volume) !== 0) ? getVolumeValue(element.volume) : ''
+        element.area != null ? element.area : '',
+        element.length != null ? element.length : '',
+        getVolumeValue(element.volume) != null ? getVolumeValue(element.volume) : ''
       );
 
       if (config.includeMaterials) {
