@@ -91,8 +91,6 @@ const MainPage = () => {
     resetEdits,
   } = useElementEditing();
 
-  // Track original elements for comparison during Excel import
-  const [originalElements, setOriginalElements] = useState<Map<string, LocalIFCElement>>(new Map());
   const [lastImportedData, setLastImportedData] = useState<ExcelImportData[]>([]);
 
   // Track previous project to only reset edits when switching projects
@@ -226,7 +224,6 @@ const MainPage = () => {
       setIfcError(null);
       setProjectMetadata(null);
       resetEdits();
-      setOriginalElements(new Map());
       prevProjectRef.current = null;
     }
   }, [selectedProject, backendConnected]);
@@ -289,13 +286,6 @@ const MainPage = () => {
       );
 
       setIfcElements(mappedElements);
-      
-      // Store original elements for comparison during Excel import
-      const originalMap = new Map<string, LocalIFCElement>();
-      mappedElements.forEach(el => {
-        originalMap.set(el.global_id, el);
-      });
-      setOriginalElements(originalMap);
       
       if (mappedElements.length === 0) {
       }
@@ -396,16 +386,39 @@ const MainPage = () => {
                 },
               };
               
-              // Add direct field updates if they exist in imported data
+              // Prefer live edited values first, then fall back to imported data
+              // This ensures UI corrections aren't clobbered by stale import snapshots
+              if (validValue !== null) {
+                // Set the field corresponding to the live edit
+                if (normalizedType === "area") {
+                  update.area = validValue;
+                } else if (normalizedType === "length") {
+                  update.length = validValue;
+                } else if (normalizedType === "volume") {
+                  update.volume = validValue;
+                }
+              }
+              
+              // Add other fields from imported data only if not already set by live edit
               if (importedItem) {
-                if (importedItem.area !== undefined) {
-                  update.area = importedItem.area;
+                if (update.area === undefined && importedItem.area !== undefined && importedItem.area !== null) {
+                  // Only add non-null, non-zero values to avoid writing 0 for untouched fields
+                  if (importedItem.area !== 0) {
+                    update.area = importedItem.area;
+                  }
                 }
-                if (importedItem.length !== undefined) {
-                  update.length = importedItem.length;
+                if (update.length === undefined && importedItem.length !== undefined && importedItem.length !== null) {
+                  // Only add non-null, non-zero values to avoid writing 0 for untouched fields
+                  if (importedItem.length !== 0) {
+                    update.length = importedItem.length;
+                  }
                 }
-                if (importedItem.volume !== undefined) {
-                  update.volume = getVolumeValue(importedItem.volume);
+                if (update.volume === undefined && importedItem.volume !== undefined && importedItem.volume !== null) {
+                  // Only convert/normalize volume when a concrete value is present
+                  const volumeValue = getVolumeValue(importedItem.volume);
+                  if (volumeValue !== null && volumeValue !== 0) {
+                    update.volume = volumeValue;
+                  }
                 }
               }
 
@@ -741,35 +754,55 @@ const MainPage = () => {
     setLastImportedData(importedData); // Store imported data for use in sendQtoToDatabase
     
     // Track quantity changes for area/length/volume in editedElements
+    // IMPORTANT: Compare against CURRENT element state, not originalElements
+    // because we want to detect changes from what's currently in the UI
     importedData.forEach(importItem => {
-      const originalElement = originalElements.get(importItem.global_id);
+      const currentElement = ifcElements.find(el => el.global_id === importItem.global_id);
       
-      if (originalElement) {
+      if (currentElement) {
         // Track all changed fields separately - don't prioritize, track everything that changed
         const changes: Array<{type: 'area' | 'length' | 'volume', original: number | null, new: number | null}> = [];
         
+        // Helper to normalize values for comparison (treat null, undefined, 0 as equivalent to empty)
+        const normalizeForComparison = (val: number | null | undefined): number | null => {
+          if (val === null || val === undefined || val === 0) return null;
+          return val;
+        };
+        
+        // Helper to compare floating point numbers with tolerance
+        const areNumbersEqual = (a: number | null, b: number | null, tolerance = 0.001): boolean => {
+          if (a === null && b === null) return true;
+          if (a === null || b === null) return false;
+          return Math.abs(a - b) < tolerance;
+        };
+        
         // Check area changes
-        if (importItem.area !== undefined && importItem.area !== null) {
-          const origArea = originalElement.area ?? null;
-          if ((origArea ?? null) !== (importItem.area ?? null)) {
-            changes.push({type: 'area', original: origArea, new: importItem.area});
+        if (importItem.area !== undefined) {
+          const currentArea = normalizeForComparison(currentElement.area);
+          const newArea = normalizeForComparison(importItem.area);
+          // Use floating-point comparison with tolerance
+          if (!areNumbersEqual(currentArea, newArea)) {
+            changes.push({type: 'area', original: currentElement.area ?? null, new: importItem.area});
           }
         }
         
         // Check length changes
-        if (importItem.length !== undefined && importItem.length !== null) {
-          const origLength = originalElement.length ?? null;
-          if ((origLength ?? null) !== (importItem.length ?? null)) {
-            changes.push({type: 'length', original: origLength, new: importItem.length});
+        if (importItem.length !== undefined) {
+          const currentLength = normalizeForComparison(currentElement.length);
+          const newLength = normalizeForComparison(importItem.length);
+          // Use floating-point comparison with tolerance
+          if (!areNumbersEqual(currentLength, newLength)) {
+            changes.push({type: 'length', original: currentElement.length ?? null, new: importItem.length});
           }
         }
         
         // Check volume changes
-        if (importItem.volume !== undefined && importItem.volume !== null) {
-          const origVol = getVolumeValue(originalElement.volume ?? originalElement.original_volume ?? null);
-          const newVol = getVolumeValue(importItem.volume);
-          if (newVol !== null && (origVol ?? null) !== (newVol ?? null)) {
-            changes.push({type: 'volume', original: origVol, new: newVol});
+        if (importItem.volume !== undefined) {
+          const currentVol = normalizeForComparison(getVolumeValue(currentElement.volume ?? currentElement.original_volume ?? null));
+          const newVol = normalizeForComparison(getVolumeValue(importItem.volume));
+          // Use floating-point comparison with tolerance
+          if (!areNumbersEqual(currentVol, newVol)) {
+            changes.push({type: 'volume', original: getVolumeValue(currentElement.volume ?? currentElement.original_volume ?? null), new: getVolumeValue(importItem.volume)});
           }
         }
         

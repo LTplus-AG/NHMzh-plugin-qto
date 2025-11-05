@@ -19,7 +19,6 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   Fade,
   IconButton,
   InputAdornment,
@@ -64,6 +63,8 @@ const ExcelImportDialog: React.FC<Props> = ({
   const [activeStep, setActiveStep] = useState<ImportStep>('file-selection');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importResult, setImportResult] = useState<ExcelImportResult | null>(null);
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const progressRef = useRef(0);
 
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedGuid, setCopiedGuid] = useState<string>('');
@@ -89,16 +90,48 @@ const ExcelImportDialog: React.FC<Props> = ({
     if (file) {
       setSelectedFile(file);
       setActiveStep('processing');
+      setProcessingProgress(0);
+      progressRef.current = 0;
       processFile(file);
     }
   }, []);
 
   const processFile = async (file: File) => {
     try {
+      // Smooth progress updates using ref to avoid closure issues
+      const updateProgress = (target: number, duration: number) => {
+        return new Promise<void>((resolve) => {
+          const start = progressRef.current;
+          const startTime = Date.now();
+          const step = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const newProgress = start + (target - start) * progress;
+            progressRef.current = newProgress;
+            setProcessingProgress(newProgress);
+            if (progress < 1) {
+              requestAnimationFrame(step);
+            } else {
+              resolve();
+            }
+          };
+          requestAnimationFrame(step);
+        });
+      };
+
+      // Stage 1: Reading file (0 -> 30%)
+      await updateProgress(30, 300);
+      
+      // Stage 2: Parsing Excel (30 -> 80%)
       const result = await ExcelService.importFromExcel(file);
+      await updateProgress(80, 200);
+      
+      // Stage 3: Finalizing (80 -> 100%)
       setImportResult(result);
+      await updateProgress(100, 200);
 
       if (result.success && result.data.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 150));
         setActiveStep('preview');
       } else {
         setActiveStep('file-selection');
@@ -106,8 +139,7 @@ const ExcelImportDialog: React.FC<Props> = ({
     } catch (error) {
       logger.error('Import processing failed:', error);
       alert('Fehler beim Verarbeiten der Excel-Datei');
-    } finally {
-      // setIsProcessing(false); // This line was not in the edit_specification, so it's removed.
+      setActiveStep('file-selection');
     }
   };
 
@@ -141,9 +173,9 @@ const ExcelImportDialog: React.FC<Props> = ({
 
 
 
-  // Helper function to normalize values for comparison
+  // Helper function to normalize values for comparison (treat null, undefined, 0, empty string as equivalent)
   const normalizeValue = (value: any): any => {
-    if (value === null || value === undefined || value === '' || value === '-') {
+    if (value === null || value === undefined || value === '' || value === '-' || value === 0) {
       return null;
     }
     // Also handle string representations of null/empty
@@ -156,6 +188,18 @@ const ExcelImportDialog: React.FC<Props> = ({
     return value;
   };
 
+  // Helper to compare floating point numbers with tolerance
+  const areNumbersEqual = (a: number | null, b: number | null, tolerance = 0.001): boolean => {
+    const normA = normalizeValue(a);
+    const normB = normalizeValue(b);
+    if (normA === null && normB === null) return true;
+    if (normA === null || normB === null) return false;
+    if (typeof normA === 'number' && typeof normB === 'number') {
+      return Math.abs(normA - normB) < tolerance;
+    }
+    return normA === normB;
+  };
+
   // Helper function to check if a field has changed
   const hasFieldChanged = (item: ExcelImportData, existingElement: IFCElement | undefined, fieldName: string): boolean => {
     if (!existingElement) return false;
@@ -166,11 +210,11 @@ const ExcelImportDialog: React.FC<Props> = ({
       case 'type':
         return normalizeValue(item.type) !== normalizeValue(existingElement.type);
       case 'area':
-        return normalizeValue(item.area) !== normalizeValue(existingElement.area);
+        return !areNumbersEqual(item.area ?? null, existingElement.area ?? null);
       case 'length':
-        return normalizeValue(item.length) !== normalizeValue(existingElement.length);
+        return !areNumbersEqual(item.length ?? null, existingElement.length ?? null);
       case 'volume':
-        return normalizeValue(item.volume) !== normalizeValue(existingElement.volume);
+        return !areNumbersEqual(item.volume ?? null, getVolumeValue(existingElement.volume) ?? null);
       case 'level':
         return normalizeValue(item.level) !== normalizeValue(existingElement.level);
       case 'classification_id':
@@ -312,7 +356,16 @@ const ExcelImportDialog: React.FC<Props> = ({
   const updatedElements = useMemo(() => {
     if (!importResult?.data) return [];
     const existingGuids = new Set(existingElements.map(el => el.global_id));
-    return importResult.data.filter(item => existingGuids.has(item.global_id));
+    // Only include elements that exist AND have actual changes
+    return importResult.data.filter(item => {
+      if (!existingGuids.has(item.global_id)) return false;
+      const existingElement = existingElements.find(el => el.global_id === item.global_id);
+      if (!existingElement) return false;
+      
+      // Check if ANY field has changed
+      const fields = ['name', 'type', 'area', 'length', 'volume', 'level', 'classification_id'];
+      return fields.some(field => hasFieldChanged(item, existingElement, field));
+    });
   }, [importResult?.data, existingElements]);
 
   // Memoized filtered and sorted elements for performance
@@ -631,7 +684,21 @@ const ExcelImportDialog: React.FC<Props> = ({
 
   const renderProcessing = () => (
     <Box sx={{ textAlign: 'center', py: 4 }}>
-      <LinearProgress sx={{ mb: 3 }} />
+      <LinearProgress 
+        variant="determinate" 
+        value={processingProgress} 
+        sx={{ 
+          mb: 3,
+          height: 8,
+          borderRadius: 4,
+          backgroundColor: 'rgba(25, 118, 210, 0.1)',
+          '& .MuiLinearProgress-bar': {
+            borderRadius: 4,
+            background: 'linear-gradient(90deg, #1976d2 0%, #42a5f5 100%)',
+            transition: 'transform 0.05s linear'
+          }
+        }} 
+      />
       <Typography variant="h6" gutterBottom>
         Verarbeite Mengendaten...
       </Typography>
@@ -1233,19 +1300,26 @@ const ExcelImportDialog: React.FC<Props> = ({
           '& .MuiDialogContent-root': {
             p: 0,
             ...(activeStep === 'preview'
-              ? { height: 'calc(100% - 140px)', overflow: 'auto' }
+              ? { height: 'calc(100% - 140px)', overflow: 'hidden' }
               : { height: 'auto', overflow: 'visible' }
             )
           }
         }
       }}
     >
-      <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        Excel-Import für Mengen & Klassifikationen
-        <IconButton onClick={handleClose} size="small">
-          <Close />
-        </IconButton>
-      </DialogTitle>
+      <IconButton 
+        onClick={handleClose} 
+        size="small"
+        sx={{
+          position: 'absolute',
+          right: 8,
+          top: 8,
+          zIndex: 1,
+          color: 'text.secondary'
+        }}
+      >
+        <Close />
+      </IconButton>
 
       <DialogContent sx={{
         px: activeStep === 'preview' ? 0 : { xs: 2, sm: 3 },
@@ -1263,7 +1337,7 @@ const ExcelImportDialog: React.FC<Props> = ({
             px: { xs: 2, sm: 3 },
             py: { xs: 1, sm: 2 },
             height: '100%',
-            overflow: 'auto',
+            overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             gap: 2
