@@ -165,15 +165,6 @@ const ExcelImportDialog: React.FC<Props> = ({
         return normalizeValue(item.name) !== normalizeValue(existingElement.name);
       case 'type':
         return normalizeValue(item.type) !== normalizeValue(existingElement.type);
-      case 'quantity':
-        {
-          const itemQuantity = item.quantity;
-          const existingQuantity = existingElement.quantity;
-          if (!itemQuantity && !existingQuantity) return false;
-          if (!itemQuantity || !existingQuantity) return true;
-          return itemQuantity.value !== existingQuantity.value ||
-            normalizeValue(itemQuantity.unit) !== normalizeValue(existingQuantity.unit);
-        }
       case 'area':
         return normalizeValue(item.area) !== normalizeValue(existingElement.area);
       case 'length':
@@ -273,10 +264,6 @@ const ExcelImportDialog: React.FC<Props> = ({
             case 'type':
               aValue = a.type || '';
               bValue = b.type || '';
-              break;
-            case 'quantity':
-              aValue = a.quantity?.value || 0;
-              bValue = b.quantity?.value || 0;
               break;
             case 'area':
               aValue = a.area || 0;
@@ -401,36 +388,6 @@ const ExcelImportDialog: React.FC<Props> = ({
           borderRight: '1px solid rgba(224, 224, 224, 1)'
         }}>
           {item.type || '-'}
-        </Box>
-
-        {/* Quantity */}
-        <Box sx={{
-          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 80),
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          px: 2,
-          py: 1,
-          borderRight: '1px solid rgba(224, 224, 224, 1)'
-        }}>
-          {item.quantity?.value !== undefined && item.quantity?.value !== null ? item.quantity.value.toFixed(2) : '-'}
-        </Box>
-
-        {/* Unit */}
-        <Box sx={{
-          ...getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 60),
-          display: 'flex',
-          alignItems: 'center',
-          px: 2,
-          py: 1,
-          borderRight: '1px solid rgba(224, 224, 224, 1)'
-        }}>
-          <Chip
-            label={item.quantity?.unit || '-'}
-            size="small"
-            variant="outlined"
-            color={item.quantity?.unit ? 'primary' : 'default'}
-          />
         </Box>
 
         {/* Area */}
@@ -1111,8 +1068,6 @@ const ExcelImportDialog: React.FC<Props> = ({
                     <SortableTableCell field="guid" sx={{ minWidth: 120 }}>GUID</SortableTableCell>
                     <SortableTableCell field="name" sx={{ minWidth: 150 }}>Name</SortableTableCell>
                     <SortableTableCell field="type" sx={{ minWidth: 100 }}>Typ</SortableTableCell>
-                    <SortableTableCell field="quantity" align="right" sx={{ minWidth: 80 }}>Menge</SortableTableCell>
-                    <TableCell sx={{ minWidth: 60 }}>Einheit</TableCell>
                     <SortableTableCell field="area" align="right" sx={{ minWidth: 80 }}>Fläche</SortableTableCell>
                     <SortableTableCell field="length" align="right" sx={{ minWidth: 80 }}>Länge</SortableTableCell>
                     <SortableTableCell field="volume" align="right" sx={{ minWidth: 80 }}>Volumen</SortableTableCell>
@@ -1158,17 +1113,6 @@ const ExcelImportDialog: React.FC<Props> = ({
                         </TableCell>
                         <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'type'), 100)}>
                           {item.type || '-'}
-                        </TableCell>
-                        <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 80)}>
-                          {item.quantity?.value !== undefined && item.quantity?.value !== null ? item.quantity.value.toFixed(2) : '-'}
-                        </TableCell>
-                        <TableCell sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'quantity'), 60)}>
-                          <Chip
-                            label={item.quantity?.unit || '-'}
-                            size="small"
-                            variant="outlined"
-                            color={item.quantity?.unit ? 'primary' : 'default'}
-                          />
                         </TableCell>
                         <TableCell align="right" sx={getChangedCellStyle(hasFieldChanged(item, existingElement, 'area'), 80)}>
                           {item.area !== undefined && item.area !== null ? `${item.area.toFixed(2)} m²` : '-'}

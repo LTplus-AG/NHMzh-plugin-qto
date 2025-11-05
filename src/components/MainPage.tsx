@@ -93,6 +93,7 @@ const MainPage = () => {
 
   // Track original elements for comparison during Excel import
   const [originalElements, setOriginalElements] = useState<Map<string, LocalIFCElement>>(new Map());
+  const [lastImportedData, setLastImportedData] = useState<ExcelImportData[]>([]);
 
   // Track previous project to only reset edits when switching projects
   const prevProjectRef = useRef<string | null>(null);
@@ -349,8 +350,11 @@ const MainPage = () => {
         // Include updates for all elements (both manual and non-manual)
         if (originalElement) {
           const editData = editedElements[elementId];
+          
+          // Get the imported data to see what fields were actually changed
+          const importedItem = lastImportedData.find(item => item.global_id === elementId);
+          
           if (editData.newQuantity) {
-            // <<< ADDED Type assertion for newQuantity >>>
             const currentQuantity = editData.newQuantity as {
               value?: number | null;
               type?: string;
@@ -382,14 +386,30 @@ const MainPage = () => {
                 ? "m"
                 : "Stk";
 
-              quantityUpdates.push({
+              // Build update with all changed fields from imported data
+              const update: ElementQuantityUpdate = {
                 global_id: elementId,
                 new_quantity: {
                   value: validValue,
                   type: normalizedType as "area" | "length" | "volume" | "count",
                   unit: normalizedUnit,
                 },
-              });
+              };
+              
+              // Add direct field updates if they exist in imported data
+              if (importedItem) {
+                if (importedItem.area !== undefined) {
+                  update.area = importedItem.area;
+                }
+                if (importedItem.length !== undefined) {
+                  update.length = importedItem.length;
+                }
+                if (importedItem.volume !== undefined) {
+                  update.volume = getVolumeValue(importedItem.volume);
+                }
+              }
+
+              quantityUpdates.push(update);
             } else {
               logger.warn(`Skipping quantity update for element ${elementId}: missing or invalid quantity type`);
             }
@@ -406,6 +426,7 @@ const MainPage = () => {
                 type: "area",
                 unit: "m²",
               },
+              area: editData.newArea,
             });
           } else if (
             editData.newLength !== undefined &&
@@ -418,6 +439,7 @@ const MainPage = () => {
                 type: "length",
                 unit: "m",
               },
+              length: editData.newLength,
             });
           }
         }
@@ -716,51 +738,54 @@ const MainPage = () => {
     logger.info(`Excel import completed with ${importedData.length} elements`);
     setLastImportTime(new Date());
     setImportCount(importCount + 1);
+    setLastImportedData(importedData); // Store imported data for use in sendQtoToDatabase
     
-    // First, track quantity changes in editedElements
+    // Track quantity changes for area/length/volume in editedElements
     importedData.forEach(importItem => {
-      if (importItem.quantity) {
-        const originalElement = originalElements.get(importItem.global_id);
+      const originalElement = originalElements.get(importItem.global_id);
+      
+      if (originalElement) {
+        // Track all changed fields separately - don't prioritize, track everything that changed
+        const changes: Array<{type: 'area' | 'length' | 'volume', original: number | null, new: number | null}> = [];
         
-        // Track quantity changes if value or type differs from original
-        const originalQty = originalElement?.quantity;
-        
-        // Explicitly detect when an element transitions from no/null quantity to having a quantity
-        // This handles the case where originalQty is undefined or has null/undefined value
-        const hadNoQuantity = !originalQty || originalQty.value === null || originalQty.value === undefined;
-        const hasNewQuantity = importItem.quantity.value !== null && importItem.quantity.value !== undefined;
-        
-        // Detect changes in two scenarios:
-        // 1. Element is getting a quantity for the first time (or replacing null with a value)
-        // 2. Element had a quantity and it changed (value or type)
-        const hasChanged = 
-          (hadNoQuantity && hasNewQuantity) || // NEW: Explicitly handle adding quantity
-          (originalElement && (
-            (importItem.quantity.value ?? null) !== (originalQty?.value ?? null) ||
-            (importItem.quantity.type ?? null) !== (originalQty?.type ?? null)
-          ));
-        
-        if (hasChanged && originalElement) {
-          // Use imported type, fall back to original type, then 'area'
-          const quantityType = importItem.quantity.type || originalQty?.type || 'area';
-          
-          // Validate the quantity type before using
-          const validTypes = ['area', 'length', 'count', 'volume'];
-          if (!validTypes.includes(quantityType)) {
-            logger.warn(`Invalid quantity type '${quantityType}' for element ${importItem.global_id}, skipping tracking`);
-            return;
+        // Check area changes
+        if (importItem.area !== undefined && importItem.area !== null) {
+          const origArea = originalElement.area ?? null;
+          if ((origArea ?? null) !== (importItem.area ?? null)) {
+            changes.push({type: 'area', original: origArea, new: importItem.area});
           }
-          
-          const originalValue = originalElement.quantity?.value ?? null;
-          const newValue = importItem.quantity.value;
-          
-          // Use handleQuantityChange to track this edit
-          handleQuantityChange(
-            importItem.global_id,
-            quantityType as 'area' | 'length' | 'count' | 'volume',
-            originalValue,
-            newValue?.toString() ?? ''
-          );
+        }
+        
+        // Check length changes
+        if (importItem.length !== undefined && importItem.length !== null) {
+          const origLength = originalElement.length ?? null;
+          if ((origLength ?? null) !== (importItem.length ?? null)) {
+            changes.push({type: 'length', original: origLength, new: importItem.length});
+          }
+        }
+        
+        // Check volume changes
+        if (importItem.volume !== undefined && importItem.volume !== null) {
+          const origVol = getVolumeValue(originalElement.volume ?? originalElement.original_volume ?? null);
+          const newVol = getVolumeValue(importItem.volume);
+          if (newVol !== null && (origVol ?? null) !== (newVol ?? null)) {
+            changes.push({type: 'volume', original: origVol, new: newVol});
+          }
+        }
+        
+        // Track all changes - use the first one as primary quantity for editedElements tracking
+        // But we'll send all fields in the update
+        if (changes.length > 0) {
+          // Track the first change for editedElements (for UI display)
+          const firstChange = changes[0];
+          if (firstChange.new !== null) {
+            handleQuantityChange(
+              importItem.global_id,
+              firstChange.type,
+              firstChange.original,
+              firstChange.new.toString()
+            );
+          }
         }
       }
     });
@@ -776,9 +801,6 @@ const MainPage = () => {
           // Update existing element
           const updatedElement = { ...updatedElements[existingIndex] };
           
-          if (importItem.quantity) {
-            updatedElement.quantity = importItem.quantity;
-          }
           if (importItem.area !== undefined) {
             updatedElement.area = importItem.area;
           }
@@ -841,8 +863,6 @@ const MainPage = () => {
             classification_id: importItem.classification_id || null,
             classification_name: inferredName,
             classification_system: importItem.classification_system || (importItem.classification_id ? 'eBKP' : null),
-            quantity: importItem.quantity || null,
-            original_quantity: null,
             area: importItem.area || null,
             length: importItem.length || null,
             volume: importItem.volume || null,
