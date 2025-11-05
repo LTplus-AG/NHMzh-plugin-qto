@@ -91,8 +91,7 @@ const MainPage = () => {
     resetEdits,
   } = useElementEditing();
 
-  // Track original elements for comparison during Excel import
-  const [originalElements, setOriginalElements] = useState<Map<string, LocalIFCElement>>(new Map());
+  const [lastImportedData, setLastImportedData] = useState<ExcelImportData[]>([]);
 
   // Track previous project to only reset edits when switching projects
   const prevProjectRef = useRef<string | null>(null);
@@ -225,7 +224,6 @@ const MainPage = () => {
       setIfcError(null);
       setProjectMetadata(null);
       resetEdits();
-      setOriginalElements(new Map());
       prevProjectRef.current = null;
     }
   }, [selectedProject, backendConnected]);
@@ -289,13 +287,6 @@ const MainPage = () => {
 
       setIfcElements(mappedElements);
       
-      // Store original elements for comparison during Excel import
-      const originalMap = new Map<string, LocalIFCElement>();
-      mappedElements.forEach(el => {
-        originalMap.set(el.global_id, el);
-      });
-      setOriginalElements(originalMap);
-      
       if (mappedElements.length === 0) {
       }
     } catch (error: any) {
@@ -349,8 +340,11 @@ const MainPage = () => {
         // Include updates for all elements (both manual and non-manual)
         if (originalElement) {
           const editData = editedElements[elementId];
+          
+          // Get the imported data to see what fields were actually changed
+          const importedItem = lastImportedData.find(item => item.global_id === elementId);
+          
           if (editData.newQuantity) {
-            // <<< ADDED Type assertion for newQuantity >>>
             const currentQuantity = editData.newQuantity as {
               value?: number | null;
               type?: string;
@@ -382,14 +376,50 @@ const MainPage = () => {
                 ? "m"
                 : "Stk";
 
-              quantityUpdates.push({
+              // Build update with all changed fields from imported data
+              const update: ElementQuantityUpdate = {
                 global_id: elementId,
                 new_quantity: {
                   value: validValue,
                   type: normalizedType as "area" | "length" | "volume" | "count",
                   unit: normalizedUnit,
                 },
-              });
+              };
+              
+              // Prefer live edited values for the corresponding field, fall back to imported data for others
+              if (importedItem) {
+                // Set area: live edit if type is area, otherwise imported
+                if (normalizedType === "area" && validValue !== null) {
+                  update.area = validValue;
+                } else if (importedItem.area !== undefined && importedItem.area !== null) {
+                  update.area = importedItem.area;
+                }
+                
+                // Set length: live edit if type is length, otherwise imported
+                if (normalizedType === "length" && validValue !== null) {
+                  update.length = validValue;
+                } else if (importedItem.length !== undefined && importedItem.length !== null) {
+                  update.length = importedItem.length;
+                }
+                
+                // Set volume: live edit if type is volume, otherwise imported (check before calling helper)
+                if (normalizedType === "volume" && validValue !== null) {
+                  update.volume = validValue;
+                } else if (importedItem.volume !== undefined && importedItem.volume !== null) {
+                  update.volume = getVolumeValue(importedItem.volume);
+                }
+              } else if (validValue !== null) {
+                // No import data; set only the live-edited field
+                if (normalizedType === "area") {
+                  update.area = validValue;
+                } else if (normalizedType === "length") {
+                  update.length = validValue;
+                } else if (normalizedType === "volume") {
+                  update.volume = validValue;
+                }
+              }
+
+              quantityUpdates.push(update);
             } else {
               logger.warn(`Skipping quantity update for element ${elementId}: missing or invalid quantity type`);
             }
@@ -406,6 +436,7 @@ const MainPage = () => {
                 type: "area",
                 unit: "m²",
               },
+              area: editData.newArea,
             });
           } else if (
             editData.newLength !== undefined &&
@@ -418,6 +449,7 @@ const MainPage = () => {
                 type: "length",
                 unit: "m",
               },
+              length: editData.newLength,
             });
           }
         }
@@ -716,51 +748,74 @@ const MainPage = () => {
     logger.info(`Excel import completed with ${importedData.length} elements`);
     setLastImportTime(new Date());
     setImportCount(importCount + 1);
+    setLastImportedData(importedData); // Store imported data for use in sendQtoToDatabase
     
-    // First, track quantity changes in editedElements
+    // Track quantity changes for area/length/volume in editedElements
+    // IMPORTANT: Compare against CURRENT element state, not originalElements
+    // because we want to detect changes from what's currently in the UI
     importedData.forEach(importItem => {
-      if (importItem.quantity) {
-        const originalElement = originalElements.get(importItem.global_id);
+      const currentElement = ifcElements.find(el => el.global_id === importItem.global_id);
+      
+      if (currentElement) {
+        // Track all changed fields separately - don't prioritize, track everything that changed
+        const changes: Array<{type: 'area' | 'length' | 'volume', original: number | null, new: number | null}> = [];
         
-        // Track quantity changes if value or type differs from original
-        const originalQty = originalElement?.quantity;
+        // Helper to normalize values for comparison (treat null, undefined as equivalent to empty)
+        const normalizeForComparison = (val: number | null | undefined): number | null => {
+          if (val === null || val === undefined) return null;
+          return val;
+        };
         
-        // Explicitly detect when an element transitions from no/null quantity to having a quantity
-        // This handles the case where originalQty is undefined or has null/undefined value
-        const hadNoQuantity = !originalQty || originalQty.value === null || originalQty.value === undefined;
-        const hasNewQuantity = importItem.quantity.value !== null && importItem.quantity.value !== undefined;
+        // Helper to compare floating point numbers with tolerance
+        const areNumbersEqual = (a: number | null, b: number | null, tolerance = 0.001): boolean => {
+          if (a === null && b === null) return true;
+          if (a === null || b === null) return false;
+          return Math.abs(a - b) <= tolerance;
+        };
         
-        // Detect changes in two scenarios:
-        // 1. Element is getting a quantity for the first time (or replacing null with a value)
-        // 2. Element had a quantity and it changed (value or type)
-        const hasChanged = 
-          (hadNoQuantity && hasNewQuantity) || // NEW: Explicitly handle adding quantity
-          (originalElement && (
-            (importItem.quantity.value ?? null) !== (originalQty?.value ?? null) ||
-            (importItem.quantity.type ?? null) !== (originalQty?.type ?? null)
-          ));
-        
-        if (hasChanged && originalElement) {
-          // Use imported type, fall back to original type, then 'area'
-          const quantityType = importItem.quantity.type || originalQty?.type || 'area';
-          
-          // Validate the quantity type before using
-          const validTypes = ['area', 'length', 'count', 'volume'];
-          if (!validTypes.includes(quantityType)) {
-            logger.warn(`Invalid quantity type '${quantityType}' for element ${importItem.global_id}, skipping tracking`);
-            return;
+        // Check area changes
+        if (importItem.area !== undefined) {
+          const currentArea = normalizeForComparison(currentElement.area);
+          const newArea = normalizeForComparison(importItem.area);
+          // Use floating-point comparison with tolerance
+          if (!areNumbersEqual(currentArea, newArea)) {
+            changes.push({type: 'area', original: currentElement.area ?? null, new: importItem.area});
           }
-          
-          const originalValue = originalElement.quantity?.value ?? null;
-          const newValue = importItem.quantity.value;
-          
-          // Use handleQuantityChange to track this edit
-          handleQuantityChange(
-            importItem.global_id,
-            quantityType as 'area' | 'length' | 'count' | 'volume',
-            originalValue,
-            newValue?.toString() ?? ''
-          );
+        }
+        
+        // Check length changes
+        if (importItem.length !== undefined) {
+          const currentLength = normalizeForComparison(currentElement.length);
+          const newLength = normalizeForComparison(importItem.length);
+          // Use floating-point comparison with tolerance
+          if (!areNumbersEqual(currentLength, newLength)) {
+            changes.push({type: 'length', original: currentElement.length ?? null, new: importItem.length});
+          }
+        }
+        
+        // Check volume changes
+        if (importItem.volume !== undefined) {
+          const currentVol = normalizeForComparison(getVolumeValue(currentElement.volume ?? currentElement.original_volume ?? null));
+          const newVol = normalizeForComparison(getVolumeValue(importItem.volume));
+          // Use floating-point comparison with tolerance
+          if (!areNumbersEqual(currentVol, newVol)) {
+            changes.push({type: 'volume', original: getVolumeValue(currentElement.volume ?? currentElement.original_volume ?? null), new: getVolumeValue(importItem.volume)});
+          }
+        }
+        
+        // Track all changes - use the first one as primary quantity for editedElements tracking
+        // But we'll send all fields in the update
+        if (changes.length > 0) {
+          // Track the first change for editedElements (for UI display)
+          const firstChange = changes[0];
+          if (firstChange.new !== null) {
+            handleQuantityChange(
+              importItem.global_id,
+              firstChange.type,
+              firstChange.original,
+              firstChange.new.toString()
+            );
+          }
         }
       }
     });
@@ -776,9 +831,6 @@ const MainPage = () => {
           // Update existing element
           const updatedElement = { ...updatedElements[existingIndex] };
           
-          if (importItem.quantity) {
-            updatedElement.quantity = importItem.quantity;
-          }
           if (importItem.area !== undefined) {
             updatedElement.area = importItem.area;
           }
@@ -841,8 +893,6 @@ const MainPage = () => {
             classification_id: importItem.classification_id || null,
             classification_name: inferredName,
             classification_system: importItem.classification_system || (importItem.classification_id ? 'eBKP' : null),
-            quantity: importItem.quantity || null,
-            original_quantity: null,
             area: importItem.area || null,
             length: importItem.length || null,
             volume: importItem.volume || null,

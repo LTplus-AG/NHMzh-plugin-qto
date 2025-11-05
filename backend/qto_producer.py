@@ -475,12 +475,35 @@ class MongoDBHelper:
                 # Find the element by project_id and global_id
                 filter_criteria = {"project_id": project_id, "global_id": element_ifc_id}
                 
-                # Prepare the update operation
+                # Prepare the update operation - update both quantity and the corresponding field (area/length/volume)
+                update_fields = {
+                    "quantity": new_quantity_dict,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+                
+                # Also update the corresponding area/length/volume field based on quantity type
+                quantity_type = new_quantity_model.type
+                quantity_value = new_quantity_model.value
+                
+                if quantity_type == "area" and quantity_value is not None:
+                    update_fields["area"] = quantity_value
+                elif quantity_type == "length" and quantity_value is not None:
+                    update_fields["length"] = quantity_value
+                elif quantity_type == "volume" and quantity_value is not None:
+                    update_fields["volume"] = quantity_value
+                
+                # Check if update has direct area/length/volume fields (from Excel import)
+                update_dict = update.model_dump() if hasattr(update, 'model_dump') else update
+                if isinstance(update_dict, dict):
+                    if "area" in update_dict and update_dict["area"] is not None:
+                        update_fields["area"] = update_dict["area"]
+                    if "length" in update_dict and update_dict["length"] is not None:
+                        update_fields["length"] = update_dict["length"]
+                    if "volume" in update_dict and update_dict["volume"] is not None:
+                        update_fields["volume"] = update_dict["volume"]
+                
                 update_operation = {
-                    "$set": {
-                        "quantity": new_quantity_dict, # Use the dictionary
-                        "updated_at": datetime.now(timezone.utc)
-                    }
+                    "$set": update_fields
                 }
                 
                 result = self.db.elements.update_one(filter_criteria, update_operation)

@@ -143,6 +143,9 @@ class ModelInfo(BaseModel):
 class ElementQuantityUpdate(BaseModel):
     global_id: str # Element's global ID for identification
     new_quantity: ManualQuantityInput # Use the specific ManualQuantityInput
+    area: Optional[float] = None  # Optional direct field updates
+    length: Optional[float] = None
+    volume: Optional[float] = None
 
 class ManualElementInput(BaseModel):
     name: str

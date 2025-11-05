@@ -1,6 +1,5 @@
 import * as ExcelJS from 'exceljs';
 import { IFCElement } from '../types/types';
-import { getQuantityTypeFromUnit } from '../types/excelTypes';
 import { normalizeEbkpCode } from '../data/ebkpData';
 import { getVolumeValue } from './volumeHelpers';
 
@@ -16,11 +15,6 @@ export interface ExcelImportData {
   global_id: string;
   name?: string;
   type?: string;
-  quantity?: {
-    value: number | null;
-    type: string;
-    unit: string;
-  };
   area?: number | null;
   length?: number | null;
   volume?: number | null;
@@ -76,10 +70,6 @@ export class ExcelService {
 
     headers.push('Name', 'Typ', 'Ebene');
 
-    if (config.includeQuantities !== false) {
-      headers.push('Menge', 'Einheit');
-    }
-
     headers.push('Fläche (m²)', 'Länge (m)', 'Volumen (m³)');
 
     if (config.includeMaterials) {
@@ -107,18 +97,11 @@ export class ExcelService {
 
       row.push(element.name || '', element.type || '', element.level || '');
 
-      if (config.includeQuantities !== false) {
-        if (element.quantity) {
-          row.push(element.quantity.value, element.quantity.unit || '');
-        } else {
-          row.push('', '');
-        }
-      }
-
+      // Only export non-null, non-zero values to avoid confusion
       row.push(
-        element.area || '',
-        element.length || '',
-        getVolumeValue(element.volume) || ''
+        (element.area && element.area !== 0) ? element.area : '',
+        (element.length && element.length !== 0) ? element.length : '',
+        (getVolumeValue(element.volume) && getVolumeValue(element.volume) !== 0) ? getVolumeValue(element.volume) : ''
       );
 
       if (config.includeMaterials) {
@@ -200,8 +183,6 @@ export class ExcelService {
       const nameIndex = headers.indexOf('Name');
       const typeIndex = headers.indexOf('Typ');
       const levelIndex = headers.indexOf('Ebene');
-      const quantityIndex = headers.indexOf('Menge');
-      const unitIndex = headers.indexOf('Einheit');
       const areaIndex = headers.indexOf('Fläche (m²)');
       const lengthIndex = headers.indexOf('Länge (m)');
       const volumeIndex = headers.indexOf('Volumen (m³)');
@@ -229,40 +210,6 @@ export class ExcelService {
         const name = row.getCell(nameIndex).value?.toString();
         const type = row.getCell(typeIndex).value?.toString();
         const level = row.getCell(levelIndex).value?.toString();
-
-        // Parse quantity
-        const quantityValue = row.getCell(quantityIndex).value;
-        const unitValue = row.getCell(unitIndex).value?.toString();
-
-        let quantity: { value: number | null; type: string; unit: string } | undefined;
-
-        if (quantityValue !== undefined && quantityValue !== null) {
-          let numValue: number | null = null;
-
-          if (typeof quantityValue === 'number') {
-            numValue = quantityValue;
-          } else if (typeof quantityValue === 'string') {
-            const parsed = parseFloat(quantityValue.trim());
-            if (!isNaN(parsed)) {
-              numValue = parsed;
-            }
-          }
-
-          if (numValue !== null) {
-            // Determine quantity type based on unit or element type
-            let quantityType = 'area'; // default
-
-            if (unitValue) {
-              quantityType = getQuantityTypeFromUnit(unitValue);
-            }
-
-            quantity = {
-              value: numValue,
-              type: quantityType,
-              unit: unitValue || ''
-            };
-          }
-        }
 
         // Parse individual measurements (guard optional columns)
         const area = areaIndex !== -1
@@ -332,7 +279,6 @@ export class ExcelService {
           global_id: guid,
           name,
           type,
-          quantity,
           area,
           length,
           volume,
@@ -364,8 +310,8 @@ export class ExcelService {
     const config: ExcelExportConfig = {
       fileName: `mengendaten-template-${new Date().toISOString().split('T')[0]}`,
       includeGuid: true,
-      includeQuantities: true,
-      includeUnits: true,
+      includeQuantities: false,
+      includeUnits: false,
       includeMaterials: true
     };
 

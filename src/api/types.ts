@@ -23,4 +23,8 @@ export interface ElementQuantityUpdate {
     type: QuantityType;
     unit: string;
   };
+  // Optional: Direct field updates for area/length/volume
+  area?: number | null;
+  length?: number | null;
+  volume?: number | null;
 }
