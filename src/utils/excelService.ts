@@ -97,11 +97,14 @@ export class ExcelService {
 
       row.push(element.name || '', element.type || '', element.level || '');
 
-      // Only export non-null, non-zero values to avoid confusion
+      // Export numeric values: write the number if it exists (including 0), otherwise empty string
       row.push(
-        (element.area && element.area !== 0) ? element.area : '',
-        (element.length && element.length !== 0) ? element.length : '',
-        (getVolumeValue(element.volume) && getVolumeValue(element.volume) !== 0) ? getVolumeValue(element.volume) : ''
+        (element.area !== null && element.area !== undefined) ? element.area : '',
+        (element.length !== null && element.length !== undefined) ? element.length : '',
+        (() => {
+          const vol = getVolumeValue(element.volume);
+          return (vol !== null && vol !== undefined) ? vol : '';
+        })()
       );
 
       if (config.includeMaterials) {

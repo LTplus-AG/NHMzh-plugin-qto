@@ -5,10 +5,10 @@
  * - null or undefined
  */
 
-export function getVolumeValue(volume: number | { net?: number; gross?: number } | null | undefined): number {
-  if (volume === null || volume === undefined) return 0;
+export function getVolumeValue(volume: number | { net?: number; gross?: number } | null | undefined): number | null {
+  if (volume === null || volume === undefined) return null;
   if (typeof volume === 'number') return volume;
-  // For object type, prefer net, fallback to gross
-  return volume.net ?? volume.gross ?? 0;
+  // For object type, prefer net, fallback to gross, or null if both are undefined
+  return volume.net ?? volume.gross ?? null;
 }
 
