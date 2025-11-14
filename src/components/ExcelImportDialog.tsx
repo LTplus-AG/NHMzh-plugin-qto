@@ -190,14 +190,11 @@ const ExcelImportDialog: React.FC<Props> = ({
 
   // Helper to compare floating point numbers with tolerance
   const areNumbersEqual = (a: number | null, b: number | null, tolerance = 0.001): boolean => {
-    const normA = normalizeValue(a);
-    const normB = normalizeValue(b);
-    if (normA === null && normB === null) return true;
-    if (normA === null || normB === null) return false;
-    if (typeof normA === 'number' && typeof normB === 'number') {
-      return Math.abs(normA - normB) <= tolerance;
-    }
-    return normA === normB;
+    // Treat null and undefined as equivalent
+    if (a === null && b === null) return true;
+    if (a === null || b === null) return false;
+    // Compare numeric values with tolerance
+    return Math.abs(a - b) <= tolerance;
   };
 
   // Helper function to check if a field has changed
