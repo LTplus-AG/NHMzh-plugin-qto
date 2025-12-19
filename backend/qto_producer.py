@@ -453,10 +453,22 @@ class MongoDBHelper:
                 element_ifc_id = update.global_id 
                 new_quantity_model = update.new_quantity
                 
+                # Check if we have classification updates
+                update_dict = update.model_dump() if hasattr(update, 'model_dump') else update
+                has_classification_update = isinstance(update_dict, dict) and update_dict.get("classification_id") is not None
+                
                 # Check if the model and its value are valid
-                if not element_ifc_id or not new_quantity_model or new_quantity_model.value is None:
+                # Allow updates if classification is present even if quantity value is None
+                if not element_ifc_id or not new_quantity_model:
                     update_data = update.model_dump() if hasattr(update, 'model_dump') else update
-                    logger.warning("Skipping invalid update data (missing ID or quantity value): %s", update_data)
+                    logger.warning("Skipping invalid update data (missing ID or quantity model): %s", update_data)
+                    error_count += 1
+                    continue
+                
+                # Skip if no quantity value AND no classification update
+                if new_quantity_model.value is None and not has_classification_update:
+                    update_data = update.model_dump() if hasattr(update, 'model_dump') else update
+                    logger.warning("Skipping update with no quantity value and no classification: %s", update_data)
                     error_count += 1
                     continue
 
@@ -467,7 +479,7 @@ class MongoDBHelper:
                     "unit": new_quantity_model.unit
                 } if new_quantity_model else None
 
-                if not new_quantity_dict: # Double check conversion
+                if not new_quantity_dict and not has_classification_update: # Double check conversion
                     logger.warning("Skipping update due to inability to create quantity dict for element: %s", element_ifc_id)
                     error_count += 1
                     continue
@@ -477,23 +489,26 @@ class MongoDBHelper:
                 
                 # Prepare the update operation - update both quantity and the corresponding field (area/length/volume)
                 update_fields = {
-                    "quantity": new_quantity_dict,
                     "updated_at": datetime.now(timezone.utc)
                 }
                 
-                # Also update the corresponding area/length/volume field based on quantity type
-                quantity_type = new_quantity_model.type
-                quantity_value = new_quantity_model.value
+                # Only add quantity if we have a valid quantity dict
+                if new_quantity_dict:
+                    update_fields["quantity"] = new_quantity_dict
                 
-                if quantity_type == "area" and quantity_value is not None:
-                    update_fields["area"] = quantity_value
-                elif quantity_type == "length" and quantity_value is not None:
-                    update_fields["length"] = quantity_value
-                elif quantity_type == "volume" and quantity_value is not None:
-                    update_fields["volume"] = quantity_value
+                # Also update the corresponding area/length/volume field based on quantity type
+                if new_quantity_dict:
+                    quantity_type = new_quantity_model.type
+                    quantity_value = new_quantity_model.value
+                    
+                    if quantity_type == "area" and quantity_value is not None:
+                        update_fields["area"] = quantity_value
+                    elif quantity_type == "length" and quantity_value is not None:
+                        update_fields["length"] = quantity_value
+                    elif quantity_type == "volume" and quantity_value is not None:
+                        update_fields["volume"] = quantity_value
                 
                 # Check if update has direct area/length/volume fields (from Excel import)
-                update_dict = update.model_dump() if hasattr(update, 'model_dump') else update
                 if isinstance(update_dict, dict):
                     if "area" in update_dict and update_dict["area"] is not None:
                         update_fields["area"] = update_dict["area"]
@@ -501,6 +516,25 @@ class MongoDBHelper:
                         update_fields["length"] = update_dict["length"]
                     if "volume" in update_dict and update_dict["volume"] is not None:
                         update_fields["volume"] = update_dict["volume"]
+                    
+                    # Handle classification updates
+                    if "classification_id" in update_dict and update_dict["classification_id"] is not None:
+                        classification_dict = {
+                            "id": update_dict.get("classification_id"),
+                            "name": update_dict.get("classification_name"),
+                            "system": update_dict.get("classification_system"),
+                        }
+                        # Remove None values
+                        classification_dict = {k: v for k, v in classification_dict.items() if v is not None}
+                        if classification_dict:
+                            update_fields["classification"] = classification_dict
+                            # Also update flat fields for backward compatibility
+                            if "id" in classification_dict:
+                                update_fields["classification_id"] = classification_dict["id"]
+                            if "name" in classification_dict:
+                                update_fields["classification_name"] = classification_dict["name"]
+                            if "system" in classification_dict:
+                                update_fields["classification_system"] = classification_dict["system"]
                 
                 update_operation = {
                     "$set": update_fields

@@ -35,7 +35,7 @@ import { ManualElementInput, ManualQuantityInput } from "../types/manualTypes";
 import { v4 as uuidv4 } from "uuid";
 import { useEbkpGroups } from "./IfcElements/hooks/useEbkpGroups";
 import { BatchElementData } from "../types/batchUpdateTypes";
-import { ElementQuantityUpdate, isQuantityType } from "../api/types";
+import { ElementQuantityUpdate, isQuantityType, QuantityType } from "../api/types";
 import { useExcelDialog } from "../hooks/useExcelDialog";
 import { ExcelService, ExcelImportData } from "../utils/excelService";
 import { getEbkpNameFromCode } from "../data/ebkpData";
@@ -88,6 +88,7 @@ const MainPage = () => {
     editedElements,
     editedElementsCount,
     handleQuantityChange,
+    handleClassificationChange,
     resetEdits,
   } = useElementEditing();
 
@@ -344,6 +345,12 @@ const MainPage = () => {
           // Get the imported data to see what fields were actually changed
           const importedItem = lastImportedData.find(item => item.global_id === elementId);
           
+          // Check if we have classification changes
+          const hasClassificationChange = editData.newClassification !== undefined;
+          
+          // Build base update object
+          let update: ElementQuantityUpdate | null = null;
+          
           if (editData.newQuantity) {
             const currentQuantity = editData.newQuantity as {
               value?: number | null;
@@ -358,70 +365,91 @@ const MainPage = () => {
               // Skip if type is not a valid quantity type
               if (!isQuantityType(normalizedType)) {
                 logger.warn(`Skipping quantity update for element ${elementId}: unsupported quantity type '${currentQuantity.type}'`);
-                continue;
-              }
-
-              // Only include finite numbers to prevent NaN from being sent
-              const validValue = Number.isFinite(currentQuantity.value as number)
-                ? (currentQuantity.value as number)
-                : null;
-
-              const normalizedUnit = typeof currentQuantity.unit === "string" && currentQuantity.unit.trim()
-                ? currentQuantity.unit.trim()
-                : normalizedType === "area"
-                ? "m²"
-                : normalizedType === "volume"
-                ? "m³"
-                : normalizedType === "length"
-                ? "m"
-                : "Stk";
-
-              // Build update with all changed fields from imported data
-              const update: ElementQuantityUpdate = {
-                global_id: elementId,
-                new_quantity: {
-                  value: validValue,
-                  type: normalizedType as "area" | "length" | "volume" | "count",
-                  unit: normalizedUnit,
-                },
-              };
-              
-              // Prefer live edited values for the corresponding field, fall back to imported data for others
-              if (importedItem) {
-                // Set area: live edit if type is area, otherwise imported
-                if (normalizedType === "area" && validValue !== null) {
-                  update.area = validValue;
-                } else if (importedItem.area !== undefined && importedItem.area !== null) {
-                  update.area = importedItem.area;
+                // Still create update if only classification changed
+                if (hasClassificationChange) {
+                  update = {
+                    global_id: elementId,
+                    new_quantity: {
+                      value: originalElement.quantity?.value ?? null,
+                      type: (originalElement.quantity?.type ?? "count") as QuantityType,
+                      unit: originalElement.quantity?.unit ?? "Stk",
+                    },
+                  };
+                } else {
+                  continue;
                 }
+              } else {
+                // Only include finite numbers to prevent NaN from being sent
+                const validValue = Number.isFinite(currentQuantity.value as number)
+                  ? (currentQuantity.value as number)
+                  : null;
+
+                const normalizedUnit = typeof currentQuantity.unit === "string" && currentQuantity.unit.trim()
+                  ? currentQuantity.unit.trim()
+                  : normalizedType === "area"
+                  ? "m²"
+                  : normalizedType === "volume"
+                  ? "m³"
+                  : normalizedType === "length"
+                  ? "m"
+                  : "Stk";
+
+                // Build update with all changed fields from imported data
+                update = {
+                  global_id: elementId,
+                  new_quantity: {
+                    value: validValue,
+                    type: normalizedType as "area" | "length" | "volume" | "count",
+                    unit: normalizedUnit,
+                  },
+                };
                 
-                // Set length: live edit if type is length, otherwise imported
-                if (normalizedType === "length" && validValue !== null) {
-                  update.length = validValue;
-                } else if (importedItem.length !== undefined && importedItem.length !== null) {
-                  update.length = importedItem.length;
-                }
-                
-                // Set volume: live edit if type is volume, otherwise imported (check before calling helper)
-                if (normalizedType === "volume" && validValue !== null) {
-                  update.volume = validValue;
-                } else if (importedItem.volume !== undefined && importedItem.volume !== null) {
-                  update.volume = getVolumeValue(importedItem.volume);
-                }
-              } else if (validValue !== null) {
-                // No import data; set only the live-edited field
-                if (normalizedType === "area") {
-                  update.area = validValue;
-                } else if (normalizedType === "length") {
-                  update.length = validValue;
-                } else if (normalizedType === "volume") {
-                  update.volume = validValue;
+                // Prefer live edited values for the corresponding field, fall back to imported data for others
+                if (importedItem) {
+                  // Set area: live edit if type is area, otherwise imported
+                  if (normalizedType === "area" && validValue !== null) {
+                    update.area = validValue;
+                  } else if (importedItem.area !== undefined && importedItem.area !== null) {
+                    update.area = importedItem.area;
+                  }
+                  
+                  // Set length: live edit if type is length, otherwise imported
+                  if (normalizedType === "length" && validValue !== null) {
+                    update.length = validValue;
+                  } else if (importedItem.length !== undefined && importedItem.length !== null) {
+                    update.length = importedItem.length;
+                  }
+                  
+                  // Set volume: live edit if type is volume, otherwise imported (check before calling helper)
+                  if (normalizedType === "volume" && validValue !== null) {
+                    update.volume = validValue;
+                  } else if (importedItem.volume !== undefined && importedItem.volume !== null) {
+                    update.volume = getVolumeValue(importedItem.volume);
+                  }
+                } else if (validValue !== null) {
+                  // No import data; set only the live-edited field
+                  if (normalizedType === "area") {
+                    update.area = validValue;
+                  } else if (normalizedType === "length") {
+                    update.length = validValue;
+                  } else if (normalizedType === "volume") {
+                    update.volume = validValue;
+                  }
                 }
               }
-
-              quantityUpdates.push(update);
             } else {
               logger.warn(`Skipping quantity update for element ${elementId}: missing or invalid quantity type`);
+              // Still create update if only classification changed
+              if (hasClassificationChange) {
+                update = {
+                  global_id: elementId,
+                  new_quantity: {
+                    value: originalElement.quantity?.value ?? null,
+                    type: (originalElement.quantity?.type ?? "count") as QuantityType,
+                    unit: originalElement.quantity?.unit ?? "Stk",
+                  },
+                };
+              }
             }
           }
           // Include fallback for older edit structure if necessary
@@ -429,7 +457,7 @@ const MainPage = () => {
             editData.newArea !== undefined &&
             editData.newArea !== null
           ) {
-            quantityUpdates.push({
+            update = {
               global_id: elementId,
               new_quantity: {
                 value: editData.newArea,
@@ -437,12 +465,12 @@ const MainPage = () => {
                 unit: "m²",
               },
               area: editData.newArea,
-            });
+            };
           } else if (
             editData.newLength !== undefined &&
             editData.newLength !== null
           ) {
-            quantityUpdates.push({
+            update = {
               global_id: elementId,
               new_quantity: {
                 value: editData.newLength,
@@ -450,7 +478,28 @@ const MainPage = () => {
                 unit: "m",
               },
               length: editData.newLength,
-            });
+            };
+          } else if (hasClassificationChange) {
+            // Classification-only change: create update with existing quantity
+            update = {
+              global_id: elementId,
+              new_quantity: {
+                value: originalElement.quantity?.value ?? null,
+                type: (originalElement.quantity?.type ?? "count") as QuantityType,
+                unit: originalElement.quantity?.unit ?? "Stk",
+              },
+            };
+          }
+
+          // Add classification fields if they changed
+          if (update && editData.newClassification) {
+            update.classification_id = editData.newClassification.id;
+            update.classification_name = editData.newClassification.name;
+            update.classification_system = editData.newClassification.system;
+          }
+
+          if (update) {
+            quantityUpdates.push(update);
           }
         }
       }
@@ -814,6 +863,27 @@ const MainPage = () => {
               firstChange.type,
               firstChange.original,
               firstChange.new.toString()
+            );
+          }
+        }
+
+        // Check classification changes
+        if (importItem.classification_id !== undefined) {
+          const currentClassId = currentElement.classification_id ?? null;
+          const newClassId = importItem.classification_id ?? null;
+          if (currentClassId !== newClassId) {
+            handleClassificationChange(
+              importItem.global_id,
+              {
+                id: currentClassId,
+                name: currentElement.classification_name ?? null,
+                system: currentElement.classification_system ?? null,
+              },
+              {
+                id: newClassId,
+                name: getEbkpNameFromCode(newClassId) ?? null,
+                system: importItem.classification_system || 'eBKP',
+              }
             );
           }
         }

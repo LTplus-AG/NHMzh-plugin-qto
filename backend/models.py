@@ -146,6 +146,10 @@ class ElementQuantityUpdate(BaseModel):
     area: Optional[float] = None  # Optional direct field updates
     length: Optional[float] = None
     volume: Optional[float] = None
+    # Optional classification updates
+    classification_id: Optional[str] = None
+    classification_name: Optional[str] = None
+    classification_system: Optional[str] = None
 
 class ManualElementInput(BaseModel):
     name: str

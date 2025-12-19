@@ -27,4 +27,8 @@ export interface ElementQuantityUpdate {
   area?: number | null;
   length?: number | null;
   volume?: number | null;
+  // Optional: Classification updates
+  classification_id?: string | null;
+  classification_name?: string | null;
+  classification_system?: string | null;
 }
