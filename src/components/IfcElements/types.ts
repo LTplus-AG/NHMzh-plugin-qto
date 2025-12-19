@@ -14,6 +14,18 @@ export interface EditedQuantity {
     value: number | null;
     type: "area" | "length" | "count" | "volume";
   } | null;
+
+  // Classification tracking
+  originalClassification?: {
+    id: string | null;
+    name: string | null;
+    system: string | null;
+  } | null;
+  newClassification?: {
+    id: string | null;
+    name: string | null;
+    system: string | null;
+  } | null;
 }
 
 export interface EbkpGroup {

@@ -72,6 +72,42 @@ export const useElementEditing = () => {
     handleQuantityChange(elementId, "area", originalArea, newValue);
   };
 
+  // Handle classification changes
+  const handleClassificationChange = (
+    elementId: string,
+    originalClassification: { id: string | null; name: string | null; system: string | null } | null,
+    newClassification: { id: string | null; name: string | null; system: string | null } | null
+  ) => {
+    setEditedElements((prev) => {
+      // If classification unchanged, potentially remove from edited
+      const originalId = originalClassification?.id ?? null;
+      const newId = newClassification?.id ?? null;
+      
+      if (originalId === newId) {
+        // Only remove if no other edits exist for this element
+        const existing = prev[elementId];
+        if (existing && !existing.newQuantity && !existing.newArea && !existing.newLength) {
+          const newEdited = { ...prev };
+          delete newEdited[elementId];
+          return newEdited;
+        }
+        return prev;
+      }
+
+      // Otherwise update with new classification
+      const updatedElement: EditedQuantity = {
+        ...prev[elementId], // Keep other edited properties if any
+        originalClassification,
+        newClassification,
+      };
+
+      return {
+        ...prev,
+        [elementId]: updatedElement,
+      };
+    });
+  };
+
   // Reset all edits
   const resetEdits = () => {
     setEditedElements({});
@@ -82,6 +118,7 @@ export const useElementEditing = () => {
     editedElementsCount,
     handleQuantityChange, // Primary handler
     handleAreaChange, // Keep for compatibility if necessary
+    handleClassificationChange, // Classification handler
     resetEdits,
   };
 };
